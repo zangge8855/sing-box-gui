@@ -12,6 +12,7 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
+#![windows_subsystem = "windows"]
 
 mod state;
 mod message;
@@ -499,22 +500,30 @@ impl App {
                     self.gui_config.dns_server_remote = input[11..].to_string();
                 } else if input == "toggle_tun" {
                     self.gui_config.tun_mode = !self.gui_config.tun_mode;
+                    let _ = config::save_gui_config(&self.gui_config);
                 } else if input == "toggle_autostart" {
                     self.gui_config.start_on_boot = !self.gui_config.start_on_boot;
+                    let _ = config::save_gui_config(&self.gui_config);
                     // Apply Windows startup boot register changes
                     let _ = set_windows_autostart(self.gui_config.start_on_boot);
                 } else if input == "lang:en" {
                     self.gui_config.language = state::Language::En;
+                    let _ = config::save_gui_config(&self.gui_config);
                 } else if input == "lang:zh" {
                     self.gui_config.language = state::Language::Zh;
+                    let _ = config::save_gui_config(&self.gui_config);
                 } else if input == "toggle_fakeip" {
                     self.gui_config.fake_ip = !self.gui_config.fake_ip;
+                    let _ = config::save_gui_config(&self.gui_config);
                 } else if input == "toggle_tfo" {
                     self.gui_config.tcp_fast_open = !self.gui_config.tcp_fast_open;
+                    let _ = config::save_gui_config(&self.gui_config);
                 } else if input == "toggle_mptcp" {
                     self.gui_config.tcp_multipath = !self.gui_config.tcp_multipath;
+                    let _ = config::save_gui_config(&self.gui_config);
                 } else if input == "toggle_close_core" {
                     self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
+                    let _ = config::save_gui_config(&self.gui_config);
                 }
                 Task::none()
             }
