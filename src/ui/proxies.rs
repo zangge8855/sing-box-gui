@@ -139,6 +139,12 @@ pub fn render<'a>(
                     }
                 }
                 
+                if latency.is_none() {
+                    if let Some(n) = nodes.iter().find(|n| n.name == *node_name) {
+                        latency = n.latency;
+                    }
+                }
+                
                 let latency_text = match latency {
                     Some(ms) => {
                         if ms >= 9999 {
