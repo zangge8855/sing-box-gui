@@ -67,21 +67,21 @@ pub fn card_bg(theme: &iced::Theme) -> container::Style {
     let bg = if is_dark(theme) { CARD_DARK } else { CARD_LIGHT_BG };
     let border = if is_dark(theme) { BORDER_DARK } else { BORDER_LIGHT };
     let shadow_color = if is_dark(theme) {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.15)
+        Color::from_rgba(0.0, 0.0, 0.0, 0.25)
     } else {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+        Color::from_rgba(0.0, 0.0, 0.0, 0.08)
     };
     container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
             color: border,
             width: 1.0,
-            radius: 8.0.into(),
+            radius: 12.0.into(),
         },
         shadow: Shadow {
             color: shadow_color,
-            offset: iced::Vector::new(0.0, 2.0),
-            blur_radius: 8.0,
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
         },
         ..Default::default()
     }
@@ -91,16 +91,16 @@ pub fn card_bg(theme: &iced::Theme) -> container::Style {
 pub fn card_selected(theme: &iced::Theme) -> container::Style {
     let bg = if is_dark(theme) { CARD_LIGHT } else { CARD_SELECTED_LIGHT };
     let shadow_color = if is_dark(theme) {
-        Color::from_rgba(0.55, 0.36, 0.96, 0.25)
+        Color::from_rgba(0.55, 0.36, 0.96, 0.30)
     } else {
-        Color::from_rgba(0.55, 0.36, 0.96, 0.15)
+        Color::from_rgba(0.55, 0.36, 0.96, 0.20)
     };
     container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
             color: ACCENT_PURPLE,
             width: 1.5,
-            radius: 8.0.into(),
+            radius: 12.0.into(),
         },
         shadow: Shadow {
             color: shadow_color,
@@ -120,16 +120,16 @@ pub fn status_card(theme: &iced::Theme) -> container::Style {
     };
     let border = if is_dark(theme) { BORDER_DARK } else { BORDER_LIGHT };
     let shadow_color = if is_dark(theme) {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.15)
+        Color::from_rgba(0.0, 0.0, 0.0, 0.20)
     } else {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+        Color::from_rgba(0.0, 0.0, 0.0, 0.08)
     };
     container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
             color: border,
             width: 1.0,
-            radius: 8.0.into(),
+            radius: 12.0.into(),
         },
         shadow: Shadow {
             color: shadow_color,
@@ -154,7 +154,7 @@ pub fn button_primary(_theme: &iced::Theme, status: button::Status) -> button::S
         background: Some(Background::Color(bg)),
         text_color: Color::WHITE,
         border: Border {
-            radius: 6.0.into(),
+            radius: 8.0.into(),
             width: 0.0,
             color: Color::TRANSPARENT,
         },
@@ -188,7 +188,7 @@ pub fn button_secondary(theme: &iced::Theme, status: button::Status) -> button::
         background: Some(Background::Color(bg)),
         text_color,
         border: Border {
-            radius: 6.0.into(),
+            radius: 8.0.into(),
             width: 1.0,
             color: border_color,
         },
@@ -210,7 +210,7 @@ pub fn button_danger(_theme: &iced::Theme, status: button::Status) -> button::St
         background: Some(Background::Color(bg)),
         text_color: Color::WHITE,
         border: Border {
-            radius: 6.0.into(),
+            radius: 8.0.into(),
             width: 0.0,
             color: Color::TRANSPARENT,
         },
@@ -250,7 +250,7 @@ pub fn button_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
             background: Some(Background::Color(bg)),
             text_color,
             border: Border {
-                radius: 6.0.into(),
+                radius: 8.0.into(),
                 width: 0.0,
                 color: Color::TRANSPARENT,
             },
@@ -323,7 +323,7 @@ pub fn input_field(theme: &iced::Theme, status: text_input::Status) -> text_inpu
     text_input::Style {
         background: Background::Color(bg),
         border: Border {
-            radius: 6.0.into(),
+            radius: 8.0.into(),
             width: 1.0,
             color: border_color,
         },

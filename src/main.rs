@@ -1322,10 +1322,16 @@ fn main() -> iced::Result {
         ..Default::default()
     };
 
+    let default_font = iced::Font {
+        family: iced::font::Family::Name("Microsoft YaHei UI"),
+        ..Default::default()
+    };
+
     let res = iced::application(App::new, App::update, App::view)
         .title("sing-box GUI")
         .window(window_settings)
         .theme(App::theme)
+        .default_font(default_font)
         .subscription(App::subscription)
         .run();
         

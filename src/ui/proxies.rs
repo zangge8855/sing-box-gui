@@ -229,9 +229,9 @@ pub fn render<'a>(
                             type_tag
                         ]
                     ]
-                    .spacing(6)
+                    .spacing(8)
                 )
-                .padding(15)
+                .padding(20)
                 .width(Length::Fill)
                 .style(move |t| {
                     if active {
@@ -435,9 +435,9 @@ pub fn render<'a>(
                     ]
                     .spacing(5)
                 ]
-                .spacing(8)
+                .spacing(10)
             )
-            .padding(15)
+            .padding(20)
             .width(Length::Fill)
             .style(move |theme| {
                 if is_selected {

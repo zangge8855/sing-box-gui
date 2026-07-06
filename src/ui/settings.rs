@@ -96,9 +96,9 @@ pub fn render<'a>(
             open_dir_btn,
             install_status_row
         ]
-        .spacing(15)
+        .spacing(20)
     )
-    .padding(20)
+    .padding(25)
     .width(Length::Fill)
     .style(theme::card_bg);
     
@@ -143,9 +143,9 @@ pub fn render<'a>(
             routing_label,
             routing_row
         ]
-        .spacing(10)
+        .spacing(15)
     )
-    .padding(20)
+    .padding(25)
     .width(Length::Fill)
     .style(theme::card_bg);
     
@@ -186,9 +186,9 @@ pub fn render<'a>(
             make_toggle_row("tcp_fast_open_label", gui_config.tcp_fast_open, "toggle_tfo"),
             make_toggle_row("tcp_multipath_label", gui_config.tcp_multipath, "toggle_mptcp"),
         ]
-        .spacing(15)
+        .spacing(20)
     )
-    .padding(20)
+    .padding(25)
     .width(Length::Fill)
     .style(theme::card_bg);
     
@@ -225,9 +225,9 @@ pub fn render<'a>(
             dns_row,
             make_toggle_row("fake_ip_label", gui_config.fake_ip, "toggle_fakeip"),
         ]
-        .spacing(15)
+        .spacing(20)
     )
-    .padding(20)
+    .padding(25)
     .width(Length::Fill)
     .style(theme::card_bg);
     
@@ -275,9 +275,9 @@ pub fn render<'a>(
             lang_label,
             lang_row
         ]
-        .spacing(10)
+        .spacing(15)
     )
-    .padding(20)
+    .padding(25)
     .width(Length::Fill)
     .style(theme::card_bg);
     
@@ -327,9 +327,9 @@ pub fn render<'a>(
             theme_label,
             theme_row
         ]
-        .spacing(10)
+        .spacing(15)
     )
-    .padding(20)
+    .padding(25)
     .width(Length::Fill)
     .style(theme::card_bg);
     

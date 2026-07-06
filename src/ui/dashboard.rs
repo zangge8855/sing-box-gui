@@ -69,7 +69,7 @@ pub fn render<'a>(
     
     let core_card = container(
         column![
-            text(tr(lang, "singbox_core")).color(text_muted).size(14),
+            text(tr(lang, "singbox_core")).color(text_muted).size(13),
             row![
                 status_indicator,
                 core_control_btn
@@ -78,9 +78,9 @@ pub fn render<'a>(
             .align_y(Alignment::Center)
             .spacing(20)
         ]
-        .spacing(10)
+        .spacing(15)
     )
-    .padding(20)
+    .padding(25)
     .width(Length::FillPortion(1))
     .style(theme::status_card);
     
@@ -104,7 +104,7 @@ pub fn render<'a>(
     
     let proxy_card = container(
         column![
-            text(tr(lang, "system_proxy")).color(text_muted).size(14),
+            text(tr(lang, "system_proxy")).color(text_muted).size(13),
             row![
                 sys_proxy_indicator,
                 sys_proxy_btn
@@ -113,9 +113,9 @@ pub fn render<'a>(
             .align_y(Alignment::Center)
             .spacing(20)
         ]
-        .spacing(10)
+        .spacing(15)
     )
-    .padding(20)
+    .padding(25)
     .width(Length::FillPortion(1))
     .style(theme::status_card);
     
@@ -190,10 +190,10 @@ pub fn render<'a>(
     // Speed Stats cards
     let download_card = container(
         column![
-            text(tr(lang, "download")).color(text_muted).size(14),
+            text(tr(lang, "download")).color(text_muted).size(13),
             text(format_speed(current_speed.down))
                 .color(theme::ACCENT_BLUE)
-                .size(28),
+                .size(32),
             text(format!("Total: {}", format_size(total_downloaded)))
                 .color(text_muted)
                 .size(12),
@@ -206,10 +206,10 @@ pub fn render<'a>(
     
     let upload_card = container(
         column![
-            text(tr(lang, "upload")).color(text_muted).size(14),
+            text(tr(lang, "upload")).color(text_muted).size(13),
             text(format_speed(current_speed.up))
                 .color(theme::ACCENT_PURPLE)
-                .size(28),
+                .size(32),
             text(format!("Total: {}", format_size(total_uploaded)))
                 .color(text_muted)
                 .size(12),
@@ -264,16 +264,16 @@ pub fn render<'a>(
     }
     
     let grid_color = if theme::is_dark(theme) {
-        "rgba(255, 255, 255, 0.08)"
+        "rgba(255, 255, 255, 0.05)"
     } else {
-        "rgba(0, 0, 0, 0.06)"
+        "rgba(0, 0, 0, 0.04)"
     };
 
     let svg_xml = format!(
         r##"<svg viewBox="0 0 300 100" xmlns="http://www.w3.org/2000/svg">
              <defs>
                <linearGradient id="downGrad" x1="0" y1="0" x2="0" y2="1">
-                 <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.2"/>
+                 <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.3"/>
                  <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
                </linearGradient>
              </defs>
@@ -281,8 +281,8 @@ pub fn render<'a>(
              <line x1="0" y1="40" x2="300" y2="40" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
              <line x1="0" y1="60" x2="300" y2="60" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
              <line x1="0" y1="80" x2="300" y2="80" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
-             <path d="{}" fill="url(#downGrad)" stroke="#3b82f6" stroke-width="1.5"/>
-             <path d="{}" fill="none" stroke="#8b5cf6" stroke-width="1.5"/>
+             <path d="{}" fill="url(#downGrad)" stroke="#3b82f6" stroke-width="2.0"/>
+             <path d="{}" fill="none" stroke="#8b5cf6" stroke-width="2.0"/>
            </svg>"##,
          grid_color, grid_color, grid_color, grid_color, down_path, up_path
     );
