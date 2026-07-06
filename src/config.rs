@@ -382,6 +382,67 @@ pub fn parse_clash_yaml_nodes(yaml_content: &str) -> Result<Vec<ProxyNode>, Stri
     Ok(nodes)
 }
 
+pub fn parse_native_json_nodes(json_content: &str) -> Result<Vec<ProxyNode>, String> {
+    let val: serde_json::Value = serde_json::from_str(json_content)
+        .map_err(|e| format!("JSON parsing failed: {}", e))?;
+        
+    let outbounds = val.get("outbounds")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "No 'outbounds' array found".to_string())?;
+        
+    let mut nodes = Vec::new();
+    for item in outbounds {
+        if let Some(obj) = item.as_object() {
+            let node_type = obj.get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+                
+            // Skip selector, direct, dns, block, urltest, etc. outbounds
+            if node_type == "selector" || node_type == "direct" || node_type == "dns" || node_type == "block" || node_type == "urltest" {
+                continue;
+            }
+            
+            let name = obj.get("tag")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unnamed")
+                .to_string();
+                
+            let server = obj.get("server")
+                .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|i| i.to_string())))
+                .unwrap_or_else(|| "127.0.0.1".to_string());
+                
+            let port = obj.get("server_port")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u16;
+                
+            if port > 0 {
+                nodes.push(ProxyNode {
+                    name,
+                    node_type,
+                    server,
+                    port,
+                    latency: None,
+                });
+            }
+        }
+    }
+    Ok(nodes)
+}
+
+pub fn verify_profile_content(content: &str) -> Result<(), String> {
+    let trimmed = content.trim();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        let _: serde_json::Value = serde_json::from_str(trimmed)
+            .map_err(|e| format!("Invalid native Sing-Box JSON format: {}", e))?;
+        Ok(())
+    } else {
+        let _ = parse_clash_yaml_nodes(content)
+            .map_err(|e| format!("Invalid Clash configuration format: {}", e))?;
+        Ok(())
+    }
+}
+
 pub fn convert_clash_to_singbox(
     yaml_content: &str,
     gui_config: &GuiConfig,

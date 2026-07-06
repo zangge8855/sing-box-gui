@@ -160,9 +160,13 @@ impl App {
             let path = config::get_profile_path(active_id);
             if path.exists() {
                 if let Ok(content) = std::fs::read_to_string(path) {
-                    if let Ok(nodes) = config::parse_clash_yaml_nodes(&content) {
-                        self.active_profile_nodes = nodes;
-                    }
+                    let trimmed = content.trim();
+                    let nodes = if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                        config::parse_native_json_nodes(&content).unwrap_or_default()
+                    } else {
+                        config::parse_clash_yaml_nodes(&content).unwrap_or_default()
+                    };
+                    self.active_profile_nodes = nodes;
                 }
             }
         }
@@ -554,7 +558,7 @@ impl App {
                         }
                         let content = res.text().await
                             .map_err(|e| format!("Read failed: {}", e))?;
-                        let _ = crate::config::parse_clash_yaml_nodes(&content)
+                        let _ = crate::config::verify_profile_content(&content)
                             .map_err(|e| format!("Invalid config: {}", e))?;
                         let path = crate::config::get_profile_path(&id_clone);
                         std::fs::write(&path, &content)
@@ -1020,9 +1024,8 @@ async fn download_profile(url: String) -> Result<(String, String), String> {
             .map_err(|e| format!("Failed to read content: {}", e))?
     };
         
-    // Verify it parses as Clash YAML (contains proxies key)
-    let _nodes = config::parse_clash_yaml_nodes(&content)
-        .map_err(|e| format!("Invalid Clash configuration format: {}", e))?;
+    // Verify profile content is valid (either Sing-Box JSON or Clash YAML)
+    config::verify_profile_content(&content)?;
         
     // Generate an ID and Name
     let id = chrono::Utc::now().timestamp_millis().to_string();
