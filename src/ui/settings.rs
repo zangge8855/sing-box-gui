@@ -18,6 +18,27 @@ pub fn render<'a>(
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
     
+    let make_toggle_row = move |label_key: &'static str, is_on: bool, msg: &'static str| {
+        let label_el: Element<'a, Message> = text(tr(lang, label_key)).color(theme::text_primary(theme)).size(13).width(Length::Fill).into();
+        let btn_el: Element<'a, Message> = button(
+            text(if is_on { "ON" } else { "OFF" })
+                .size(12)
+                .width(Length::Fixed(50.0))
+                .align_x(Alignment::Center)
+        )
+        .padding([6, 12])
+        .style(if is_on { theme::button_primary } else { theme::button_secondary })
+        .on_press(Message::PortInputChanged(msg.to_string()))
+        .into();
+        
+        let r: Element<'a, Message> = row![label_el, btn_el]
+            .align_y(Alignment::Center)
+            .spacing(20)
+            .width(Length::Fill)
+            .into();
+        r
+    };
+    
     let text_primary = theme::text_primary(theme);
     let text_muted = theme::text_muted(theme);
     
@@ -72,21 +93,28 @@ pub fn render<'a>(
     
     let make_mode_btn = |mode: RoutingMode, key: &'static str| {
         let active = gui_config.routing_mode == mode;
-        let btn = button(text(tr(lang, key)).size(13))
-            .padding([8, 16])
-            .style(move |theme, status| {
-                if active {
-                    theme::button_primary(theme, status)
-                } else {
-                    theme::button_secondary(theme, status)
-                }
-            });
+        let btn = button(
+            text(tr(lang, key))
+                .size(13)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+        )
+        .padding([8, 16])
+        .width(Length::Fill)
+        .style(move |theme, status| {
+            if active {
+                theme::button_primary(theme, status)
+            } else {
+                theme::button_secondary(theme, status)
+            }
+        });
             
-        if active {
-            btn
+        let btn_el: Element<'a, Message> = if active {
+            btn.into()
         } else {
-            btn.on_press(Message::RoutingModeChanged(mode))
-        }
+            btn.on_press(Message::RoutingModeChanged(mode)).into()
+        };
+        btn_el
     };
     
     let routing_row = row![
@@ -134,61 +162,15 @@ pub fn render<'a>(
     ]
     .spacing(30);
     
-    // TUN mode & autostart checkboxes toggles
-    let tun_btn = button(
-        text(format!("{}: {}", tr(lang, "tun_mode_label"), if gui_config.tun_mode { "ON" } else { "OFF" })).size(13)
-    )
-    .padding([8, 16])
-    .style(if gui_config.tun_mode { theme::button_primary } else { theme::button_secondary })
-    .on_press(Message::PortInputChanged("toggle_tun".to_string()));
-    
-    let autostart_btn = button(
-        text(format!("{}: {}", tr(lang, "autostart_label"), if gui_config.start_on_boot { "ON" } else { "OFF" })).size(13)
-    )
-    .padding([8, 16])
-    .style(if gui_config.start_on_boot { theme::button_primary } else { theme::button_secondary })
-    .on_press(Message::PortInputChanged("toggle_autostart".to_string()));
-    
-    let close_core_btn = button(
-        text(format!("{}: {}", tr(lang, "close_core_on_exit_label"), if gui_config.close_core_on_exit { "ON" } else { "OFF" })).size(13)
-    )
-    .padding([8, 16])
-    .style(if gui_config.close_core_on_exit { theme::button_primary } else { theme::button_secondary })
-    .on_press(Message::PortInputChanged("toggle_close_core".to_string()));
-    
-    let toggles_row = row![
-        tun_btn,
-        autostart_btn,
-        close_core_btn
-    ]
-    .spacing(20);
-    
-    let tfo_btn = button(
-        text(format!("{}: {}", tr(lang, "tcp_fast_open_label"), if gui_config.tcp_fast_open { "ON" } else { "OFF" })).size(13)
-    )
-    .padding([8, 16])
-    .style(if gui_config.tcp_fast_open { theme::button_primary } else { theme::button_secondary })
-    .on_press(Message::PortInputChanged("toggle_tfo".to_string()));
-    
-    let mptcp_btn = button(
-        text(format!("{}: {}", tr(lang, "tcp_multipath_label"), if gui_config.tcp_multipath { "ON" } else { "OFF" })).size(13)
-    )
-    .padding([8, 16])
-    .style(if gui_config.tcp_multipath { theme::button_primary } else { theme::button_secondary })
-    .on_press(Message::PortInputChanged("toggle_mptcp".to_string()));
-    
-    let performance_row = row![
-        tfo_btn,
-        mptcp_btn
-    ]
-    .spacing(20);
-    
     let settings_card = container(
         column![
             text(tr(lang, "ports_config")).color(text_muted).size(13),
             ports_row,
-            toggles_row,
-            performance_row
+            make_toggle_row("tun_mode_label", gui_config.tun_mode, "toggle_tun"),
+            make_toggle_row("autostart_label", gui_config.start_on_boot, "toggle_autostart"),
+            make_toggle_row("close_core_on_exit_label", gui_config.close_core_on_exit, "toggle_close_core"),
+            make_toggle_row("tcp_fast_open_label", gui_config.tcp_fast_open, "toggle_tfo"),
+            make_toggle_row("tcp_multipath_label", gui_config.tcp_multipath, "toggle_mptcp"),
         ]
         .spacing(15)
     )
@@ -223,18 +205,11 @@ pub fn render<'a>(
     ]
     .spacing(30);
     
-    let fakeip_btn = button(
-        text(format!("{}: {}", tr(lang, "fake_ip_label"), if gui_config.fake_ip { "ON" } else { "OFF" })).size(13)
-    )
-    .padding([8, 16])
-    .style(if gui_config.fake_ip { theme::button_primary } else { theme::button_secondary })
-    .on_press(Message::PortInputChanged("toggle_fakeip".to_string()));
-    
     let dns_card = container(
         column![
             text(tr(lang, "dns_servers")).color(text_muted).size(13),
             dns_row,
-            fakeip_btn
+            make_toggle_row("fake_ip_label", gui_config.fake_ip, "toggle_fakeip"),
         ]
         .spacing(15)
     )
@@ -247,25 +222,32 @@ pub fn render<'a>(
     
     let make_lang_btn = |target_lang: crate::state::Language, label: &'static str| {
         let active = gui_config.language == target_lang;
-        let btn = button(text(label).size(13))
-            .padding([8, 16])
-            .style(move |theme, status| {
-                if active {
-                    theme::button_primary(theme, status)
-                } else {
-                    theme::button_secondary(theme, status)
-                }
-            });
+        let btn = button(
+            text(label)
+                .size(13)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+        )
+        .padding([8, 16])
+        .width(Length::Fill)
+        .style(move |theme, status| {
+            if active {
+                theme::button_primary(theme, status)
+            } else {
+                theme::button_secondary(theme, status)
+            }
+        });
             
-        if active {
-            btn
+        let btn_el: Element<'a, Message> = if active {
+            btn.into()
         } else {
             let msg_str = match target_lang {
                 crate::state::Language::En => "lang:en",
                 crate::state::Language::Zh => "lang:zh",
             };
-            btn.on_press(Message::PortInputChanged(msg_str.to_string()))
-        }
+            btn.on_press(Message::PortInputChanged(msg_str.to_string())).into()
+        };
+        btn_el
     };
     
     let lang_row = row![
@@ -290,26 +272,33 @@ pub fn render<'a>(
     
     let make_theme_btn = |target_theme: crate::state::AppTheme, label_key: &'static str| {
         let active = gui_config.theme == target_theme;
-        let btn = button(text(tr(lang, label_key)).size(13))
-            .padding([8, 16])
-            .style(move |theme, status| {
-                if active {
-                    theme::button_primary(theme, status)
-                } else {
-                    theme::button_secondary(theme, status)
-                }
-            });
+        let btn = button(
+            text(tr(lang, label_key))
+                .size(13)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+        )
+        .padding([8, 16])
+        .width(Length::Fill)
+        .style(move |theme, status| {
+            if active {
+                theme::button_primary(theme, status)
+            } else {
+                theme::button_secondary(theme, status)
+            }
+        });
             
-        if active {
-            btn
+        let btn_el: Element<'a, Message> = if active {
+            btn.into()
         } else {
             let msg_str = match target_theme {
                 crate::state::AppTheme::Auto => "theme:auto",
                 crate::state::AppTheme::Dark => "theme:dark",
                 crate::state::AppTheme::Light => "theme:light",
             };
-            btn.on_press(Message::PortInputChanged(msg_str.to_string()))
-        }
+            btn.on_press(Message::PortInputChanged(msg_str.to_string())).into()
+        };
+        btn_el
     };
     
     let theme_row = row![

@@ -44,15 +44,27 @@ pub fn render<'a>(
     };
     
     let core_control_btn = if core_running {
-        button(text(tr(lang, "btn_stop_core")).size(14))
-            .padding([10, 20])
-            .style(theme::button_danger)
-            .on_press(Message::ToggleCore)
+        button(
+            text(tr(lang, "btn_stop_core"))
+                .size(14)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+        )
+        .padding([10, 20])
+        .width(Length::Fixed(150.0))
+        .style(theme::button_danger)
+        .on_press(Message::ToggleCore)
     } else {
-        button(text(tr(lang, "btn_start_core")).size(14))
-            .padding([10, 20])
-            .style(theme::button_primary)
-            .on_press(Message::ToggleCore)
+        button(
+            text(tr(lang, "btn_start_core"))
+                .size(14)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+        )
+        .padding([10, 20])
+        .width(Length::Fixed(150.0))
+        .style(theme::button_primary)
+        .on_press(Message::ToggleCore)
     };
     
     let core_card = container(
@@ -79,9 +91,13 @@ pub fn render<'a>(
     };
     
     let sys_proxy_btn = button(
-        text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") }).size(14)
+        text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") })
+            .size(14)
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
     )
     .padding([10, 20])
+    .width(Length::Fixed(150.0))
     .style(if sys_proxy_enabled { theme::button_danger } else { theme::button_primary })
     .on_press(Message::ToggleSystemProxy);
     
@@ -111,15 +127,21 @@ pub fn render<'a>(
     // Connection info summary row
     let make_mode_btn = |mode: RoutingMode, key: &'static str| {
         let active = gui_config.routing_mode == mode;
-        let btn = button(text(tr(lang, key)).size(12))
-            .padding([6, 12])
-            .style(move |theme, status| {
-                if active {
-                    theme::button_primary(theme, status)
-                } else {
-                    theme::button_secondary(theme, status)
-                }
-            });
+        let btn = button(
+            text(tr(lang, key))
+                .size(12)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+        )
+        .padding([6, 12])
+        .width(Length::Fill)
+        .style(move |theme, status| {
+            if active {
+                theme::button_primary(theme, status)
+            } else {
+                theme::button_secondary(theme, status)
+            }
+        });
             
         if active {
             btn

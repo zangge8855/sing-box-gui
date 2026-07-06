@@ -106,26 +106,6 @@ pub fn render<'a>(
         for profile in &gui_config.subscriptions {
             let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
             
-            let select_action: Element<'a, Message> = if is_active {
-                container(text(tr(lang, "active_profile")).color(Color::WHITE).size(12))
-                    .padding([6, 12])
-                    .style(|_theme: &iced::Theme| container::Style {
-                        background: Some(iced::Background::Color(theme::SUCCESS)),
-                        border: iced::Border {
-                            radius: 6.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    })
-                    .into()
-            } else {
-                button(text(tr(lang, "btn_select")).size(12))
-                    .padding([6, 12])
-                    .style(theme::button_secondary)
-                    .on_press(Message::SelectProfile(profile.id.clone()))
-                    .into()
-            };
-            
             let update_btn = button(text(tr(lang, "btn_update")).size(12))
                 .padding([6, 12])
                 .style(theme::button_primary)
@@ -141,40 +121,69 @@ pub fn render<'a>(
                 .style(theme::button_secondary)
                 .on_press(Message::PortInputChanged(format!("edit_profile:{}", profile.id)));
                 
-            let profile_row = container(
+            let badge_or_spacer: Element<'a, Message> = if is_active {
+                container(text(tr(lang, "active_profile")).color(Color::WHITE).size(12))
+                    .padding([6, 12])
+                    .style(|_theme: &iced::Theme| container::Style {
+                        background: Some(iced::Background::Color(theme::SUCCESS)),
+                        border: iced::Border {
+                            radius: 6.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                    .into()
+            } else {
+                iced::widget::Space::new().width(Length::Shrink).into()
+            };
+            
+            let mut actions_row = row![].spacing(10).align_y(Alignment::Center);
+            if !is_active {
+                let select_btn = button(text(tr(lang, "btn_select")).size(12))
+                    .padding([6, 12])
+                    .style(theme::button_secondary)
+                    .on_press(Message::SelectProfile(profile.id.clone()));
+                actions_row = actions_row.push(select_btn);
+            }
+            actions_row = actions_row
+                .push(update_btn)
+                .push(edit_btn)
+                .push(delete_btn);
+                
+            let card_layout = column![
+                column![
+                    text(&profile.name)
+                        .color(text_primary)
+                        .size(16)
+                        .font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        }),
+                    text(&profile.url).color(text_muted).size(12),
+                    text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(text_muted).size(11),
+                ]
+                .spacing(6)
+                .width(Length::Fill),
                 row![
-                    column![
-                        text(&profile.name)
-                            .color(text_primary)
-                            .size(16)
-                            .font(iced::Font {
-                                weight: iced::font::Weight::Bold,
-                                ..Default::default()
-                            }),
-                        text(&profile.url).color(text_muted).size(12),
-                        text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(text_muted).size(11),
-                    ]
-                    .spacing(5)
-                    .width(Length::Fill),
-                    row![
-                        select_action,
-                        update_btn,
-                        edit_btn,
-                        delete_btn
-                    ]
-                    .spacing(15)
-                    .align_y(Alignment::Center)
+                    badge_or_spacer,
+                    iced::widget::Space::new().width(Length::Fill),
+                    actions_row
                 ]
                 .align_y(Alignment::Center)
-            )
-            .padding(15)
-            .style(move |theme| {
-                if is_active {
-                    theme::card_selected(theme)
-                } else {
-                    theme::card_bg(theme)
-                }
-            });
+                .width(Length::Fill)
+            ]
+            .spacing(12);
+            
+            let profile_row = container(card_layout)
+                .padding(15)
+                .width(Length::Fill)
+                .style(move |theme| {
+                    if is_active {
+                        theme::card_selected(theme)
+                    } else {
+                        theme::card_bg(theme)
+                    }
+                });
             
             profiles_col = profiles_col.push(profile_row);
         }

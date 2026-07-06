@@ -839,30 +839,24 @@ impl App {
         let sidebar = container(
             column![
                 column![
-                    column![
-                        row![
-                            text("sing-box")
-                                .size(24)
-                                .font(Font {
-                                    weight: iced::font::Weight::Bold,
-                                    ..Default::default()
-                                })
-                                .color(ui::theme::ACCENT_PURPLE),
-                            text("GUI")
-                                .size(12)
-                                .font(Font {
-                                    weight: iced::font::Weight::Light,
-                                    ..Default::default()
-                                })
-                                .color(ui::theme::ACCENT_BLUE),
-                        ]
-                        .spacing(6)
-                        .align_y(Alignment::End),
-                        text("Next-Gen Proxy Client")
-                            .size(11)
-                            .color(ui::theme::text_muted(&active_theme))
+                    row![
+                        text("sing-box")
+                            .size(24)
+                            .font(Font {
+                                weight: iced::font::Weight::Bold,
+                                ..Default::default()
+                            })
+                            .color(ui::theme::ACCENT_PURPLE),
+                        text("GUI")
+                            .size(12)
+                            .font(Font {
+                                weight: iced::font::Weight::Light,
+                                ..Default::default()
+                            })
+                            .color(ui::theme::ACCENT_BLUE),
                     ]
-                    .spacing(4),
+                    .spacing(6)
+                    .align_y(Alignment::End),
                     column![
                         make_tab_btn(Tab::Dashboard, "📊", "tab_dashboard"),
                         make_tab_btn(Tab::Proxies, "⚡", "tab_proxies"),
