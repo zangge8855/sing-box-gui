@@ -48,10 +48,16 @@ pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), Str
     let version = "1.13.14";
     
     #[cfg(target_os = "windows")]
-    let (url, archive_name) = (
-        format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-windows-amd64.zip", version, version),
-        "temp_core.zip"
-    );
+    let (url, archive_name) = {
+        #[cfg(target_arch = "aarch64")]
+        let arch = "windows-arm64";
+        #[cfg(not(target_arch = "aarch64"))]
+        let arch = "windows-amd64";
+        (
+            format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.zip", version, version, arch),
+            "temp_core.zip"
+        )
+    };
     
     #[cfg(target_os = "macos")]
     let (url, archive_name) = {
@@ -66,10 +72,17 @@ pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), Str
     };
     
     #[cfg(target_os = "linux")]
-    let (url, archive_name) = (
-        format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-linux-amd64.tar.gz", version, version),
-        "temp_core.tar.gz"
-    );
+    let (url, archive_name, arch) = {
+        #[cfg(target_arch = "aarch64")]
+        let arch = "linux-arm64";
+        #[cfg(not(target_arch = "aarch64"))]
+        let arch = "linux-amd64";
+        (
+            format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.tar.gz", version, version, arch),
+            "temp_core.tar.gz",
+            arch
+        )
+    };
     
     let temp_archive_path = app_dir.join(archive_name);
     
@@ -149,7 +162,7 @@ pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), Str
         }
         
         // Find extracted binary
-        let extracted_dir = app_dir.join(format!("sing-box-{}-linux-amd64", version));
+        let extracted_dir = app_dir.join(format!("sing-box-{}-{}", version, arch));
         let src_binary = extracted_dir.join("sing-box");
         if src_binary.exists() {
             fs::copy(&src_binary, &dest_path)

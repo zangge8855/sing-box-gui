@@ -13,29 +13,85 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build Release Binary
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        include:
-          - os: windows-latest
-            artifact_name: sing-box-gui-windows-amd64.exe
-            target_path: target/release/sing-box-gui.exe
-          - os: macos-latest
-            artifact_name: sing-box-gui-macos-amd64
-            target_path: target/release/sing-box-gui
-          - os: ubuntu-latest
-            artifact_name: sing-box-gui-linux-amd64
-            target_path: target/release/sing-box-gui
+  build-windows:
+    name: Build Windows Binaries
+    runs-on: windows-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
+    - name: Set up Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: x86_64-pc-windows-msvc, aarch64-pc-windows-msvc
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Build x86_64 Binary
+      run: cargo build --release --target x86_64-pc-windows-msvc
+
+    - name: Build ARM64 Binary
+      run: cargo build --release --target aarch64-pc-windows-msvc
+
+    - name: Prepare Artifacts
+      shell: bash
+      run: |
+        mkdir -p dist
+        cp target/x86_64-pc-windows-msvc/release/sing-box-gui.exe dist/sing-box-gui-windows-amd64.exe
+        cp target/aarch64-pc-windows-msvc/release/sing-box-gui.exe dist/sing-box-gui-windows-arm64.exe
+
+    - name: Upload Windows Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sing-box-gui-windows
+        path: dist/*
+
+  build-macos:
+    name: Build macOS Universal Binary
+    runs-on: macos-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: x86_64-apple-darwin, aarch64-apple-darwin
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Build Intel Binary
+      run: cargo build --release --target x86_64-apple-darwin
+
+    - name: Build Apple Silicon Binary
+      run: cargo build --release --target aarch64-apple-darwin
+
+    - name: Create Universal Binary
+      run: |
+        mkdir -p dist
+        lipo -create \
+          -output dist/sing-box-gui-macos-universal \
+          target/x86_64-apple-darwin/release/sing-box-gui \
+          target/aarch64-apple-darwin/release/sing-box-gui
+
+    - name: Upload macOS Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: sing-box-gui-macos
+        path: dist/*
+
+  build-linux-x64:
+    name: Build Linux x86_64 Binary
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
     - name: Install Linux Dependencies
-      if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
         sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev
@@ -51,29 +107,80 @@ jobs:
     - name: Build in Release mode
       run: cargo build --release
 
-    - name: Rename Artifact
-      shell: bash
+    - name: Prepare Artifact
       run: |
         mkdir -p dist
-        cp ${{ matrix.target_path }} dist/${{ matrix.artifact_name }}
+        cp target/release/sing-box-gui dist/sing-box-gui-linux-amd64
 
-    - name: Upload Build Artifact
+    - name: Upload Linux x64 Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.artifact_name }}
-        path: dist/${{ matrix.artifact_name }}
+        name: sing-box-gui-linux-x64
+        path: dist/*
+
+  build-linux-arm64:
+    name: Build Linux ARM64 Binary
+    runs-on: ubuntu-24.04-arm
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Linux Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev
+
+    - name: Set up Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Build in Release mode
+      run: cargo build --release
+
+    - name: Prepare Artifact
+      run: |
+        mkdir -p dist
+        cp target/release/sing-box-gui dist/sing-box-gui-linux-arm64
+
+    - name: Upload Linux ARM64 Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: sing-box-gui-linux-arm64
+        path: dist/*
 
   release:
     name: Create Release & Upload Assets
-    needs: build
+    needs: [build-windows, build-macos, build-linux-x64, build-linux-arm64]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     steps:
-    - name: Download all artifacts
+    - name: Download Windows artifacts
       uses: actions/download-artifact@v4
       with:
+        name: sing-box-gui-windows
         path: dist/
-        merge-multiple: true
+
+    - name: Download macOS artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: sing-box-gui-macos
+        path: dist/
+
+    - name: Download Linux x64 artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: sing-box-gui-linux-x64
+        path: dist/
+
+    - name: Download Linux ARM64 artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: sing-box-gui-linux-arm64
+        path: dist/
 
     - name: Create Release and Upload Assets
       uses: softprops/action-gh-release@v2
