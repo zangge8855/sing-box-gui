@@ -83,6 +83,19 @@ pub struct GuiConfig {
 
 impl Default for GuiConfig {
     fn default() -> Self {
+        let mut lang = Language::En;
+        #[cfg(target_os = "windows")]
+        {
+            use winreg::RegKey;
+            use winreg::enums::HKEY_CURRENT_USER;
+            if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International") {
+                if let Ok(locale) = hkcu.get_value::<String, _>("LocaleName") {
+                    if locale.to_lowercase().starts_with("zh") {
+                        lang = Language::Zh;
+                    }
+                }
+            }
+        }
         Self {
             subscriptions: Vec::new(),
             active_profile_id: None,
@@ -95,7 +108,7 @@ impl Default for GuiConfig {
             start_on_boot: false,
             tun_mode: false,
             system_proxy_enabled: false,
-            language: Language::En,
+            language: lang,
             selected_node_tag: None,
             fake_ip: false,
             tcp_fast_open: false,

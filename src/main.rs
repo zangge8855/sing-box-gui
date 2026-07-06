@@ -781,8 +781,17 @@ fn set_windows_autostart(enable: bool) -> Result<(), String> {
 }
 
 fn main() -> iced::Result {
+    let icon_bytes = include_bytes!("../assets/logo.jpg");
+    let icon = iced::window::icon::from_file_data(icon_bytes, None).ok();
+    
+    let window_settings = iced::window::Settings {
+        icon,
+        ..Default::default()
+    };
+
     let res = iced::application(App::new, App::update, App::view)
         .title("sing-box GUI")
+        .window(window_settings)
         .subscription(App::subscription)
         .run();
         

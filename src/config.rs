@@ -22,16 +22,40 @@ pub fn get_config_path() -> PathBuf {
 
 pub fn load_gui_config() -> GuiConfig {
     let path = get_config_path();
-    if path.exists() {
-        if let Ok(content) = fs::read_to_string(path) {
-            if let Ok(config) = serde_json::from_str::<GuiConfig>(&content) {
-                return config;
+    let mut config = if path.exists() {
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(cfg) = serde_json::from_str::<GuiConfig>(&content) {
+                cfg
+            } else {
+                GuiConfig::default()
+            }
+        } else {
+            GuiConfig::default()
+        }
+    } else {
+        GuiConfig::default()
+    };
+
+    // One-time migration for existing users to match system locale if not migrated yet
+    let migration_file = get_app_dir().join(".migrated_locale");
+    if !migration_file.exists() {
+        #[cfg(target_os = "windows")]
+        {
+            use winreg::RegKey;
+            use winreg::enums::HKEY_CURRENT_USER;
+            if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International") {
+                if let Ok(locale) = hkcu.get_value::<String, _>("LocaleName") {
+                    if locale.to_lowercase().starts_with("zh") {
+                        config.language = crate::state::Language::Zh;
+                        let _ = save_gui_config(&config);
+                    }
+                }
             }
         }
+        let _ = fs::write(migration_file, "done");
     }
-    let default = GuiConfig::default();
-    let _ = save_gui_config(&default);
-    default
+    
+    config
 }
 
 pub fn save_gui_config(config: &GuiConfig) -> Result<(), String> {
