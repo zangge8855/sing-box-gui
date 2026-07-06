@@ -5,25 +5,28 @@ use crate::state::ProxyNode;
 use crate::ui::theme;
 
 pub fn render<'a>(
+    gui_config: &'a crate::state::GuiConfig,
     nodes: &'a [ProxyNode],
     selected_node: Option<&str>,
     latency_testing: bool,
 ) -> Element<'a, Message> {
+    let lang = gui_config.language;
+    use crate::ui::i18n::tr;
     
     // Header controls
     let speed_test_btn = if latency_testing {
-        button(text("Testing Latency...").size(14))
+        button(text(tr(lang, "testing_latency")).size(14))
             .padding([8, 16])
             .style(theme::button_secondary)
     } else {
-        button(text("Test All Latency").size(14))
+        button(text(tr(lang, "test_latency")).size(14))
             .padding([8, 16])
             .style(theme::button_primary)
             .on_press(Message::StartLatencyTest)
     };
     
     let header = row![
-        text("Proxy Nodes").size(24).color(theme::TEXT_PRIMARY),
+        text(tr(lang, "proxy_nodes")).size(24).color(theme::TEXT_PRIMARY),
         speed_test_btn
     ]
     .spacing(20)
@@ -35,7 +38,7 @@ pub fn render<'a>(
             column![
                 header,
                 container(
-                    text("No nodes found in the active profile. Please select or update a profile.")
+                    text(tr(lang, "no_nodes"))
                         .color(theme::TEXT_MUTED)
                         .size(15)
                 )

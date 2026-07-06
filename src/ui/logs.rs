@@ -4,12 +4,15 @@ use crate::message::Message;
 use crate::ui::theme;
 
 pub fn render<'a>(
+    gui_config: &'a crate::state::GuiConfig,
     log_lines: &'a [String],
 ) -> Element<'a, Message> {
+    let lang = gui_config.language;
+    use crate::ui::i18n::tr;
     
     let header = row![
-        text("Core Logs").size(24).color(theme::TEXT_PRIMARY).width(Length::Fill),
-        button(text("Clear Logs").size(14))
+        text(tr(lang, "console_logs")).size(24).color(theme::TEXT_PRIMARY).width(Length::Fill),
+        button(text(tr(lang, "clear_logs")).size(14))
             .padding([8, 16])
             .style(theme::button_secondary)
             .on_press(Message::NewLogLine("CLEAR_LOG_BUFFER".to_string())) // Clear logs message trigger
@@ -21,7 +24,7 @@ pub fn render<'a>(
     
     if log_lines.is_empty() {
         logs_col = logs_col.push(
-            text("Log buffer is empty. Start the sing-box core to view live logs.")
+            text(tr(lang, "no_logs"))
                 .color(theme::TEXT_MUTED)
                 .font(Font::MONOSPACE)
                 .size(12)

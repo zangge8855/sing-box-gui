@@ -1,0 +1,170 @@
+use crate::state::Language;
+
+pub fn tr(lang: Language, key: &'static str) -> &'static str {
+    match lang {
+        Language::En => match key {
+            // Tabs
+            "tab_dashboard" => "Dashboard",
+            "tab_proxies" => "Proxies",
+            "tab_profiles" => "Profiles",
+            "tab_logs" => "Logs",
+            "tab_settings" => "Settings",
+            
+            // Dashboard
+            "core_status" => "Core Status",
+            "status_running" => "Running",
+            "status_stopped" => "Stopped",
+            "system_proxy" => "System Proxy",
+            "enabled" => "Enabled",
+            "disabled" => "Disabled",
+            "upload" => "Upload",
+            "download" => "Download",
+            "upload_speed" => "Upload Speed",
+            "download_speed" => "Download Speed",
+            "btn_stop_core" => "Stop Core",
+            "btn_start_core" => "Start Core",
+            "btn_disable_proxy" => "Disable Proxy",
+            "btn_enable_proxy" => "Enable Proxy",
+            "speed_history_chart" => "Real-time Speed History",
+            "singbox_core" => "sing-box Core",
+            
+            // Proxies
+            "proxy_nodes" => "Proxy Nodes",
+            "test_latency" => "Test All Latency",
+            "testing_latency" => "Testing Latency...",
+            "no_nodes" => "No nodes found in the active profile. Please select or update a profile.",
+            
+            // Profiles
+            "profile_manager" => "Profile Manager",
+            "btn_download" => "Download",
+            "btn_downloading" => "Downloading...",
+            "sub_url_placeholder" => "Enter clash YAML or sharing subscription URL",
+            "btn_select" => "Select",
+            "btn_delete" => "Delete",
+            "active_profile" => "Active",
+            "import_sub" => "Import New Subscription",
+            "no_profiles" => "No profiles imported yet. Enter a subscription URL above to import.",
+            "updated_at_label" => "Updated",
+            
+            // Logs
+            "console_logs" => "Console Logs",
+            "clear_logs" => "Clear",
+            "no_logs" => "Log buffer is empty. Start the sing-box core to view live logs.",
+            
+            // Settings
+            "ports_config" => "Ports Configuration",
+            "mixed_port" => "Mixed Port",
+            "api_port" => "Clash API Port",
+            "dns_servers" => "DNS Servers",
+            "dns_local" => "DNS Local (Direct)",
+            "dns_remote" => "DNS Remote (Proxy)",
+            "bypass_rules" => "Routing & Rules",
+            "bypass_private" => "Route private IPs directly",
+            "bypass_cn" => "Bypass China Mainland",
+            "sys_integration" => "System Integration",
+            "tun_mode" => "TUN Virtual Network Card (Admin Required)",
+            "auto_sys_proxy" => "Enable System Proxy automatically",
+            "windows_boot" => "Start sing-box GUI on Windows boot",
+            "btn_save_settings" => "Save Settings",
+            "app_language" => "App Language",
+            "core_components" => "Core Components",
+            "core_installed_status" => "sing-box core status: Installed",
+            "core_ver_stable" => " (v1.13.14 stable)",
+            "core_not_found" => "sing-box core: Not Found",
+            "btn_download_core" => "Download & Install sing-box Core",
+            "routing_rule_mode" => "Routing Rule Mode",
+            "routing_rules_desc" => "Rules (Bypass LAN/CN)",
+            "routing_global_desc" => "Global (All Proxy)",
+            "routing_direct_desc" => "Direct (Bypass All)",
+            "mixed_port_label" => "Mixed Port (HTTP+SOCKS)",
+            "api_port_label" => "Clash API Port",
+            "tun_mode_label" => "TUN Mode",
+            "autostart_label" => "Start on Boot",
+            "btn_save_apply" => "Save & Apply Settings",
+            
+            _ => key,
+        },
+        Language::Zh => match key {
+            // Tabs
+            "tab_dashboard" => "控制台",
+            "tab_proxies" => "节点选择",
+            "tab_profiles" => "订阅管理",
+            "tab_logs" => "实时日志",
+            "tab_settings" => "系统设置",
+            
+            // Dashboard
+            "core_status" => "内核状态",
+            "status_running" => "正在运行",
+            "status_stopped" => "已停止",
+            "system_proxy" => "系统代理",
+            "enabled" => "已启用",
+            "disabled" => "已禁用",
+            "upload" => "上传",
+            "download" => "下载",
+            "upload_speed" => "上传速度",
+            "download_speed" => "下载速度",
+            "btn_stop_core" => "停止内核",
+            "btn_start_core" => "启动内核",
+            "btn_disable_proxy" => "禁用代理",
+            "btn_enable_proxy" => "启用代理",
+            "speed_history_chart" => "实时速度历史流量图",
+            "singbox_core" => "sing-box 内核控制",
+            
+            // Proxies
+            "proxy_nodes" => "节点列表",
+            "test_latency" => "测试所有节点延迟",
+            "testing_latency" => "正在测试中...",
+            "no_nodes" => "活动配置文件中没有节点，请选择或更新配置文件。",
+            
+            // Profiles
+            "profile_manager" => "订阅列表",
+            "btn_download" => "下载订阅",
+            "btn_downloading" => "正在下载...",
+            "sub_url_placeholder" => "输入 Clash YAML 或节点分享链接",
+            "btn_select" => "激活",
+            "btn_delete" => "删除",
+            "active_profile" => "当前激活",
+            "import_sub" => "导入新订阅",
+            "no_profiles" => "尚未导入订阅，请在上方输入订阅链接进行下载导入。",
+            "updated_at_label" => "更新时间",
+            
+            // Logs
+            "console_logs" => "控制台日志",
+            "clear_logs" => "清空日志",
+            "no_logs" => "日志缓冲区为空。启动 sing-box 内核即可查看实时运行日志。",
+            
+            // Settings
+            "ports_config" => "网络端口配置",
+            "mixed_port" => "混合代理端口",
+            "api_port" => "Clash API 端口",
+            "dns_servers" => "DNS 服务器设置",
+            "dns_local" => "本地 DNS (直连)",
+            "dns_remote" => "远程 DNS (代理)",
+            "bypass_rules" => "分流规则设定",
+            "bypass_private" => "局域网及私有 IP 直接连接",
+            "bypass_cn" => "绕过中国大陆 (直连)",
+            "sys_integration" => "系统级集成",
+            "tun_mode" => "TUN 虚拟网卡模式 (需要管理员权限)",
+            "auto_sys_proxy" => "启动时自动启用系统代理",
+            "windows_boot" => "开机时自动启动 sing-box GUI",
+            "btn_save_settings" => "保存设置",
+            "app_language" => "界面语言",
+            "core_components" => "内核组件状态",
+            "core_installed_status" => "sing-box 内核状态: 已安装",
+            "core_ver_stable" => " (v1.13.14 稳定版)",
+            "core_not_found" => "sing-box 内核: 未找到",
+            "btn_download_core" => "下载并安装 sing-box 内核",
+            "routing_rule_mode" => "路由规则模式",
+            "routing_rules_desc" => "规则分流 (绕过大陆/局域网)",
+            "routing_global_desc" => "全局代理 (所有流量走代理)",
+            "routing_direct_desc" => "直接连接 (所有流量直连)",
+            "mixed_port_label" => "混合代理端口 (HTTP+SOCKS)",
+            "api_port_label" => "Clash API 端口",
+            "tun_mode_label" => "TUN 虚拟网卡模式",
+            "autostart_label" => "开机自启",
+            "btn_save_apply" => "保存并应用设置",
+            
+            _ => key,
+        }
+    }
+}

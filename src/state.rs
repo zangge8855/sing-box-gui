@@ -43,6 +43,22 @@ pub struct Profile {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Language {
+    #[default]
+    En,
+    Zh,
+}
+
+impl Language {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Language::En => "English",
+            Language::Zh => "简体中文",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuiConfig {
     pub subscriptions: Vec<Profile>,
@@ -56,6 +72,7 @@ pub struct GuiConfig {
     pub start_on_boot: bool,
     pub tun_mode: bool,
     pub system_proxy_enabled: bool,
+    pub language: Language,
 }
 
 impl Default for GuiConfig {
@@ -72,6 +89,7 @@ impl Default for GuiConfig {
             start_on_boot: false,
             tun_mode: false,
             system_proxy_enabled: false,
+            language: Language::En,
         }
     }
 }

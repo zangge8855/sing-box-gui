@@ -401,6 +401,10 @@ impl App {
                     self.gui_config.start_on_boot = !self.gui_config.start_on_boot;
                     // Apply Windows startup boot register changes
                     let _ = set_windows_autostart(self.gui_config.start_on_boot);
+                } else if input == "lang:en" {
+                    self.gui_config.language = state::Language::En;
+                } else if input == "lang:zh" {
+                    self.gui_config.language = state::Language::Zh;
                 }
                 Task::none()
             }
@@ -413,8 +417,10 @@ impl App {
     }
     
     fn view(&self) -> Element<'_, Message> {
-        let make_tab_btn = |tab: Tab, label: &'static str| {
+        let lang = self.gui_config.language;
+        let make_tab_btn = |tab: Tab, icon: &str, key: &'static str| {
             let active = self.current_tab == tab;
+            let label = format!("{} {}", icon, ui::i18n::tr(lang, key));
             button(
                 text(label)
                     .size(14)
@@ -440,11 +446,11 @@ impl App {
                     })
                     .color(ui::theme::ACCENT_PURPLE),
                 column![
-                    make_tab_btn(Tab::Dashboard, "📊 Dashboard"),
-                    make_tab_btn(Tab::Proxies, "⚡ Proxies"),
-                    make_tab_btn(Tab::Profiles, "📂 Profiles"),
-                    make_tab_btn(Tab::Logs, "📝 Logs"),
-                    make_tab_btn(Tab::Settings, "⚙️ Settings"),
+                    make_tab_btn(Tab::Dashboard, "📊", "tab_dashboard"),
+                    make_tab_btn(Tab::Proxies, "⚡", "tab_proxies"),
+                    make_tab_btn(Tab::Profiles, "📂", "tab_profiles"),
+                    make_tab_btn(Tab::Logs, "📝", "tab_logs"),
+                    make_tab_btn(Tab::Settings, "⚙️", "tab_settings"),
                 ]
                 .spacing(8)
             ]
@@ -465,6 +471,7 @@ impl App {
                 &self.speed_history,
             ),
             Tab::Proxies => ui::proxies::render(
+                &self.gui_config,
                 &self.active_profile_nodes,
                 self.selected_node_tag.as_deref(),
                 self.latency_testing,
@@ -474,7 +481,7 @@ impl App {
                 &self.url_input,
                 self.downloading,
             ),
-            Tab::Logs => ui::logs::render(&self.log_lines),
+            Tab::Logs => ui::logs::render(&self.gui_config, &self.log_lines),
             Tab::Settings => ui::settings::render(
                 &self.gui_config,
                 self.core_installed,

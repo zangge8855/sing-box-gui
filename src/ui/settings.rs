@@ -10,22 +10,25 @@ pub fn render<'a>(
     install_message: Option<&'a str>,
 ) -> Element<'a, Message> {
     
+    let lang = gui_config.language;
+    use crate::ui::i18n::tr;
+    
     // Core Status / Downloader Card
     let core_downloader = if core_installed {
         row![
-            text("sing-box core status: Installed").color(theme::SUCCESS).size(14),
-            text(" (v1.13.14 stable)").color(theme::TEXT_MUTED).size(12)
+            text(tr(lang, "core_installed_status")).color(theme::SUCCESS).size(14),
+            text(tr(lang, "core_ver_stable")).color(theme::TEXT_MUTED).size(12)
         ]
         .spacing(5)
         .align_y(Alignment::Center)
     } else {
-        let btn = button(text("Download & Install sing-box Core").size(13))
+        let btn = button(text(tr(lang, "btn_download_core")).size(13))
             .padding([8, 16])
             .style(theme::button_primary)
             .on_press(Message::NewLogLine("TRIGGER_CORE_DOWNLOAD".to_string()));
             
         row![
-            text("sing-box core: Not Found").color(theme::DANGER).size(14),
+            text(tr(lang, "core_not_found")).color(theme::DANGER).size(14),
             btn
         ]
         .spacing(20)
@@ -40,7 +43,7 @@ pub fn render<'a>(
     
     let core_card = container(
         column![
-            text("Core Components").color(theme::TEXT_MUTED).size(13),
+            text(tr(lang, "core_components")).color(theme::TEXT_MUTED).size(13),
             core_downloader,
             install_status_row
         ]
@@ -50,11 +53,11 @@ pub fn render<'a>(
     .style(theme::card_bg);
     
     // Routing Mode Selector
-    let routing_label = text("Routing Rule Mode").color(theme::TEXT_MUTED).size(13);
+    let routing_label = text(tr(lang, "routing_rule_mode")).color(theme::TEXT_MUTED).size(13);
     
-    let make_mode_btn = |mode: RoutingMode, label: &'static str| {
+    let make_mode_btn = |mode: RoutingMode, key: &'static str| {
         let active = gui_config.routing_mode == mode;
-        let btn = button(text(label).size(13))
+        let btn = button(text(tr(lang, key)).size(13))
             .padding([8, 16])
             .style(move |theme, status| {
                 if active {
@@ -72,9 +75,9 @@ pub fn render<'a>(
     };
     
     let routing_row = row![
-        make_mode_btn(RoutingMode::Rule, "Rules (Bypass LAN/CN)"),
-        make_mode_btn(RoutingMode::Global, "Global (All Proxy)"),
-        make_mode_btn(RoutingMode::Direct, "Direct (Bypass All)")
+        make_mode_btn(RoutingMode::Rule, "routing_rules_desc"),
+        make_mode_btn(RoutingMode::Global, "routing_global_desc"),
+        make_mode_btn(RoutingMode::Direct, "routing_direct_desc")
     ]
     .spacing(15);
     
@@ -103,11 +106,11 @@ pub fn render<'a>(
         
     let ports_row = row![
         column![
-            text("Mixed Port (HTTP+SOCKS)").color(theme::TEXT_MUTED).size(12),
+            text(tr(lang, "mixed_port_label")).color(theme::TEXT_MUTED).size(12),
             mixed_port_input
         ].spacing(5),
         column![
-            text("Clash API Port").color(theme::TEXT_MUTED).size(12),
+            text(tr(lang, "api_port_label")).color(theme::TEXT_MUTED).size(12),
             api_port_input
         ].spacing(5),
     ]
@@ -115,14 +118,14 @@ pub fn render<'a>(
     
     // TUN mode & autostart checkboxes toggles
     let tun_btn = button(
-        text(if gui_config.tun_mode { "TUN Mode: ON" } else { "TUN Mode: OFF" }).size(13)
+        text(format!("{}: {}", tr(lang, "tun_mode_label"), if gui_config.tun_mode { "ON" } else { "OFF" })).size(13)
     )
     .padding([8, 16])
     .style(if gui_config.tun_mode { theme::button_primary } else { theme::button_secondary })
     .on_press(Message::PortInputChanged("toggle_tun".to_string()));
     
     let autostart_btn = button(
-        text(if gui_config.start_on_boot { "Start on Boot: ON" } else { "Start on Boot: OFF" }).size(13)
+        text(format!("{}: {}", tr(lang, "autostart_label"), if gui_config.start_on_boot { "ON" } else { "OFF" })).size(13)
     )
     .padding([8, 16])
     .style(if gui_config.start_on_boot { theme::button_primary } else { theme::button_secondary })
@@ -136,7 +139,7 @@ pub fn render<'a>(
     
     let settings_card = container(
         column![
-            text("Core Network Settings").color(theme::TEXT_MUTED).size(13),
+            text(tr(lang, "ports_config")).color(theme::TEXT_MUTED).size(13),
             ports_row,
             toggles_row
         ]
@@ -160,11 +163,11 @@ pub fn render<'a>(
         
     let dns_row = row![
         column![
-            text("Local DNS Server").color(theme::TEXT_MUTED).size(12),
+            text(tr(lang, "dns_local")).color(theme::TEXT_MUTED).size(12),
             dns_local_input
         ].spacing(5),
         column![
-            text("Remote DNS Server").color(theme::TEXT_MUTED).size(12),
+            text(tr(lang, "dns_remote")).color(theme::TEXT_MUTED).size(12),
             dns_remote_input
         ].spacing(5),
     ]
@@ -172,7 +175,7 @@ pub fn render<'a>(
     
     let dns_card = container(
         column![
-            text("DNS Configuration").color(theme::TEXT_MUTED).size(13),
+            text(tr(lang, "dns_servers")).color(theme::TEXT_MUTED).size(13),
             dns_row
         ]
         .spacing(15)
@@ -180,19 +183,62 @@ pub fn render<'a>(
     .padding(20)
     .style(theme::card_bg);
     
+    // Language card
+    let lang_label = text(tr(lang, "app_language")).color(theme::TEXT_MUTED).size(13);
+    
+    let make_lang_btn = |target_lang: crate::state::Language, label: &'static str| {
+        let active = gui_config.language == target_lang;
+        let btn = button(text(label).size(13))
+            .padding([8, 16])
+            .style(move |theme, status| {
+                if active {
+                    theme::button_primary(theme, status)
+                } else {
+                    theme::button_secondary(theme, status)
+                }
+            });
+            
+        if active {
+            btn
+        } else {
+            let msg_str = match target_lang {
+                crate::state::Language::En => "lang:en",
+                crate::state::Language::Zh => "lang:zh",
+            };
+            btn.on_press(Message::PortInputChanged(msg_str.to_string()))
+        }
+    };
+    
+    let lang_row = row![
+        make_lang_btn(crate::state::Language::En, "English"),
+        make_lang_btn(crate::state::Language::Zh, "简体中文")
+    ]
+    .spacing(15);
+    
+    let lang_card = container(
+        column![
+            lang_label,
+            lang_row
+        ]
+        .spacing(10)
+    )
+    .padding(20)
+    .style(theme::card_bg);
+    
     // Save button
-    let save_btn = button(text("Save & Apply Settings").size(14))
+    let save_btn = button(text(tr(lang, "btn_save_apply")).size(14))
         .padding([10, 20])
         .style(theme::button_primary)
         .on_press(Message::SaveSettings);
         
     container(
         column![
-            text("Settings").size(24).color(theme::TEXT_PRIMARY),
+            text(tr(lang, "tab_settings")).size(24).color(theme::TEXT_PRIMARY),
             core_card,
             routing_card,
             settings_card,
             dns_card,
+            lang_card,
             save_btn
         ]
         .spacing(20)

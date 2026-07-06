@@ -15,27 +15,29 @@ fn format_speed(bytes: u64) -> String {
 }
 
 pub fn render<'a>(
-    _gui_config: &'a GuiConfig,
+    gui_config: &'a GuiConfig,
     core_running: bool,
     sys_proxy_enabled: bool,
     current_speed: &Bandwidth,
     speed_history: &[(u64, u64)],
 ) -> Element<'a, Message> {
+    let lang = gui_config.language;
+    use crate::ui::i18n::tr;
     
     // Core Status Section
     let status_indicator = if core_running {
-        text("Running").color(theme::SUCCESS).size(18)
+        text(tr(lang, "status_running")).color(theme::SUCCESS).size(18)
     } else {
-        text("Stopped").color(theme::DANGER).size(18)
+        text(tr(lang, "status_stopped")).color(theme::DANGER).size(18)
     };
     
     let core_control_btn = if core_running {
-        button(text("Stop Core").size(14))
+        button(text(tr(lang, "btn_stop_core")).size(14))
             .padding([10, 20])
             .style(theme::button_danger)
             .on_press(Message::ToggleCore)
     } else {
-        button(text("Start Core").size(14))
+        button(text(tr(lang, "btn_start_core")).size(14))
             .padding([10, 20])
             .style(theme::button_primary)
             .on_press(Message::ToggleCore)
@@ -43,7 +45,7 @@ pub fn render<'a>(
     
     let core_card = container(
         column![
-            text("sing-box Core").color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "singbox_core")).color(theme::TEXT_MUTED).size(14),
             row![
                 status_indicator,
                 core_control_btn
@@ -59,13 +61,13 @@ pub fn render<'a>(
     
     // System Proxy Control Section
     let sys_proxy_indicator = if sys_proxy_enabled {
-        text("Active").color(theme::SUCCESS).size(18)
+        text(tr(lang, "enabled")).color(theme::SUCCESS).size(18)
     } else {
-        text("Inactive").color(theme::TEXT_MUTED).size(18)
+        text(tr(lang, "disabled")).color(theme::TEXT_MUTED).size(18)
     };
     
     let sys_proxy_btn = button(
-        text(if sys_proxy_enabled { "Disable Proxy" } else { "Enable Proxy" }).size(14)
+        text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") }).size(14)
     )
     .padding([10, 20])
     .style(if sys_proxy_enabled { theme::button_danger } else { theme::button_primary })
@@ -73,7 +75,7 @@ pub fn render<'a>(
     
     let proxy_card = container(
         column![
-            text("System Proxy").color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "system_proxy")).color(theme::TEXT_MUTED).size(14),
             row![
                 sys_proxy_indicator,
                 sys_proxy_btn
@@ -97,7 +99,7 @@ pub fn render<'a>(
     // Speed Stats cards
     let download_card = container(
         column![
-            text("Download").color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "download")).color(theme::TEXT_MUTED).size(14),
             text(format_speed(current_speed.down))
                 .color(theme::ACCENT_BLUE)
                 .size(28),
@@ -110,7 +112,7 @@ pub fn render<'a>(
     
     let upload_card = container(
         column![
-            text("Upload").color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "upload")).color(theme::TEXT_MUTED).size(14),
             text(format_speed(current_speed.up))
                 .color(theme::ACCENT_PURPLE)
                 .size(28),
@@ -185,7 +187,7 @@ pub fn render<'a>(
         
     let chart_card = container(
         column![
-            text("Real-time Speed History").color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "speed_history_chart")).color(theme::TEXT_MUTED).size(14),
             chart_svg
         ]
         .spacing(10)
@@ -196,7 +198,7 @@ pub fn render<'a>(
     // Overall view layout
     container(
         column![
-            text("Dashboard").size(24).color(theme::TEXT_PRIMARY),
+            text(tr(lang, "tab_dashboard")).size(24).color(theme::TEXT_PRIMARY),
             controls_row,
             speed_row,
             chart_card

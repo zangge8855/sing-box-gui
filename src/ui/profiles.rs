@@ -10,21 +10,24 @@ pub fn render<'a>(
     downloading: bool,
 ) -> Element<'a, Message> {
     
+    let lang = gui_config.language;
+    use crate::ui::i18n::tr;
+    
     // Title
-    let title = text("Profiles & Subscriptions").size(24).color(theme::TEXT_PRIMARY);
+    let title = text(tr(lang, "tab_profiles")).size(24).color(theme::TEXT_PRIMARY);
     
     // Add subscription input form
-    let input = text_input("Paste Clash YAML Subscription URL here...", url_input)
+    let input = text_input(tr(lang, "sub_url_placeholder"), url_input)
         .on_input(Message::SubscriptionInputChanged)
         .padding(12)
         .style(theme::input_field);
         
     let download_btn = if downloading {
-        button(text("Downloading...").size(14))
+        button(text(tr(lang, "btn_downloading")).size(14))
             .padding([12, 24])
             .style(theme::button_secondary)
     } else {
-        button(text("Add & Download").size(14))
+        button(text(tr(lang, "btn_download")).size(14))
             .padding([12, 24])
             .style(theme::button_primary)
             .on_press(Message::DownloadSubscription)
@@ -32,7 +35,7 @@ pub fn render<'a>(
     
     let add_form = container(
         column![
-            text("Import New Subscription").color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "import_sub")).color(theme::TEXT_MUTED).size(14),
             row![
                 input,
                 download_btn
@@ -51,7 +54,7 @@ pub fn render<'a>(
     if gui_config.subscriptions.is_empty() {
         profiles_col = profiles_col.push(
             container(
-                text("No profiles imported yet. Enter a subscription URL above to import.")
+                text(tr(lang, "no_profiles"))
                     .color(theme::TEXT_MUTED)
                     .size(14)
             )
@@ -64,7 +67,7 @@ pub fn render<'a>(
             let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
             
             let status_badge = if is_active {
-                container(text("Active").color(theme::TEXT_PRIMARY).size(12))
+                container(text(tr(lang, "active_profile")).color(theme::TEXT_PRIMARY).size(12))
                     .padding([4, 8])
                     .style(|_theme| container::Style {
                         background: Some(iced::Background::Color(theme::SUCCESS)),
@@ -75,7 +78,7 @@ pub fn render<'a>(
                         ..Default::default()
                     })
             } else {
-                container(text("Select").color(theme::TEXT_MUTED).size(12))
+                container(text(tr(lang, "btn_select")).color(theme::TEXT_MUTED).size(12))
                     .padding([4, 8])
                     .style(theme::card_bg)
             };
@@ -90,7 +93,7 @@ pub fn render<'a>(
                     .on_press(Message::SelectProfile(profile.id.clone()))
             };
             
-            let delete_btn = button(text("Delete").size(12).color(theme::TEXT_PRIMARY))
+            let delete_btn = button(text(tr(lang, "btn_delete")).size(12).color(theme::TEXT_PRIMARY))
                 .padding([6, 12])
                 .style(theme::button_danger)
                 .on_press(Message::DeleteProfile(profile.id.clone()));
@@ -106,7 +109,7 @@ pub fn render<'a>(
                                 ..Default::default()
                             }),
                         text(&profile.url).color(theme::TEXT_MUTED).size(12),
-                        text(format!("Updated: {}", profile.updated_at)).color(theme::TEXT_MUTED).size(11),
+                        text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(theme::TEXT_MUTED).size(11),
                     ]
                     .spacing(5)
                     .width(Length::Fill),
