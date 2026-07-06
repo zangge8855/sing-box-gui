@@ -1,6 +1,13 @@
 # sing-box GUI
 
-一个用纯 Rust + [Iced 0.14.0](https://github.com/iced-rs/iced) 编写的高颜值、功能丰富、逻辑清晰的 sing-box 客户端，专为 Windows 平台进行原生适配与美化。
+![Build Status](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml/badge.svg)
+![Version](https://img.shields.io/badge/version-2026.7.6-blue.svg)
+
+<p align="center">
+  <img src="assets/icon.jpg" alt="sing-box GUI Logo" width="128" height="128" style="border-radius: 20px;"/>
+</p>
+
+一个用纯 Rust + [Iced 0.14.0](https://github.com/iced-rs/iced) 编写的高颜值、功能丰富、逻辑清晰的 sing-box 客户端，专为 Windows 平台进行原生适配与美化。 本次发布版本号为 **2026.7.6**。
 
 ## 🌟 核心特性
 
