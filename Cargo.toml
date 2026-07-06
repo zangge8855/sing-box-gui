@@ -1,0 +1,22 @@
+[package]
+name = "sing-box-gui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iced = { version = "0.14.0", features = ["tokio", "canvas", "image", "svg"] }
+tokio = { version = "1.38", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+sysproxy = "0.3.0"
+zip = "2.0"
+winreg = "0.52"
+url = "2.5"
+base64 = "0.22"
+chrono = "0.4"
+futures = "0.3"
+futures-util = "0.3"
+tempfile = "3.10"
+urlencoding = "2.1"
