@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, svg, text};
+use iced::widget::{button, column, container, row, scrollable, svg, text};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
@@ -273,16 +273,20 @@ pub fn render<'a>(
     .style(theme::card_bg);
     
     // Overall view layout
+    let main_col = column![
+        text(tr(lang, "tab_dashboard")).size(24).color(text_primary),
+        controls_row,
+        info_row,
+        speed_row,
+        chart_card
+    ]
+    .spacing(25)
+    .max_width(800);
+
     container(
-        column![
-            text(tr(lang, "tab_dashboard")).size(24).color(text_primary),
-            controls_row,
-            info_row,
-            speed_row,
-            chart_card
-        ]
-        .spacing(25)
-        .max_width(800)
+        scrollable(main_col)
+            .height(Length::Fill)
+            .width(Length::Fill)
     )
     .padding(20)
     .into()

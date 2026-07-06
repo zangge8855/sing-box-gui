@@ -258,9 +258,22 @@ pub fn render<'a>(
         .width(Length::Fill)
         .height(Length::Fill);
         
+        let divider = container(iced::widget::Space::new())
+            .width(1)
+            .height(Length::Fill)
+            .style(|theme| container::Style {
+                background: Some(iced::Background::Color(if theme::is_dark(theme) {
+                    theme::BORDER_DARK
+                } else {
+                    theme::BORDER_LIGHT
+                })),
+                ..Default::default()
+            });
+
         container(
             row![
                 left_pane,
+                divider,
                 right_pane
             ]
             .spacing(20)
