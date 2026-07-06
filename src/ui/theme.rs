@@ -10,16 +10,16 @@ pub const CARD_LIGHT: Color = Color::from_rgb(0.12, 0.15, 0.19);   // #1f2630
 pub const CARD_HOVER: Color = Color::from_rgb(0.14, 0.17, 0.22);   // #242b38
 pub const BORDER_DARK: Color = Color::from_rgb(0.18, 0.22, 0.28);   // #2d3748
 pub const TEXT_PRIMARY: Color = Color::from_rgb(0.95, 0.96, 0.98);  // #f3f4f9
-pub const TEXT_MUTED: Color = Color::from_rgb(0.61, 0.64, 0.69);    // #9ca3af
+pub const TEXT_MUTED: Color = Color::from_rgb(0.65, 0.68, 0.73);    // Slightly brighter for readability
 
 // Light mode palette
 pub const BG_LIGHT: Color = Color::from_rgb(0.95, 0.96, 0.98);      // #f3f4f8
 pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb(0.91, 0.92, 0.95); // #e8ebf2
 pub const CARD_LIGHT_BG: Color = Color::from_rgb(1.0, 1.0, 1.0);    // #ffffff
 pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb(0.93, 0.95, 0.99); // #edf2fc
-pub const BORDER_LIGHT: Color = Color::from_rgb(0.88, 0.90, 0.94);   // #e2e5eb
+pub const BORDER_LIGHT: Color = Color::from_rgb(0.85, 0.88, 0.92);   // Slightly darker border for definition
 pub const TEXT_PRIMARY_LIGHT: Color = Color::from_rgb(0.09, 0.11, 0.14); // #161b24
-pub const TEXT_MUTED_LIGHT: Color = Color::from_rgb(0.45, 0.48, 0.52);   // #737a85
+pub const TEXT_MUTED_LIGHT: Color = Color::from_rgb(0.40, 0.44, 0.48);   // Darker for readability
 
 // Accent colors (work well in both light & dark)
 pub const ACCENT_PURPLE: Color = Color::from_rgb(0.55, 0.36, 0.96); // #8b5cf6
@@ -303,20 +303,21 @@ pub fn console_bg(theme: &iced::Theme) -> container::Style {
 // Text Inputs
 pub fn input_field(theme: &iced::Theme, status: text_input::Status) -> text_input::Style {
     let dark = is_dark(theme);
-    let border_default = if dark { BORDER_DARK } else { BORDER_LIGHT };
+    let border_default = if dark { Color::from_rgb(0.22, 0.26, 0.32) } else { BORDER_LIGHT };
     let border_color = match status {
         text_input::Status::Focused { .. } => ACCENT_PURPLE,
         text_input::Status::Hovered => {
             if dark {
-                Color::from_rgb(0.30, 0.36, 0.45)
+                Color::from_rgb(0.35, 0.40, 0.48)
             } else {
-                Color::from_rgb(0.70, 0.75, 0.82)
+                Color::from_rgb(0.60, 0.65, 0.72)
             }
         }
         _ => border_default,
     };
     
-    let bg = if dark { CARD_DARK } else { CARD_LIGHT_BG };
+    // Use the main background color for inputs to make them sink into the card
+    let bg = if dark { BG_DARK } else { BG_LIGHT };
     let text = if dark { TEXT_PRIMARY } else { TEXT_PRIMARY_LIGHT };
     let placeholder = if dark { TEXT_MUTED } else { TEXT_MUTED_LIGHT };
     

@@ -132,14 +132,19 @@ pub fn render<'a>(
     
     let rules_row = row![left_column, right_column].spacing(20);
     
+    let main_col = column![
+        title,
+        scrollable(rules_row).height(Length::Fill)
+    ]
+    .spacing(20);
+    
     container(
-        column![
-            title,
-            scrollable(rules_row).height(Length::Fill)
-        ]
-        .spacing(20)
+        container(main_col)
+            .max_width(1000.0)
+            .center_x(Length::Fill)
+            .padding([30, 20])
     )
-    .padding(20)
     .height(Length::Fill)
+    .width(Length::Fill)
     .into()
 }

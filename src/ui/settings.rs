@@ -338,29 +338,6 @@ pub fn render<'a>(
         .padding([10, 20])
         .style(theme::button_primary)
         .on_press(Message::SaveSettings);
-        
-    let left_column = column![
-        routing_card,
-        settings_card,
-        dns_card,
-    ]
-    .spacing(20)
-    .width(Length::FillPortion(1));
-
-    let right_column = column![
-        core_card,
-        lang_card,
-        theme_card,
-    ]
-    .spacing(20)
-    .width(Length::FillPortion(1));
-
-    let columns_row = row![
-        left_column,
-        right_column
-    ]
-    .spacing(20)
-    .width(Length::Fill);
 
     // Generate config preview string
     let preview_json = crate::config::generate_preview_config(gui_config);
@@ -393,37 +370,61 @@ pub fn render<'a>(
                 }
             })
         ]
-        .spacing(10)
+        .spacing(20)
     )
-    .padding(20)
+    .padding([20, 30])
     .width(Length::Fill)
-    .style(theme::card_bg);
-
-    let scroll_content = scrollable(
+    .max_width(800.0)
+    .center_x(Length::Fill);
+    
+    let main_content = container(
         column![
-            columns_row,
+            routing_card,
+            settings_card,
+            dns_card,
+            core_card,
+            lang_card,
+            theme_card,
             preview_card
         ]
         .spacing(20)
+    )
+    .width(Length::Fill)
+    .max_width(800.0)
+    .center_x(Length::Fill);
+    
+    // Header row with Title and Save button
+    let header_row = container(
+        row![
+            text(tr(lang, "settings")).size(24).color(text_primary),
+            iced::widget::Space::new().width(Length::Fill),
+            save_btn
+        ]
+        .align_y(Alignment::Center)
         .width(Length::Fill)
     )
-    .height(Length::Fill)
-    .width(Length::Fill);
-        
-    container(
-        column![
-            row![
-                text(tr(lang, "tab_settings")).size(24).color(text_primary).width(Length::Fill),
-                save_btn
-            ]
-            .align_y(Alignment::Center)
-            .spacing(20),
-            scroll_content
-        ]
-        .spacing(20)
-        .max_width(1000)
-        .height(Length::Fill)
+    .max_width(800.0)
+    .center_x(Length::Fill)
+    .padding([0, 30]);
+
+    let content_col = column![
+        header_row,
+        main_content
+    ]
+    .spacing(20)
+    .width(Length::Fill)
+    .align_x(Alignment::Center);
+
+    let scroll_content = scrollable(
+        container(content_col)
+            .padding([30, 20])
+            .width(Length::Fill)
+            .center_x(Length::Fill)
     )
-    .padding(20)
-    .into()
+    .height(Length::Fill);
+
+    container(scroll_content)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }

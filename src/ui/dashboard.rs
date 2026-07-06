@@ -67,23 +67,6 @@ pub fn render<'a>(
         .on_press(Message::ToggleCore)
     };
     
-    let core_card = container(
-        column![
-            text(tr(lang, "singbox_core")).color(text_muted).size(13),
-            row![
-                status_indicator,
-                core_control_btn
-            ]
-            .width(Length::Fill)
-            .align_y(Alignment::Center)
-            .spacing(20)
-        ]
-        .spacing(15)
-    )
-    .padding(25)
-    .width(Length::FillPortion(1))
-    .style(theme::status_card);
-    
     // System Proxy Control Section
     let sys_proxy_indicator = if sys_proxy_enabled {
         text(tr(lang, "enabled")).color(theme::SUCCESS).size(18).width(Length::Fill)
@@ -101,41 +84,43 @@ pub fn render<'a>(
     .width(Length::Fixed(150.0))
     .style(if sys_proxy_enabled { theme::button_danger } else { theme::button_primary })
     .on_press(Message::ToggleSystemProxy);
-    
-    let proxy_card = container(
+
+    let system_control_card = container(
         column![
-            text(tr(lang, "system_proxy")).color(text_muted).size(13),
             row![
+                text(tr(lang, "singbox_core")).color(text_muted).size(13).width(Length::Fixed(120.0)),
+                status_indicator,
+                core_control_btn
+            ]
+            .width(Length::Fill)
+            .align_y(Alignment::Center)
+            .spacing(15),
+            
+            row![
+                text(tr(lang, "system_proxy")).color(text_muted).size(13).width(Length::Fixed(120.0)),
                 sys_proxy_indicator,
                 sys_proxy_btn
             ]
             .width(Length::Fill)
             .align_y(Alignment::Center)
-            .spacing(20)
+            .spacing(15)
         ]
-        .spacing(15)
+        .spacing(20)
     )
     .padding(25)
-    .width(Length::FillPortion(1))
+    .width(Length::Fill)
     .style(theme::status_card);
-    
-    // Combined controls row
-    let controls_row = row![
-        core_card,
-        proxy_card
-    ]
-    .spacing(20);
 
     // Connection info summary row
     let make_mode_btn = |mode: RoutingMode, key: &'static str| {
         let active = gui_config.routing_mode == mode;
         let btn = button(
             text(tr(lang, key))
-                .size(12)
+                .size(13)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
         )
-        .padding([6, 12])
+        .padding([8, 12])
         .width(Length::Fill)
         .style(move |theme, status| {
             if active {
@@ -157,35 +142,19 @@ pub fn render<'a>(
         make_mode_btn(RoutingMode::Global, "mode_global"),
         make_mode_btn(RoutingMode::Direct, "mode_direct")
     ]
-    .spacing(8);
+    .spacing(10)
+    .width(Length::Fill);
 
     let mode_card = container(
         column![
-            text(tr(lang, "active_mode")).color(text_muted).size(12),
+            text(tr(lang, "active_mode")).color(text_muted).size(13),
             mode_buttons
         ]
-        .spacing(8)
+        .spacing(15)
     )
-    .padding(16)
-    .width(Length::FillPortion(1))
+    .padding(25)
+    .width(Length::Fill)
     .style(theme::card_bg);
-
-    let port_card = container(
-        column![
-            text(tr(lang, "listen_port")).color(text_muted).size(12),
-            text(format!("{}", gui_config.mixed_port)).color(text_primary).size(20),
-        ]
-        .spacing(6)
-    )
-    .padding(16)
-    .width(Length::FillPortion(1))
-    .style(theme::card_bg);
-
-    let info_row = row![
-        mode_card,
-        port_card
-    ]
-    .spacing(20);
 
     // Speed Stats cards
     let download_card = container(
@@ -303,21 +272,42 @@ pub fn render<'a>(
     .style(theme::card_bg);
     
     // Overall view layout
-    let main_col = column![
-        text(tr(lang, "tab_dashboard")).size(24).color(text_primary),
-        controls_row,
-        info_row,
+    let main_content = column![
+        system_control_card,
+        mode_card,
         speed_row,
         chart_card
     ]
-    .spacing(25)
-    .max_width(800);
+    .spacing(20)
+    .width(Length::Fill)
+    .max_width(800.0);
+
+    let header_row = container(
+        row![
+            text(tr(lang, "tab_dashboard")).size(24).color(text_primary)
+        ]
+        .width(Length::Fill)
+    )
+    .max_width(800.0)
+    .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 10.0, left: 0.0 });
+
+    let content_col = column![
+        header_row,
+        main_content
+    ]
+    .spacing(10)
+    .width(Length::Fill)
+    .align_x(Alignment::Center);
 
     container(
-        scrollable(main_col)
-            .height(Length::Fill)
-            .width(Length::Fill)
+        scrollable(
+            container(content_col)
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+                .padding(iced::Padding { top: 10.0, right: 20.0, bottom: 30.0, left: 20.0 })
+        )
+        .height(Length::Fill)
     )
-    .padding(20)
+    .padding(0)
     .into()
 }

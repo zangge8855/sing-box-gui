@@ -182,7 +182,7 @@ pub fn render<'a>(
             .spacing(12);
             
             let profile_row = container(card_layout)
-                .padding(15)
+                .padding(25)
                 .width(Length::Fill)
                 .style(move |theme| {
                     if is_active {
@@ -212,7 +212,14 @@ pub fn render<'a>(
     main_layout_col = main_layout_col.push(text(tr(lang, "imported_profiles")).color(text_muted).size(14));
     main_layout_col = main_layout_col.push(scroll_list);
     
-    container(main_layout_col)
-        .padding(20)
-        .into()
+    container(
+        container(main_layout_col)
+            .width(Length::Fill)
+            .max_width(800.0)
+            .center_x(Length::Fill)
+            .padding(30)
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
