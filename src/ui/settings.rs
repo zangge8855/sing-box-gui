@@ -1,5 +1,5 @@
-use iced::widget::{button, column, container, row, text, text_input};
-use iced::{Alignment, Element};
+use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{GuiConfig, RoutingMode};
 use crate::ui::theme;
@@ -322,19 +322,46 @@ pub fn render<'a>(
         .style(theme::button_primary)
         .on_press(Message::SaveSettings);
         
+    let left_column = column![
+        routing_card,
+        settings_card,
+        dns_card,
+    ]
+    .spacing(20)
+    .width(Length::FillPortion(1));
+
+    let right_column = column![
+        core_card,
+        lang_card,
+        theme_card,
+    ]
+    .spacing(20)
+    .width(Length::FillPortion(1));
+
+    let columns_row = row![
+        left_column,
+        right_column
+    ]
+    .spacing(20)
+    .width(Length::Fill);
+
+    let scroll_content = scrollable(columns_row)
+        .height(Length::Fill)
+        .width(Length::Fill);
+        
     container(
         column![
-            text(tr(lang, "tab_settings")).size(24).color(text_primary),
-            core_card,
-            routing_card,
-            settings_card,
-            dns_card,
-            lang_card,
-            theme_card,
-            save_btn
+            row![
+                text(tr(lang, "tab_settings")).size(24).color(text_primary).width(Length::Fill),
+                save_btn
+            ]
+            .align_y(Alignment::Center)
+            .spacing(20),
+            scroll_content
         ]
         .spacing(20)
-        .max_width(800)
+        .max_width(1000)
+        .height(Length::Fill)
     )
     .padding(20)
     .into()

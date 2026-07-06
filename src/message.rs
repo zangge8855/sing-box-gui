@@ -3,6 +3,7 @@ use crate::state::{Tab, RoutingMode};
 #[derive(Debug, Clone)]
 pub enum Message {
     TabChanged(Tab),
+    NodeSearchChanged(String),
     ToggleCore,
     CoreStatusChanged(bool),
     NewLogLine(String),

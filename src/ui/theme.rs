@@ -119,12 +119,22 @@ pub fn status_card(theme: &iced::Theme) -> container::Style {
         Color::from_rgb(0.97, 0.98, 0.99)
     };
     let border = if is_dark(theme) { BORDER_DARK } else { BORDER_LIGHT };
+    let shadow_color = if is_dark(theme) {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.15)
+    } else {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+    };
     container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
             color: border,
             width: 1.0,
             radius: 8.0.into(),
+        },
+        shadow: Shadow {
+            color: shadow_color,
+            offset: iced::Vector::new(0.0, 2.0),
+            blur_radius: 8.0,
         },
         ..Default::default()
     }

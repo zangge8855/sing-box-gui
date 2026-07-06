@@ -24,7 +24,7 @@ mod ui;
 
 use std::sync::{Mutex, OnceLock};
 use tokio::sync::mpsc;
-use iced::{Element, Length, Subscription, Task, Font};
+use iced::{Alignment, Element, Length, Subscription, Task, Font};
 use iced::widget::{button, column, container, row, text};
 use state::{Bandwidth, GuiConfig, Profile, ProxyNode, Tab};
 use message::Message;
@@ -71,6 +71,8 @@ struct App {
     url_input: String,
     core_installed: bool,
     core_install_msg: Option<String>,
+    node_search: String,
+    profile_error: Option<String>,
 }
 
 impl App {
@@ -111,6 +113,8 @@ impl App {
             url_input: String::new(),
             core_installed,
             core_install_msg: None,
+            node_search: String::new(),
+            profile_error: None,
         };
         
         // Load active profile nodes if profile exists
@@ -148,6 +152,10 @@ impl App {
         match message {
             Message::TabChanged(tab) => {
                 self.current_tab = tab;
+                Task::none()
+            }
+            Message::NodeSearchChanged(query) => {
+                self.node_search = query;
                 Task::none()
             }
             Message::ToggleCore => {
@@ -244,6 +252,7 @@ impl App {
             }
             Message::SubscriptionInputChanged(url) => {
                 self.url_input = url;
+                self.profile_error = None;
                 Task::none()
             }
             Message::DownloadSubscription => {
@@ -251,6 +260,7 @@ impl App {
                     return Task::none();
                 }
                 self.downloading = true;
+                self.profile_error = None;
                 let url = self.url_input.clone();
                 
                 Task::perform(download_profile(url), |res| {
@@ -263,8 +273,10 @@ impl App {
             Message::SubscriptionDownloaded { id, error } => {
                 self.downloading = false;
                 if let Some(err) = error {
+                    self.profile_error = Some(err.clone());
                     self.log_lines.push(format!("[GUI] Download failed: {}", err));
                 } else {
+                    self.profile_error = None;
                     self.url_input.clear();
                     // Update the updated_at timestamp for the subscription
                     for sub in &mut self.gui_config.subscriptions {
@@ -386,6 +398,7 @@ impl App {
                     let url = profile.url.clone();
                     let id_clone = id.clone();
                     self.downloading = true;
+                    self.profile_error = None;
                     self.log_lines.push(format!("[GUI] Updating subscription: {}", url));
                     
                     Task::perform(async move {
@@ -606,15 +619,38 @@ impl App {
         let make_tab_btn = |tab: Tab, icon: &str, key: &'static str| {
             let active = self.current_tab == tab;
             let label = format!("{} {}", icon, ui::i18n::tr(lang, key));
-            button(
-                text(label)
-                    .size(14)
-                    .font(Font {
-                        weight: iced::font::Weight::Bold,
+            
+            // Indicator bar
+            let indicator = container(iced::widget::Space::new())
+                .width(3)
+                .height(16)
+                .style(move |_theme| container::Style {
+                    background: if active {
+                        Some(iced::Background::Color(ui::theme::ACCENT_PURPLE))
+                    } else {
+                        None
+                    },
+                    border: iced::Border {
+                        radius: 1.5.into(),
                         ..Default::default()
-                    })
+                    },
+                    ..Default::default()
+                });
+                
+            button(
+                row![
+                    indicator,
+                    text(label)
+                        .size(14)
+                        .font(Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        })
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
             )
-            .padding([12, 16])
+            .padding([12, 12])
             .width(Length::Fill)
             .style(ui::theme::button_tab(active))
             .on_press(Message::TabChanged(tab))
@@ -624,13 +660,30 @@ impl App {
         let sidebar = container(
             column![
                 column![
-                    text("sing-box")
-                        .size(24)
-                        .font(Font {
-                            weight: iced::font::Weight::Bold,
-                            ..Default::default()
-                        })
-                        .color(ui::theme::ACCENT_PURPLE),
+                    column![
+                        row![
+                            text("sing-box")
+                                .size(24)
+                                .font(Font {
+                                    weight: iced::font::Weight::Bold,
+                                    ..Default::default()
+                                })
+                                .color(ui::theme::ACCENT_PURPLE),
+                            text("GUI")
+                                .size(12)
+                                .font(Font {
+                                    weight: iced::font::Weight::Light,
+                                    ..Default::default()
+                                })
+                                .color(ui::theme::ACCENT_BLUE),
+                        ]
+                        .spacing(6)
+                        .align_y(Alignment::End),
+                        text("Next-Gen Proxy Client")
+                            .size(11)
+                            .color(ui::theme::text_muted(&active_theme))
+                    ]
+                    .spacing(4),
                     column![
                         make_tab_btn(Tab::Dashboard, "📊", "tab_dashboard"),
                         make_tab_btn(Tab::Proxies, "⚡", "tab_proxies"),
@@ -641,7 +694,7 @@ impl App {
                     ]
                     .spacing(8)
                 ]
-                .spacing(40),
+                .spacing(30),
                 iced::widget::Space::new().height(Length::Fill),
                 text(format!("v{}", env!("CARGO_PKG_VERSION")))
                     .size(12)
@@ -670,12 +723,14 @@ impl App {
                 &self.active_profile_nodes,
                 self.selected_node_tag.as_deref(),
                 self.latency_testing,
+                &self.node_search,
                 &active_theme,
             ),
             Tab::Profiles => ui::profiles::render(
                 &self.gui_config,
                 &self.url_input,
                 self.downloading,
+                self.profile_error.as_deref(),
                 &active_theme,
             ),
             Tab::Connections => ui::connections::render(&self.gui_config, &self.active_connections, &active_theme),

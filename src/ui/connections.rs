@@ -29,7 +29,7 @@ pub fn render<'a>(
     .padding([0, 10]);
 
     // Build List
-    let mut list = column!().spacing(8);
+    let mut list = column!().spacing(0);
     if active_connections.is_empty() {
         list = list.push(
             container(text(tr(lang, "no_active_connections")).color(text_muted))
@@ -74,14 +74,53 @@ pub fn render<'a>(
             .spacing(10)
             .padding(10);
             
-            list = list.push(container(row_content).style(theme::card_bg));
+            list = list.push(container(row_content));
+            
+            // Add subtle divider
+            let separator = container(Space::new())
+                .height(1)
+                .width(Length::Fill)
+                .style(|theme| container::Style {
+                    background: Some(iced::Background::Color(if theme::is_dark(theme) {
+                        theme::BORDER_DARK
+                    } else {
+                        theme::BORDER_LIGHT
+                    })),
+                    ..Default::default()
+                });
+            list = list.push(separator);
         }
     }
     
+    // Header styled background inside the card
+    let header_styled = container(header)
+        .padding([12, 10])
+        .style(|theme| container::Style {
+            background: Some(iced::Background::Color(if theme::is_dark(theme) {
+                theme::CARD_LIGHT
+            } else {
+                theme::SIDEBAR_BG_LIGHT
+            })),
+            border: iced::Border {
+                color: if theme::is_dark(theme) { theme::BORDER_DARK } else { theme::BORDER_LIGHT },
+                width: 0.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        });
+
+    let table_container = container(
+        column![
+            header_styled,
+            scrollable(list).height(Length::Fill)
+        ]
+    )
+    .style(theme::card_bg)
+    .height(Length::Fill);
+
     let content = column![
         text(tr(lang, "tab_connections")).size(24).color(text_primary),
-        container(header).padding([10, 0]),
-        scrollable(list).height(Length::Fill)
+        table_container
     ]
     .spacing(20);
     

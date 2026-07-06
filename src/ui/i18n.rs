@@ -33,6 +33,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "test_latency" => "Test All Latency",
             "testing_latency" => "Testing Latency...",
             "no_nodes" => "No nodes found in the active profile. Please select or update a profile.",
+            "search_nodes_placeholder" => "Search nodes by name or server...",
+            "no_matching_nodes" => "No nodes match your search query.",
             
             // Profiles
             "profile_manager" => "Profile Manager",
@@ -141,6 +143,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "test_latency" => "测试所有节点延迟",
             "testing_latency" => "正在测试中...",
             "no_nodes" => "活动配置文件中没有节点，请选择或更新配置文件。",
+            "search_nodes_placeholder" => "通过名称或服务器搜索节点...",
+            "no_matching_nodes" => "未找到匹配搜索条件的节点。",
             
             // Profiles
             "profile_manager" => "订阅列表",

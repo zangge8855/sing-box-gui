@@ -8,6 +8,7 @@ pub fn render<'a>(
     gui_config: &'a GuiConfig,
     url_input: &'a str,
     downloading: bool,
+    profile_error: Option<&'a str>,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     
@@ -55,6 +56,35 @@ pub fn render<'a>(
     )
     .padding(20)
     .style(theme::card_bg);
+    
+    let error_banner = if let Some(err) = profile_error {
+        Some(
+            container(
+                row![
+                    text("⚠️ ").size(14),
+                    text(err).size(13).color(theme::DANGER)
+                ]
+                .align_y(Alignment::Center)
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .style(|theme| container::Style {
+                background: Some(iced::Background::Color(if theme::is_dark(theme) {
+                    iced::Color::from_rgba(0.94, 0.27, 0.27, 0.1)
+                } else {
+                    iced::Color::from_rgba(0.94, 0.27, 0.27, 0.05)
+                })),
+                border: iced::Border {
+                    color: theme::DANGER,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            })
+        )
+    } else {
+        None
+    };
     
     // List existing profiles
     let mut profiles_col = Column::new().spacing(15);
@@ -158,15 +188,20 @@ pub fn render<'a>(
     let scroll_list = scrollable(profiles_col)
         .height(Length::Fill);
         
-    container(
-        column![
-            title,
-            add_form,
-            text(tr(lang, "imported_profiles")).color(text_muted).size(14),
-            scroll_list
-        ]
-        .spacing(20)
-    )
-    .padding(20)
-    .into()
+    let mut main_layout_col = column![
+        title,
+        add_form,
+    ]
+    .spacing(20);
+    
+    if let Some(banner) = error_banner {
+        main_layout_col = main_layout_col.push(banner);
+    }
+    
+    main_layout_col = main_layout_col.push(text(tr(lang, "imported_profiles")).color(text_muted).size(14));
+    main_layout_col = main_layout_col.push(scroll_list);
+    
+    container(main_layout_col)
+        .padding(20)
+        .into()
 }

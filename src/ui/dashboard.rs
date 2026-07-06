@@ -103,18 +103,38 @@ pub fn render<'a>(
     .spacing(20);
 
     // Connection info summary row
-    let mode_label = match gui_config.routing_mode {
-        RoutingMode::Rule => "Rule",
-        RoutingMode::Global => "Global",
-        RoutingMode::Direct => "Direct",
+    let make_mode_btn = |mode: RoutingMode, key: &'static str| {
+        let active = gui_config.routing_mode == mode;
+        let btn = button(text(tr(lang, key)).size(12))
+            .padding([6, 12])
+            .style(move |theme, status| {
+                if active {
+                    theme::button_primary(theme, status)
+                } else {
+                    theme::button_secondary(theme, status)
+                }
+            });
+            
+        if active {
+            btn
+        } else {
+            btn.on_press(Message::RoutingModeChanged(mode))
+        }
     };
+    
+    let mode_buttons = row![
+        make_mode_btn(RoutingMode::Rule, "routing_rules_desc"),
+        make_mode_btn(RoutingMode::Global, "routing_global_desc"),
+        make_mode_btn(RoutingMode::Direct, "routing_direct_desc")
+    ]
+    .spacing(8);
 
     let mode_card = container(
         column![
             text(tr(lang, "active_mode")).color(text_muted).size(12),
-            text(mode_label).color(text_primary).size(20),
+            mode_buttons
         ]
-        .spacing(6)
+        .spacing(8)
     )
     .padding(16)
     .width(Length::FillPortion(1))
@@ -213,6 +233,12 @@ pub fn render<'a>(
         up_path = "M 0 100 L 300 100".to_string();
     }
     
+    let grid_color = if theme::is_dark(theme) {
+        "rgba(255, 255, 255, 0.08)"
+    } else {
+        "rgba(0, 0, 0, 0.06)"
+    };
+
     let svg_xml = format!(
         r##"<svg viewBox="0 0 300 100" xmlns="http://www.w3.org/2000/svg">
              <defs>
@@ -221,10 +247,14 @@ pub fn render<'a>(
                  <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
                </linearGradient>
              </defs>
+             <line x1="0" y1="20" x2="300" y2="20" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
+             <line x1="0" y1="40" x2="300" y2="40" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
+             <line x1="0" y1="60" x2="300" y2="60" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
+             <line x1="0" y1="80" x2="300" y2="80" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
              <path d="{}" fill="url(#downGrad)" stroke="#3b82f6" stroke-width="1.5"/>
              <path d="{}" fill="none" stroke="#8b5cf6" stroke-width="1.5"/>
            </svg>"##,
-         down_path, up_path
+         grid_color, grid_color, grid_color, grid_color, down_path, up_path
     );
     
     let chart_handle = svg::Handle::from_memory(svg_xml.into_bytes());

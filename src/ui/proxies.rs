@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, scrollable, text, Column, Row};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Row};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::ProxyNode;
@@ -9,6 +9,7 @@ pub fn render<'a>(
     nodes: &'a [ProxyNode],
     selected_node: Option<&str>,
     latency_testing: bool,
+    search_query: &'a str,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -29,14 +30,21 @@ pub fn render<'a>(
             .on_press(Message::StartLatencyTest)
     };
     
+    let search_input = text_input(tr(lang, "search_nodes_placeholder"), search_query)
+        .on_input(Message::NodeSearchChanged)
+        .padding(8)
+        .width(220)
+        .style(theme::input_field);
+        
     let header = row![
-        text(tr(lang, "proxy_nodes")).size(24).color(text_primary),
+        text(tr(lang, "proxy_nodes")).size(24).color(text_primary).width(Length::Fill),
+        search_input,
         speed_test_btn
     ]
     .spacing(20)
     .align_y(Alignment::Center);
     
-    // If no nodes, display fallback text
+    // If no nodes in profile at all, display fallback text
     if nodes.is_empty() {
         return container(
             column![
@@ -56,10 +64,39 @@ pub fn render<'a>(
         .into();
     }
     
+    // Filter nodes by search query (case-insensitive)
+    let filtered_nodes: Vec<&ProxyNode> = if search_query.trim().is_empty() {
+        nodes.iter().collect()
+    } else {
+        let q = search_query.to_lowercase();
+        nodes.iter()
+            .filter(|n| n.name.to_lowercase().contains(&q) || n.server.to_lowercase().contains(&q))
+            .collect()
+    };
+    
+    if filtered_nodes.is_empty() {
+        return container(
+            column![
+                header,
+                container(
+                    text(tr(lang, "no_matching_nodes"))
+                        .color(text_muted)
+                        .size(15)
+                )
+                .padding(40)
+                .width(Length::Fill)
+                .style(theme::card_bg)
+            ]
+            .spacing(20)
+        )
+        .padding(20)
+        .into();
+    }
+    
     // Build node cards list
     let mut card_elements: Vec<Element<'a, Message>> = Vec::new();
     
-    for node in nodes {
+    for node in &filtered_nodes {
         let is_selected = Some(node.name.as_str()) == selected_node;
         
         // Latency text & color
@@ -158,7 +195,7 @@ pub fn render<'a>(
         }
     }
     // Push remaining cards in last row
-    let remaining_elements = nodes.len() % 3;
+    let remaining_elements = filtered_nodes.len() % 3;
     if remaining_elements > 0 {
         // Pad the row with empty placeholders to keep grid aligned
         for _ in remaining_elements..3 {
