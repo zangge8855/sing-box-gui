@@ -13,6 +13,13 @@ use std::os::windows::process::CommandExt;
 
 static CURRENT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 
+pub fn get_core_filename() -> &'static str {
+    #[cfg(target_os = "windows")]
+    { "sing-box.exe" }
+    #[cfg(not(target_os = "windows"))]
+    { "sing-box" }
+}
+
 pub fn get_core_path(gui_config: &GuiConfig) -> PathBuf {
     if let Some(ref path) = gui_config.core_path {
         let p = PathBuf::from(path);
@@ -20,7 +27,7 @@ pub fn get_core_path(gui_config: &GuiConfig) -> PathBuf {
             return p;
         }
     }
-    get_app_dir().join("bin").join("sing-box.exe")
+    get_app_dir().join("bin").join(get_core_filename())
 }
 
 pub fn is_core_installed(gui_config: &GuiConfig) -> bool {
@@ -30,7 +37,7 @@ pub fn is_core_installed(gui_config: &GuiConfig) -> bool {
 pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), String> {
     let app_dir = get_app_dir();
     let bin_dir = app_dir.join("bin");
-    let dest_path = bin_dir.join("sing-box.exe");
+    let dest_path = bin_dir.join(get_core_filename());
     
     if dest_path.exists() {
         return Ok(());
@@ -39,14 +46,34 @@ pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), Str
     let _ = progress_sender.send("Downloading sing-box core...".to_string());
     
     let version = "1.13.14";
-    let url = format!(
-        "https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-windows-amd64.zip",
-        version, version
+    
+    #[cfg(target_os = "windows")]
+    let (url, archive_name) = (
+        format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-windows-amd64.zip", version, version),
+        "temp_core.zip"
     );
     
-    let temp_zip_path = app_dir.join("temp_core.zip");
+    #[cfg(target_os = "macos")]
+    let (url, archive_name) = {
+        #[cfg(target_arch = "aarch64")]
+        let arch = "darwin-arm64";
+        #[cfg(not(target_arch = "aarch64"))]
+        let arch = "darwin-amd64";
+        (
+            format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.zip", version, version, arch),
+            "temp_core.zip"
+        )
+    };
     
-    // Download zip using reqwest
+    #[cfg(target_os = "linux")]
+    let (url, archive_name) = (
+        format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-linux-amd64.tar.gz", version, version),
+        "temp_core.tar.gz"
+    );
+    
+    let temp_archive_path = app_dir.join(archive_name);
+    
+    // Download using reqwest
     let mut response = reqwest::blocking::get(&url)
         .map_err(|e| format!("Failed to download core: {}", e))?;
         
@@ -54,45 +81,90 @@ pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), Str
         return Err(format!("Server returned error: {}", response.status()));
     }
     
-    let mut file = File::create(&temp_zip_path)
-        .map_err(|e| format!("Failed to create temp zip file: {}", e))?;
+    let mut file = File::create(&temp_archive_path)
+        .map_err(|e| format!("Failed to create temp archive file: {}", e))?;
         
     io::copy(&mut response, &mut file)
-        .map_err(|e| format!("Failed to write zip file: {}", e))?;
+        .map_err(|e| format!("Failed to write archive file: {}", e))?;
         
     let _ = progress_sender.send("Extracting core...".to_string());
     
-    // Extract using zip crate
-    let zip_file = File::open(&temp_zip_path)
-        .map_err(|e| format!("Failed to open temp zip: {}", e))?;
-        
-    let mut archive = zip::ZipArchive::new(zip_file)
-        .map_err(|e| format!("Invalid zip archive: {}", e))?;
-        
-    let mut extracted = false;
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i)
-            .map_err(|e| format!("Failed to read zip index: {}", e))?;
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Extract using zip crate (works for Windows and macOS)
+        let zip_file = File::open(&temp_archive_path)
+            .map_err(|e| format!("Failed to open temp zip: {}", e))?;
             
-        let name = file.name().to_string();
-        if name.ends_with("sing-box.exe") {
-            let mut outfile = File::create(&dest_path)
-                .map_err(|e| format!("Failed to create target sing-box.exe: {}", e))?;
-            io::copy(&mut file, &mut outfile)
-                .map_err(|e| format!("Failed to extract sing-box.exe: {}", e))?;
-            extracted = true;
-            break;
+        let mut archive = zip::ZipArchive::new(zip_file)
+            .map_err(|e| format!("Invalid zip archive: {}", e))?;
+            
+        let mut extracted = false;
+        let core_name = get_core_filename();
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)
+                .map_err(|e| format!("Failed to read zip index: {}", e))?;
+                
+            let name = file.name().to_string();
+            if name.ends_with(core_name) {
+                let mut outfile = File::create(&dest_path)
+                    .map_err(|e| format!("Failed to create target: {}", e))?;
+                io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract: {}", e))?;
+                extracted = true;
+                break;
+            }
+        }
+        
+        let _ = fs::remove_file(temp_archive_path);
+        
+        if extracted {
+            // Set permissions on Unix (macOS)
+            #[cfg(target_os = "macos")]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(0o755));
+            }
+            let _ = progress_sender.send("Core installed successfully!".to_string());
+            Ok(())
+        } else {
+            Err(format!("Could not find {} inside downloaded zip package", core_name))
         }
     }
     
-    // Cleanup temp zip
-    let _ = fs::remove_file(temp_zip_path);
-    
-    if extracted {
-        let _ = progress_sender.send("Core installed successfully!".to_string());
-        Ok(())
-    } else {
-        Err("Could not find sing-box.exe inside downloaded zip package".to_string())
+    #[cfg(target_os = "linux")]
+    {
+        // Extract using system `tar` command for Linux
+        let status = Command::new("tar")
+            .arg("-xzf")
+            .arg(&temp_archive_path)
+            .arg("-C")
+            .arg(&app_dir)
+            .status()
+            .map_err(|e| format!("Failed to run tar command: {}", e))?;
+            
+        let _ = fs::remove_file(temp_archive_path);
+        
+        if !status.success() {
+            return Err("Failed to extract tar.gz archive using system tar command".to_string());
+        }
+        
+        // Find extracted binary
+        let extracted_dir = app_dir.join(format!("sing-box-{}-linux-amd64", version));
+        let src_binary = extracted_dir.join("sing-box");
+        if src_binary.exists() {
+            fs::copy(&src_binary, &dest_path)
+                .map_err(|e| format!("Failed to copy sing-box binary: {}", e))?;
+            let _ = fs::remove_dir_all(extracted_dir);
+            
+            // Set permissions
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(0o755));
+            
+            let _ = progress_sender.send("Core installed successfully!".to_string());
+            Ok(())
+        } else {
+            Err("Could not find sing-box inside extracted tar folder".to_string())
+        }
     }
 }
 
