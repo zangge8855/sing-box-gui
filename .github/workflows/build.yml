@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Release Binary
@@ -34,3 +37,16 @@ jobs:
       with:
         name: sing-box-gui-windows-amd64
         path: target/release/sing-box-gui.exe
+
+    - name: Create Release and Upload Asset
+      if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v2026.7.6
+        name: Release v2026.7.6
+        draft: false
+        prerelease: false
+        files: target/release/sing-box-gui.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
