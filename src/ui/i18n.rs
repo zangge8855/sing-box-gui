@@ -48,6 +48,15 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "no_profiles" => "No profiles imported yet. Enter a subscription URL above to import.",
             "updated_at_label" => "Updated",
             
+            // Rules
+            "tab_rules" => "Routing Rules",
+            "rules_bypass_domains" => "Bypass Domains (Direct)",
+            "rules_proxy_domains" => "Proxy Domains (Proxy)",
+            "rules_bypass_ips" => "Bypass IPs/CIDRs",
+            "rules_proxy_ips" => "Proxy IPs/CIDRs",
+            "rules_desc" => "Enter domains or IPs and press + to add.",
+            "no_groups" => "No active proxy groups. Start the core to enable group routing.",
+            
             // Logs
             "console_logs" => "Console Logs",
             "clear_logs" => "Clear",
@@ -157,6 +166,15 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "import_sub" => "导入新订阅",
             "no_profiles" => "尚未导入订阅，请在上方输入订阅链接进行下载导入。",
             "updated_at_label" => "更新时间",
+            
+            // Rules
+            "tab_rules" => "分流规则",
+            "rules_bypass_domains" => "绕过域名 (直连)",
+            "rules_proxy_domains" => "代理域名 (代理)",
+            "rules_bypass_ips" => "绕过 IP/网段 (直连)",
+            "rules_proxy_ips" => "代理 IP/网段 (代理)",
+            "rules_desc" => "输入域名或 IP 并按 + 添加。",
+            "no_groups" => "没有活动代理组。启动内核以启用分组路由。",
             
             // Logs
             "console_logs" => "控制台日志",

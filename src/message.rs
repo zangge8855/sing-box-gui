@@ -4,6 +4,13 @@ use crate::state::{Tab, RoutingMode};
 pub enum Message {
     TabChanged(Tab),
     NodeSearchChanged(String),
+    SelectGroup(String),
+    SelectGroupNode { group: String, node: String },
+    GroupNodeSelected { group: String, node: String, error: Option<String> },
+    RulesInputChanged { field: String, value: String },
+    AddRule { field: String },
+    RemoveRule { field: String, index: usize },
+    ProxiesFetched(Result<std::collections::HashMap<String, crate::api::ProxyInfo>, String>),
     ToggleCore,
     CoreStatusChanged(bool),
     NewLogLine(String),

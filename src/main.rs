@@ -73,6 +73,12 @@ struct App {
     core_install_msg: Option<String>,
     node_search: String,
     profile_error: Option<String>,
+    selected_group: String,
+    proxy_groups: std::collections::HashMap<String, crate::api::ProxyInfo>,
+    bypass_domain_input: String,
+    proxy_domain_input: String,
+    bypass_ip_input: String,
+    proxy_ip_input: String,
 }
 
 impl App {
@@ -115,6 +121,12 @@ impl App {
             core_install_msg: None,
             node_search: String::new(),
             profile_error: None,
+            selected_group: String::new(),
+            proxy_groups: std::collections::HashMap::new(),
+            bypass_domain_input: String::new(),
+            proxy_domain_input: String::new(),
+            bypass_ip_input: String::new(),
+            proxy_ip_input: String::new(),
         };
         
         // Load active profile nodes if profile exists
@@ -156,6 +168,114 @@ impl App {
             }
             Message::NodeSearchChanged(query) => {
                 self.node_search = query;
+                Task::none()
+            }
+            Message::SelectGroup(group) => {
+                self.selected_group = group;
+                Task::none()
+            }
+            Message::SelectGroupNode { group, node } => {
+                if !self.core_running {
+                    return Task::none();
+                }
+                let api_port = self.gui_config.api_port;
+                let group_clone = group.clone();
+                let node_clone = node.clone();
+                
+                Task::perform(async move {
+                    api::select_proxy(api_port, &group_clone, &node_clone).await
+                }, move |res| {
+                    Message::GroupNodeSelected {
+                        group: group.clone(),
+                        node: node.clone(),
+                        error: res.err(),
+                    }
+                })
+            }
+            Message::GroupNodeSelected { group, node, error } => {
+                if let Some(err) = error {
+                    self.log_lines.push(format!("[GUI] Failed to select node {} for group {}: {}", node, group, err));
+                } else {
+                    if let Some(g_info) = self.proxy_groups.get_mut(&group) {
+                        g_info.now = Some(node.clone());
+                    }
+                    if group == "Proxy" {
+                        self.selected_node_tag = Some(node.clone());
+                        self.gui_config.selected_node_tag = Some(node.clone());
+                        let _ = config::save_gui_config(&self.gui_config);
+                    }
+                    self.log_lines.push(format!("[GUI] Selected node: {} for group {}", node, group));
+                }
+                Task::none()
+            }
+            Message::RulesInputChanged { field, value } => {
+                match field.as_str() {
+                    "bypass_domains" => self.bypass_domain_input = value,
+                    "proxy_domains" => self.proxy_domain_input = value,
+                    "bypass_ips" => self.bypass_ip_input = value,
+                    "proxy_ips" => self.proxy_ip_input = value,
+                    _ => {}
+                }
+                Task::none()
+            }
+            Message::AddRule { field } => {
+                let (val, list) = match field.as_str() {
+                    "bypass_domains" => (&mut self.bypass_domain_input, &mut self.gui_config.custom_bypass_domains),
+                    "proxy_domains" => (&mut self.proxy_domain_input, &mut self.gui_config.custom_proxy_domains),
+                    "bypass_ips" => (&mut self.bypass_ip_input, &mut self.gui_config.custom_bypass_ips),
+                    "proxy_ips" => (&mut self.proxy_ip_input, &mut self.gui_config.custom_proxy_ips),
+                    _ => return Task::none(),
+                };
+                let trimmed = val.trim().to_string();
+                if !trimmed.is_empty() && !list.contains(&trimmed) {
+                    list.push(trimmed.clone());
+                    val.clear();
+                    let _ = config::save_gui_config(&self.gui_config);
+                    self.log_lines.push(format!("[GUI] Added custom rule to {}: {}", field, trimmed));
+                    if self.core_running {
+                        core::stop_core();
+                        self.core_running = false;
+                        return Task::done(Message::ToggleCore);
+                    }
+                }
+                Task::none()
+            }
+            Message::RemoveRule { field, index } => {
+                let list = match field.as_str() {
+                    "bypass_domains" => &mut self.gui_config.custom_bypass_domains,
+                    "proxy_domains" => &mut self.gui_config.custom_proxy_domains,
+                    "bypass_ips" => &mut self.gui_config.custom_bypass_ips,
+                    "proxy_ips" => &mut self.gui_config.custom_proxy_ips,
+                    _ => return Task::none(),
+                };
+                if index < list.len() {
+                    let removed = list.remove(index);
+                    let _ = config::save_gui_config(&self.gui_config);
+                    self.log_lines.push(format!("[GUI] Removed custom rule from {}: {}", field, removed));
+                    if self.core_running {
+                        core::stop_core();
+                        self.core_running = false;
+                        return Task::done(Message::ToggleCore);
+                    }
+                }
+                Task::none()
+            }
+            Message::ProxiesFetched(res) => {
+                match res {
+                    Ok(groups_map) => {
+                        self.proxy_groups = groups_map;
+                        if self.selected_group.is_empty() && !self.proxy_groups.is_empty() {
+                            if self.proxy_groups.contains_key("Proxy") {
+                                self.selected_group = "Proxy".to_string();
+                            } else if let Some(k) = self.proxy_groups.keys().next() {
+                                self.selected_group = k.clone();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.log_lines.push(format!("[GUI] Failed to fetch proxies: {}", e));
+                    }
+                }
                 Task::none()
             }
             Message::ToggleCore => {
@@ -439,16 +559,8 @@ impl App {
                     let api_port = self.gui_config.api_port;
                     tasks.push(Task::perform(async move {
                         api::fetch_proxies(api_port).await
-                    }, |res| match res {
-                        Ok(proxies_res) => {
-                            if let Some(proxy_info) = proxies_res.proxies.get("Proxy") {
-                                if let Some(ref active_node) = proxy_info.now {
-                                    return Message::SelectNode(active_node.clone());
-                                }
-                            }
-                            Message::Tick
-                        }
-                        Err(_) => Message::Tick,
+                    }, |res| {
+                        Message::ProxiesFetched(res.map(|r| r.proxies).map_err(|e| e))
                     }));
                     
                     if self.current_tab == Tab::Connections {
@@ -688,6 +800,7 @@ impl App {
                         make_tab_btn(Tab::Dashboard, "📊", "tab_dashboard"),
                         make_tab_btn(Tab::Proxies, "⚡", "tab_proxies"),
                         make_tab_btn(Tab::Profiles, "📂", "tab_profiles"),
+                        make_tab_btn(Tab::Rules, "🛣️", "tab_rules"),
                         make_tab_btn(Tab::Connections, "🌐", "tab_connections"),
                         make_tab_btn(Tab::Logs, "📝", "tab_logs"),
                         make_tab_btn(Tab::Settings, "⚙️", "tab_settings"),
@@ -724,6 +837,8 @@ impl App {
                 self.selected_node_tag.as_deref(),
                 self.latency_testing,
                 &self.node_search,
+                &self.proxy_groups,
+                &self.selected_group,
                 &active_theme,
             ),
             Tab::Profiles => ui::profiles::render(
@@ -731,6 +846,14 @@ impl App {
                 &self.url_input,
                 self.downloading,
                 self.profile_error.as_deref(),
+                &active_theme,
+            ),
+            Tab::Rules => ui::rules::render(
+                &self.gui_config,
+                &self.bypass_domain_input,
+                &self.proxy_domain_input,
+                &self.bypass_ip_input,
+                &self.proxy_ip_input,
                 &active_theme,
             ),
             Tab::Connections => ui::connections::render(&self.gui_config, &self.active_connections, &active_theme),

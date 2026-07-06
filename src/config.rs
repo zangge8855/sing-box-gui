@@ -781,16 +781,46 @@ pub fn convert_clash_to_singbox(
     }
     
     // Build Rules
+    let mut rules_list = vec![
+        json!({ "action": "sniff", "sniffer": ["http", "tls", "quic", "dns"] }),
+        json!({ "protocol": "dns", "outbound": "dns-out" }),
+        json!({ "port": 53, "outbound": "dns-out" }),
+        json!({ "clash_mode": "Direct", "outbound": "direct" }),
+        json!({ "clash_mode": "Global", "outbound": "Proxy" }),
+    ];
+
+    // Inject custom rules
+    if !gui_config.custom_bypass_domains.is_empty() {
+        rules_list.push(json!({
+            "domain_suffix": gui_config.custom_bypass_domains,
+            "outbound": "direct"
+        }));
+    }
+    if !gui_config.custom_proxy_domains.is_empty() {
+        rules_list.push(json!({
+            "domain_suffix": gui_config.custom_proxy_domains,
+            "outbound": "Proxy"
+        }));
+    }
+    if !gui_config.custom_bypass_ips.is_empty() {
+        rules_list.push(json!({
+            "ip_cidr": gui_config.custom_bypass_ips,
+            "outbound": "direct"
+        }));
+    }
+    if !gui_config.custom_proxy_ips.is_empty() {
+        rules_list.push(json!({
+            "ip_cidr": gui_config.custom_proxy_ips,
+            "outbound": "Proxy"
+        }));
+    }
+
+    // Default fallbacks
+    rules_list.push(json!({ "ip_is_private": true, "outbound": "direct" }));
+    rules_list.push(json!({ "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }));
+
     let rules = json!({
-        "rules": [
-            { "action": "sniff", "sniffer": ["http", "tls", "quic", "dns"] },
-            { "protocol": "dns", "outbound": "dns-out" },
-            { "port": 53, "outbound": "dns-out" },
-            { "clash_mode": "Direct", "outbound": "direct" },
-            { "clash_mode": "Global", "outbound": "Proxy" },
-            { "ip_is_private": true, "outbound": "direct" },
-            { "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }
-        ],
+        "rules": rules_list,
         "rule_set": [
             {
                 "tag": "geosite-cn",
@@ -828,6 +858,142 @@ pub fn convert_clash_to_singbox(
     });
     
     Ok(config)
+}
+
+pub fn merge_native_json_profile(
+    json_content: &str,
+    gui_config: &GuiConfig,
+) -> Result<serde_json::Value, String> {
+    let mut config: serde_json::Value = serde_json::from_str(json_content)
+        .map_err(|e| format!("Invalid native Sing-Box JSON: {}", e))?;
+        
+    // 1. Inbounds setup
+    let inbounds = config.get_mut("inbounds")
+        .and_then(|v| v.as_array_mut());
+        
+    let mut mixed_found = false;
+    let mut tun_found = false;
+    
+    if let Some(arr) = inbounds {
+        for val in arr.iter_mut() {
+            if let Some(obj) = val.as_object_mut() {
+                if let Some(t) = obj.get("type").and_then(|t| t.as_str()) {
+                    if t == "mixed" {
+                        obj.insert("listen_port".to_string(), json!(gui_config.mixed_port));
+                        mixed_found = true;
+                    } else if t == "tun" {
+                        obj.insert("interface_name".to_string(), json!("singbox-tun"));
+                        obj.insert("auto_route".to_string(), json!(true));
+                        obj.insert("strict_route".to_string(), json!(true));
+                        obj.insert("stack".to_string(), json!("system"));
+                        tun_found = true;
+                    }
+                }
+            }
+        }
+        
+        // Add if not found
+        if !mixed_found {
+            arr.push(json!({
+                "type": "mixed",
+                "tag": "mixed-in",
+                "listen": "127.0.0.1",
+                "listen_port": gui_config.mixed_port
+            }));
+        }
+        if gui_config.tun_mode && !tun_found {
+            arr.push(json!({
+                "type": "tun",
+                "tag": "tun-in",
+                "interface_name": "singbox-tun",
+                "address": ["172.19.0.1/30"],
+                "auto_route": true,
+                "strict_route": true,
+                "stack": "system"
+            }));
+        } else if !gui_config.tun_mode && tun_found {
+            // Remove tun inbound if user disabled tun in GUI
+            arr.retain(|val| {
+                val.get("type").and_then(|t| t.as_str()) != Some("tun")
+            });
+        }
+    } else {
+        // No inbounds array at all, create it
+        let mut arr = vec![
+            json!({
+                "type": "mixed",
+                "tag": "mixed-in",
+                "listen": "127.0.0.1",
+                "listen_port": gui_config.mixed_port
+            })
+        ];
+        if gui_config.tun_mode {
+            arr.push(json!({
+                "type": "tun",
+                "tag": "tun-in",
+                "interface_name": "singbox-tun",
+                "address": ["172.19.0.1/30"],
+                "auto_route": true,
+                "strict_route": true,
+                "stack": "system"
+            }));
+        }
+        config.as_object_mut().unwrap().insert("inbounds".to_string(), serde_json::Value::Array(arr));
+    }
+    
+    // 2. Clash API / experimental settings setup
+    let experimental = config.get_mut("experimental")
+        .and_then(|v| v.as_object_mut());
+        
+    if let Some(exp_obj) = experimental {
+        if let Some(clash_api_val) = exp_obj.get_mut("clash_api") {
+            if let Some(clash_api_obj) = clash_api_val.as_object_mut() {
+                clash_api_obj.insert("external_controller".to_string(), json!(format!("127.0.0.1:{}", gui_config.api_port)));
+            }
+        } else {
+            exp_obj.insert("clash_api".to_string(), json!({
+                "external_controller": format!("127.0.0.1:{}", gui_config.api_port),
+                "secret": ""
+            }));
+        }
+    } else if let Some(config_obj) = config.as_object_mut() {
+        config_obj.insert("experimental".to_string(), json!({
+            "clash_api": {
+                "external_controller": format!("127.0.0.1:{}", gui_config.api_port),
+                "secret": ""
+            }
+        }));
+    }
+    
+    Ok(config)
+}
+
+pub fn generate_preview_config(gui_config: &GuiConfig) -> String {
+    let active_id = match &gui_config.active_profile_id {
+        Some(id) => id,
+        None => return "No active profile selected.".to_string(),
+    };
+    let path = get_profile_path(active_id);
+    if !path.exists() {
+        return "Active profile configuration file not found.".to_string();
+    }
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => return format!("Failed to read profile: {}", e),
+    };
+    let trimmed = content.trim();
+    let res = if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        merge_native_json_profile(&content, gui_config)
+    } else {
+        convert_clash_to_singbox(&content, gui_config)
+    };
+    match res {
+        Ok(val) => match serde_json::to_string_pretty(&val) {
+            Ok(json_str) => json_str,
+            Err(e) => format!("Failed to serialize config: {}", e),
+        },
+        Err(e) => format!("Failed to generate preview: {}", e),
+    }
 }
 
 #[cfg(test)]

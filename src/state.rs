@@ -6,6 +6,7 @@ pub enum Tab {
     Dashboard,
     Proxies,
     Profiles,
+    Rules,
     Logs,
     Settings,
     Connections,
@@ -65,6 +66,14 @@ pub struct GuiConfig {
     pub tcp_multipath: bool,
     pub close_core_on_exit: bool,
     pub theme: AppTheme,
+    #[serde(default)]
+    pub custom_bypass_domains: Vec<String>,
+    #[serde(default)]
+    pub custom_proxy_domains: Vec<String>,
+    #[serde(default)]
+    pub custom_bypass_ips: Vec<String>,
+    #[serde(default)]
+    pub custom_proxy_ips: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -109,6 +118,10 @@ impl Default for GuiConfig {
             tcp_multipath: false,
             close_core_on_exit: true,
             theme: AppTheme::Auto,
+            custom_bypass_domains: Vec::new(),
+            custom_proxy_domains: Vec::new(),
+            custom_bypass_ips: Vec::new(),
+            custom_proxy_ips: Vec::new(),
         }
     }
 }

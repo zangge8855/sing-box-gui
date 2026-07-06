@@ -207,7 +207,12 @@ pub fn start_core(
     let profile_content = fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read profile file: {}", e))?;
         
-    let final_config = crate::config::convert_clash_to_singbox(&profile_content, gui_config)?;
+    let trimmed = profile_content.trim();
+    let final_config = if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        crate::config::merge_native_json_profile(&profile_content, gui_config)?
+    } else {
+        crate::config::convert_clash_to_singbox(&profile_content, gui_config)?
+    };
     
     let run_config_path = get_app_dir().join("run_config.json");
     let run_config_content = serde_json::to_string_pretty(&final_config)

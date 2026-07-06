@@ -345,9 +345,53 @@ pub fn render<'a>(
     .spacing(20)
     .width(Length::Fill);
 
-    let scroll_content = scrollable(columns_row)
-        .height(Length::Fill)
-        .width(Length::Fill);
+    // Generate config preview string
+    let preview_json = crate::config::generate_preview_config(gui_config);
+    
+    let preview_card = container(
+        column![
+            text(if lang == crate::state::Language::Zh { "内核配置预览 (只读)" } else { "Configuration Preview (Read-only)" })
+                .color(text_muted)
+                .size(13),
+            container(
+                scrollable(
+                    text(preview_json)
+                        .font(iced::Font::MONOSPACE)
+                        .size(12)
+                        .color(text_primary)
+                )
+                .height(Length::Fixed(300.0))
+                .width(Length::Fill)
+            )
+            .padding(15)
+            .style(move |t| {
+                let base = theme::status_card(t);
+                container::Style {
+                    background: Some(iced::Background::Color(if theme::is_dark(t) {
+                        iced::Color::from_rgb(0.08, 0.08, 0.1)
+                    } else {
+                        iced::Color::from_rgb(0.95, 0.95, 0.97)
+                    })),
+                    ..base
+                }
+            })
+        ]
+        .spacing(10)
+    )
+    .padding(20)
+    .width(Length::Fill)
+    .style(theme::card_bg);
+
+    let scroll_content = scrollable(
+        column![
+            columns_row,
+            preview_card
+        ]
+        .spacing(20)
+        .width(Length::Fill)
+    )
+    .height(Length::Fill)
+    .width(Length::Fill);
         
     container(
         column![
