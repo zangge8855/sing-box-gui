@@ -30,8 +30,8 @@ pub fn render<'a>(
         logs_col = logs_col.push(
             text(tr(lang, "no_logs"))
                 .color(text_muted)
-                .font(Font::MONOSPACE)
-                .size(12)
+                .font(Font::DEFAULT)
+                .size(13)
         );
     } else {
         for line in log_lines {
@@ -49,8 +49,8 @@ pub fn render<'a>(
             logs_col = logs_col.push(
                 text(line)
                     .color(line_color)
-                    .font(Font::MONOSPACE)
-                    .size(11)
+                    .font(Font::DEFAULT)
+                    .size(12)
             );
         }
     }
