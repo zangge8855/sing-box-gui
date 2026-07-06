@@ -67,3 +67,13 @@ cargo build --release
 项目已集成 GitHub Actions。任何推送至 `master` 或 `main` 分支的代码，均会自动在 GitHub 的 Windows 云端虚拟机中执行远程编译，并将产出的 release 级可执行程序作为 Artifacts 供用户下载使用。
 
 CI 配置文件位于 `.github/workflows/build.yml`。
+
+---
+
+## 🙏 致谢
+
+感谢以下优秀项目为本项目提供的核心支持与灵感：
+- [zangge8855/sing-box-gui](https://github.com/zangge8855/sing-box-gui)
+- [iced-rs/iced](https://github.com/iced-rs/iced)
+- [SagerNet/sing-box](https://github.com/SagerNet/sing-box)
+
