@@ -38,7 +38,11 @@ pub fn render<'a>(
             text(tr(lang, "import_sub")).color(theme::TEXT_MUTED).size(14),
             row![
                 input,
-                download_btn
+                download_btn,
+                button(text(tr(lang, "btn_open_folder")).size(14))
+                    .padding([12, 24])
+                    .style(theme::button_secondary)
+                    .on_press(Message::PortInputChanged("open_profiles_folder".to_string()))
             ]
             .spacing(15)
             .align_y(Alignment::Center)
@@ -103,6 +107,11 @@ pub fn render<'a>(
                 .style(theme::button_danger)
                 .on_press(Message::DeleteProfile(profile.id.clone()));
                 
+            let edit_btn = button(text(tr(lang, "btn_edit")).size(12).color(theme::TEXT_PRIMARY))
+                .padding([6, 12])
+                .style(theme::button_secondary)
+                .on_press(Message::PortInputChanged(format!("edit_profile:{}", profile.id)));
+                
             let profile_row = container(
                 row![
                     column![
@@ -121,6 +130,7 @@ pub fn render<'a>(
                     row![
                         select_action,
                         update_btn,
+                        edit_btn,
                         delete_btn
                     ]
                     .spacing(15)

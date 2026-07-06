@@ -41,10 +41,16 @@ pub fn render<'a>(
         row![]
     };
     
+    let open_dir_btn = button(text(tr(lang, "btn_open_data_dir")).size(13))
+        .padding([8, 16])
+        .style(theme::button_secondary)
+        .on_press(Message::PortInputChanged("open_data_dir".to_string()));
+
     let core_card = container(
         column![
             text(tr(lang, "core_components")).color(theme::TEXT_MUTED).size(13),
             core_downloader,
+            open_dir_btn,
             install_status_row
         ]
         .spacing(15)

@@ -90,6 +90,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "listen_port" => "Listen Port",
             "btn_update" => "Update",
             "imported_profiles" => "Imported Profiles",
+            "btn_open_folder" => "Open Folder",
+            "btn_edit" => "Edit",
+            "btn_open_data_dir" => "Open Data Folder",
             
             // Connections
             "tab_connections" => "Connections",
@@ -191,6 +194,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "listen_port" => "监听端口",
             "btn_update" => "更新",
             "imported_profiles" => "已导入的配置",
+            "btn_open_folder" => "打开目录",
+            "btn_edit" => "编辑配置",
+            "btn_open_data_dir" => "打开数据目录",
 
             // Connections
             "tab_connections" => "连接管理",

@@ -524,6 +524,20 @@ impl App {
                 } else if input == "toggle_close_core" {
                     self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
                     let _ = config::save_gui_config(&self.gui_config);
+                } else if input == "open_data_dir" {
+                    let _ = std::process::Command::new("explorer")
+                        .arg(config::get_app_dir())
+                        .spawn();
+                } else if input == "open_profiles_folder" {
+                    let _ = std::process::Command::new("explorer")
+                        .arg(config::get_app_dir().join("profiles"))
+                        .spawn();
+                } else if input.starts_with("edit_profile:") {
+                    let id = &input[13..];
+                    let path = config::get_profile_path(id);
+                    let _ = std::process::Command::new("cmd")
+                        .args(&["/c", "start", "", &path.to_string_lossy()])
+                        .spawn();
                 }
                 Task::none()
             }
@@ -685,20 +699,25 @@ fn traffic_subscription() -> impl iced::futures::Stream<Item = Message> {
 
 // Download subscription configuration task implementation
 async fn download_profile(url: String) -> Result<(String, String), String> {
-    let client = reqwest::Client::new();
-    let res = client.get(&url)
-        .header("User-Agent", "clash")
-        .send()
-        .await
-        .map_err(|e| format!("Download request failed: {}", e))?;
+    let content = if std::path::Path::new(&url).exists() {
+        std::fs::read_to_string(&url)
+            .map_err(|e| format!("Failed to read local file: {}", e))?
+    } else {
+        let client = reqwest::Client::new();
+        let res = client.get(&url)
+            .header("User-Agent", "clash")
+            .send()
+            .await
+            .map_err(|e| format!("Download request failed: {}", e))?;
+            
+        if !res.status().is_success() {
+            return Err(format!("Download failed with status: {}", res.status()));
+        }
         
-    if !res.status().is_success() {
-        return Err(format!("Download failed with status: {}", res.status()));
-    }
-    
-    let content = res.text()
-        .await
-        .map_err(|e| format!("Failed to read content: {}", e))?;
+        res.text()
+            .await
+            .map_err(|e| format!("Failed to read content: {}", e))?
+    };
         
     // Verify it parses as Clash YAML (contains proxies key)
     let _nodes = config::parse_clash_yaml_nodes(&content)
@@ -706,7 +725,15 @@ async fn download_profile(url: String) -> Result<(String, String), String> {
         
     // Generate an ID and Name
     let id = chrono::Utc::now().timestamp_millis().to_string();
-    let name = format!("Sub_{}", &id[id.len()-6..]);
+    let name = if std::path::Path::new(&url).exists() {
+        std::path::Path::new(&url)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("Local_Config")
+            .to_string()
+    } else {
+        format!("Sub_{}", &id[id.len()-6..])
+    };
     
     // Save raw YAML to profile directory
     let path = config::get_profile_path(&id);
