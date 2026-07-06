@@ -38,4 +38,8 @@ pub enum Message {
     ConnectionsFetched(Result<crate::api::ConnectionsResponse, String>),
     CloseConnection(String),
     ConnectionClosed(Result<String, String>),
+    TrayIconClicked,
+    TrayMenuClicked(String),
+    WindowOpened(iced::window::Id),
+    WindowCloseRequested(iced::window::Id),
 }

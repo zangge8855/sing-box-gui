@@ -84,6 +84,12 @@ struct App {
     dns_server_local_input_str: String,
     dns_server_remote_input_str: String,
     connections_search: String,
+    _tray_icon: Option<tray_icon::TrayIcon>,
+    tray_menu_toggle_core: tray_icon::menu::MenuItem,
+    tray_menu_rule_mode: tray_icon::menu::CheckMenuItem,
+    tray_menu_global_mode: tray_icon::menu::CheckMenuItem,
+    tray_menu_direct_mode: tray_icon::menu::CheckMenuItem,
+    window_id: Option<iced::window::Id>,
 }
 
 impl App {
@@ -111,6 +117,43 @@ impl App {
         let dns_server_local_input_str = gui_config.dns_server_local.clone();
         let dns_server_remote_input_str = gui_config.dns_server_remote.clone();
         
+        use tray_icon::{
+            menu::{Menu, MenuItem, CheckMenuItem, PredefinedMenuItem},
+            TrayIconBuilder,
+        };
+
+        // Create the tray menu
+        let tray_menu = Menu::new();
+        let show_item = MenuItem::with_id("show_window", "显示主界面 (Show Window)", true, None);
+        let toggle_core_item = MenuItem::with_id("toggle_core", "启动内核 (Start Core)", true, None);
+        
+        let rule_mode_item = CheckMenuItem::with_id("mode_rule", "规则分流 (Rules)", true, false, None);
+        let global_mode_item = CheckMenuItem::with_id("mode_global", "全局代理 (Global)", true, false, None);
+        let direct_mode_item = CheckMenuItem::with_id("mode_direct", "直接连接 (Direct)", true, false, None);
+        
+        let mode_submenu = tray_icon::menu::Submenu::new("代理模式 (Proxy Mode)", true);
+        let _ = mode_submenu.append(&rule_mode_item);
+        let _ = mode_submenu.append(&global_mode_item);
+        let _ = mode_submenu.append(&direct_mode_item);
+        
+        let exit_item = MenuItem::with_id("exit_app", "退出 (Exit)", true, None);
+        
+        let _ = tray_menu.append(&show_item);
+        let _ = tray_menu.append(&PredefinedMenuItem::separator());
+        let _ = tray_menu.append(&toggle_core_item);
+        let _ = tray_menu.append(&mode_submenu);
+        let _ = tray_menu.append(&PredefinedMenuItem::separator());
+        let _ = tray_menu.append(&exit_item);
+        
+        let tray_icon = load_icon_safe().and_then(|icon| {
+            TrayIconBuilder::new()
+                .with_menu(Box::new(tray_menu))
+                .with_tooltip("sing-box GUI")
+                .with_icon(icon)
+                .build()
+                .ok()
+        });
+
         let mut app = Self {
             current_tab: Tab::Dashboard,
             gui_config,
@@ -118,7 +161,7 @@ impl App {
             sys_proxy_enabled: false,
             log_lines: Vec::new(),
             current_speed: Bandwidth::default(),
-            speed_history: vec![(0, 0); 30], // initial 30 empty data points
+            speed_history: vec![(0, 0); 30],
             total_uploaded: 0,
             total_downloaded: 0,
             active_connections: Vec::new(),
@@ -142,7 +185,17 @@ impl App {
             dns_server_local_input_str,
             dns_server_remote_input_str,
             connections_search: String::new(),
+            _tray_icon: tray_icon,
+            tray_menu_toggle_core: toggle_core_item,
+            tray_menu_rule_mode: rule_mode_item,
+            tray_menu_global_mode: global_mode_item,
+            tray_menu_direct_mode: direct_mode_item,
+            window_id: None,
         };
+        
+        // Force initialization of log and traffic streams on startup
+        let _ = get_log_tx();
+        let _ = get_traffic_tx();
         
         // Load active profile nodes if profile exists
         app.reload_active_nodes();
@@ -153,6 +206,9 @@ impl App {
         
         // Check if core is running on start
         app.core_running = core::is_core_running();
+        
+        // Initial tray menu synchronization
+        app.update_tray_menu();
         
         (app, Task::none())
     }
@@ -186,8 +242,77 @@ impl App {
         self.dns_server_remote_input_str = self.gui_config.dns_server_remote.clone();
     }
     
+    fn update_tray_menu(&self) {
+        if self.core_running {
+            self.tray_menu_toggle_core.set_text("关闭内核 (Stop Core)");
+        } else {
+            self.tray_menu_toggle_core.set_text("启动内核 (Start Core)");
+        }
+        self.tray_menu_rule_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Rule);
+        self.tray_menu_global_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Global);
+        self.tray_menu_direct_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Direct);
+    }
+    
     fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle_update(message);
+        self.update_tray_menu();
+        task
+    }
+
+    fn handle_update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::TrayIconClicked => {
+                if let Some(id) = self.window_id {
+                    Task::batch(vec![
+                        iced::window::set_mode(id, iced::window::Mode::Windowed),
+                        iced::window::gain_focus(id),
+                    ])
+                } else {
+                    Task::none()
+                }
+            }
+            Message::TrayMenuClicked(id_str) => {
+                match id_str.as_str() {
+                    "show_window" => {
+                        if let Some(id) = self.window_id {
+                            Task::batch(vec![
+                                iced::window::set_mode(id, iced::window::Mode::Windowed),
+                                iced::window::gain_focus(id),
+                            ])
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    "toggle_core" => {
+                        Task::done(Message::ToggleCore)
+                    }
+                    "mode_rule" => {
+                        Task::done(Message::RoutingModeChanged(state::RoutingMode::Rule))
+                    }
+                    "mode_global" => {
+                        Task::done(Message::RoutingModeChanged(state::RoutingMode::Global))
+                    }
+                    "mode_direct" => {
+                        Task::done(Message::RoutingModeChanged(state::RoutingMode::Direct))
+                    }
+                    "exit_app" => {
+                        if self.gui_config.close_core_on_exit {
+                            core::stop_core();
+                        }
+                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                        iced::exit()
+                    }
+                    _ => Task::none(),
+                }
+            }
+            Message::WindowOpened(id) => {
+                self.window_id = Some(id);
+                Task::none()
+            }
+            Message::WindowCloseRequested(id) => {
+                self.window_id = Some(id);
+                iced::window::set_mode(id, iced::window::Mode::Hidden)
+            }
             Message::TabChanged(tab) => {
                 self.current_tab = tab;
                 Task::none()
@@ -958,12 +1083,15 @@ impl App {
     
     fn subscription(&self) -> Subscription<Message> {
         let mut subs = vec![
-            iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick)
+            iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick),
+            iced::window::close_requests().map(Message::WindowCloseRequested),
+            iced::window::events().map(|(id, _)| Message::WindowOpened(id)),
         ];
         
-        // Live streams for logs and traffic stats
+        // Live streams for logs, traffic stats, and tray events
         subs.push(Subscription::run(log_subscription));
         subs.push(Subscription::run(traffic_subscription));
+        subs.push(Subscription::run(tray_subscription));
         
         Subscription::batch(subs)
     }
@@ -1005,6 +1133,76 @@ fn traffic_subscription() -> impl iced::futures::Stream<Item = Message> {
             }
         }
     })
+}
+
+// Subscription worker for streaming real-time system tray menu and clicks
+fn tray_subscription() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(100, |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+        
+        let tx_clone = tx.clone();
+        std::thread::spawn(move || {
+            let menu_channel = tray_icon::menu::MenuEvent::receiver();
+            loop {
+                if let Ok(event) = menu_channel.recv() {
+                    let _ = tx_clone.blocking_send(Message::TrayMenuClicked(event.id.0));
+                }
+            }
+        });
+
+        let tx_clone2 = tx.clone();
+        std::thread::spawn(move || {
+            let tray_channel = tray_icon::TrayIconEvent::receiver();
+            loop {
+                if let Ok(event) = tray_channel.recv() {
+                    match event {
+                        tray_icon::TrayIconEvent::Click { button, .. } => {
+                            if button == tray_icon::MouseButton::Left {
+                                let _ = tx_clone2.blocking_send(Message::TrayIconClicked);
+                            }
+                        }
+                        tray_icon::TrayIconEvent::DoubleClick { button, .. } => {
+                            if button == tray_icon::MouseButton::Left {
+                                let _ = tx_clone2.blocking_send(Message::TrayIconClicked);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        });
+        
+        while let Some(msg) = rx.recv().await {
+            let _ = output.send(msg).await;
+        }
+    })
+}
+
+fn load_icon_safe() -> Option<tray_icon::Icon> {
+    if let Ok(icon) = load_icon(std::path::Path::new("assets/logo.jpg")) {
+        return Some(icon);
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            if let Ok(icon) = load_icon(&parent.join("assets/logo.jpg")) {
+                return Some(icon);
+            }
+        }
+    }
+    // Fallback transparent 16x16 icon
+    let rgba = vec![0; 16 * 16 * 4];
+    tray_icon::Icon::from_rgba(rgba, 16, 16).ok()
+}
+
+fn load_icon(path: &std::path::Path) -> Result<tray_icon::Icon, String> {
+    let img = image::open(path)
+        .map_err(|e| format!("Failed to open image: {}", e))?
+        .resize(32, 32, image::imageops::FilterType::Lanczos3)
+        .into_rgba8();
+    let (width, height) = img.dimensions();
+    let rgba = img.into_raw();
+    tray_icon::Icon::from_rgba(rgba, width, height)
+        .map_err(|e| format!("Failed to create icon: {}", e))
 }
 
 // Download subscription configuration task implementation
@@ -1111,6 +1309,7 @@ fn main() -> iced::Result {
         size: iced::Size::new(1080.0, 750.0),
         min_size: Some(iced::Size::new(960.0, 680.0)),
         icon,
+        exit_on_close_request: false,
         ..Default::default()
     };
 
