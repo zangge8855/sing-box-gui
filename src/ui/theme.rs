@@ -2,10 +2,13 @@ use iced::{Background, Border, Color, Shadow};
 use iced::widget::{container, button, text_input};
 
 pub const BG_DARK: Color = Color::from_rgb(0.04, 0.06, 0.10);      // #0b0f19
+pub const SIDEBAR_BG: Color = Color::from_rgb(0.05, 0.06, 0.10);   // #0d0f1a
 pub const CARD_DARK: Color = Color::from_rgb(0.09, 0.11, 0.14);    // #161b24
 pub const CARD_LIGHT: Color = Color::from_rgb(0.12, 0.15, 0.19);   // #1f2630
+pub const CARD_HOVER: Color = Color::from_rgb(0.14, 0.17, 0.22);   // #242b38
 pub const ACCENT_PURPLE: Color = Color::from_rgb(0.55, 0.36, 0.96); // #8b5cf6
 pub const ACCENT_BLUE: Color = Color::from_rgb(0.23, 0.51, 0.96);   // #3b82f6
+pub const ACCENT_GREEN: Color = Color::from_rgb(0.16, 0.78, 0.56);  // #29c78f
 pub const TEXT_PRIMARY: Color = Color::from_rgb(0.95, 0.96, 0.98);  // #f3f4f9
 pub const TEXT_MUTED: Color = Color::from_rgb(0.61, 0.64, 0.69);    // #9ca3af
 pub const BORDER_DARK: Color = Color::from_rgb(0.18, 0.22, 0.28);   // #2d3748
@@ -25,7 +28,7 @@ pub fn main_bg(_theme: &iced::Theme) -> container::Style {
 // Sidebar background styling
 pub fn sidebar_bg(_theme: &iced::Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb(0.07, 0.09, 0.13))), // #111421
+        background: Some(Background::Color(SIDEBAR_BG)),
         border: Border {
             color: BORDER_DARK,
             width: 1.0,
@@ -44,6 +47,11 @@ pub fn card_bg(_theme: &iced::Theme) -> container::Style {
             width: 1.0,
             radius: 8.0.into(),
         },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
+            offset: iced::Vector::new(0.0, 2.0),
+            blur_radius: 8.0,
+        },
         ..Default::default()
     }
 }
@@ -58,9 +66,9 @@ pub fn card_selected(_theme: &iced::Theme) -> container::Style {
             radius: 8.0.into(),
         },
         shadow: Shadow {
-            color: Color::from_rgba(0.55, 0.36, 0.96, 0.15),
+            color: Color::from_rgba(0.55, 0.36, 0.96, 0.25),
             offset: iced::Vector::new(0.0, 0.0),
-            blur_radius: 10.0,
+            blur_radius: 15.0,
         },
         ..Default::default()
     }

@@ -93,6 +93,11 @@ pub fn render<'a>(
                     .on_press(Message::SelectProfile(profile.id.clone()))
             };
             
+            let update_btn = button(text(tr(lang, "btn_update")).size(12).color(theme::TEXT_PRIMARY))
+                .padding([6, 12])
+                .style(theme::button_primary)
+                .on_press(Message::UpdateSubscription(profile.id.clone()));
+
             let delete_btn = button(text(tr(lang, "btn_delete")).size(12).color(theme::TEXT_PRIMARY))
                 .padding([6, 12])
                 .style(theme::button_danger)
@@ -115,6 +120,7 @@ pub fn render<'a>(
                     .width(Length::Fill),
                     row![
                         select_action,
+                        update_btn,
                         delete_btn
                     ]
                     .spacing(15)
@@ -142,7 +148,7 @@ pub fn render<'a>(
         column![
             title,
             add_form,
-            text("Imported Profiles").color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "imported_profiles")).color(theme::TEXT_MUTED).size(14),
             scroll_list
         ]
         .spacing(20)

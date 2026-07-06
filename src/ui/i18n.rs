@@ -84,7 +84,23 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "fake_ip_label" => "Fake-IP DNS Mode",
             "tcp_fast_open_label" => "TCP Fast Open (TFO)",
             "tcp_multipath_label" => "TCP Multi-Path (MPTCP)",
+            "close_core_on_exit_label" => "Auto-close core on exit",
             
+            "active_mode" => "Active Mode",
+            "listen_port" => "Listen Port",
+            "btn_update" => "Update",
+            "imported_profiles" => "Imported Profiles",
+            
+            // Connections
+            "tab_connections" => "Connections",
+            "host" => "Host / IP",
+            "network" => "Network",
+            "type" => "Type",
+            "chains" => "Chains",
+            "rule" => "Rule",
+            "close_conn" => "Close",
+            "no_active_connections" => "No active connections.",
+
             _ => key,
         },
         Language::Zh => match key {
@@ -169,6 +185,22 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "fake_ip_label" => "Fake-IP 虚假 IP 模式",
             "tcp_fast_open_label" => "TCP 快速打开 (TFO)",
             "tcp_multipath_label" => "TCP 多径传输 (MPTCP)",
+            "close_core_on_exit_label" => "退出时自动关闭内核",
+
+            "active_mode" => "当前模式",
+            "listen_port" => "监听端口",
+            "btn_update" => "更新",
+            "imported_profiles" => "已导入的配置",
+
+            // Connections
+            "tab_connections" => "连接管理",
+            "host" => "目标主机 / IP",
+            "network" => "网络",
+            "type" => "类型",
+            "chains" => "代理链",
+            "rule" => "规则",
+            "close_conn" => "断开",
+            "no_active_connections" => "当前没有活动的连接。",
             
             _ => key,
         }

@@ -8,6 +8,7 @@ pub enum Tab {
     Profiles,
     Logs,
     Settings,
+    Connections,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +78,7 @@ pub struct GuiConfig {
     pub fake_ip: bool,
     pub tcp_fast_open: bool,
     pub tcp_multipath: bool,
+    pub close_core_on_exit: bool,
 }
 
 impl Default for GuiConfig {
@@ -98,6 +100,7 @@ impl Default for GuiConfig {
             fake_ip: false,
             tcp_fast_open: false,
             tcp_multipath: false,
+            close_core_on_exit: true,
         }
     }
 }

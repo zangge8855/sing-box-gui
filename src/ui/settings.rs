@@ -131,9 +131,17 @@ pub fn render<'a>(
     .style(if gui_config.start_on_boot { theme::button_primary } else { theme::button_secondary })
     .on_press(Message::PortInputChanged("toggle_autostart".to_string()));
     
+    let close_core_btn = button(
+        text(format!("{}: {}", tr(lang, "close_core_on_exit_label"), if gui_config.close_core_on_exit { "ON" } else { "OFF" })).size(13)
+    )
+    .padding([8, 16])
+    .style(if gui_config.close_core_on_exit { theme::button_primary } else { theme::button_secondary })
+    .on_press(Message::PortInputChanged("toggle_close_core".to_string()));
+    
     let toggles_row = row![
         tun_btn,
-        autostart_btn
+        autostart_btn,
+        close_core_btn
     ]
     .spacing(20);
     

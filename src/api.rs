@@ -30,6 +30,43 @@ pub struct DelayResponse {
     pub delay: u64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConnectionMetadata {
+    pub network: String,
+    #[serde(rename = "type")]
+    pub conn_type: String,
+    #[serde(rename = "sourceIP")]
+    pub source_ip: String,
+    #[serde(rename = "destinationIP")]
+    pub destination_ip: String,
+    #[serde(rename = "sourcePort")]
+    pub source_port: String,
+    #[serde(rename = "destinationPort")]
+    pub destination_port: String,
+    pub host: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Connection {
+    pub id: String,
+    pub metadata: ConnectionMetadata,
+    pub upload: u64,
+    pub download: u64,
+    pub start: String,
+    pub chains: Vec<String>,
+    pub rule: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConnectionsResponse {
+    pub connections: Vec<Connection>,
+    #[serde(rename = "downloadTotal")]
+    pub download_total: u64,
+    #[serde(rename = "uploadTotal")]
+    pub upload_total: u64,
+}
+
+
 pub async fn fetch_proxies(api_port: u16) -> Result<ProxiesResponse, String> {
     let url = format!("http://127.0.0.1:{}/proxies", api_port);
     let client = reqwest::Client::new();
@@ -83,6 +120,36 @@ pub async fn test_node_latency(api_port: u16, node_tag: &str) -> Result<u64, Str
             .await
             .map_err(|e| format!("Failed to parse delay response: {}", e))?;
         Ok(delay_res.delay)
+    } else {
+        Err(format!("Server returned status code: {}", res.status()))
+    }
+}
+
+pub async fn fetch_connections(api_port: u16) -> Result<ConnectionsResponse, String> {
+    let url = format!("http://127.0.0.1:{}/connections", api_port);
+    let client = reqwest::Client::new();
+    let res = client.get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch connections: {}", e))?;
+        
+    let body = res.json::<ConnectionsResponse>()
+        .await
+        .map_err(|e| format!("Failed to parse connections response: {}", e))?;
+        
+    Ok(body)
+}
+
+pub async fn close_connection(api_port: u16, id: &str) -> Result<(), String> {
+    let url = format!("http://127.0.0.1:{}/connections/{}", api_port, id);
+    let client = reqwest::Client::new();
+    let res = client.delete(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to close connection: {}", e))?;
+        
+    if res.status().is_success() {
+        Ok(())
     } else {
         Err(format!("Server returned status code: {}", res.status()))
     }

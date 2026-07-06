@@ -14,6 +14,7 @@ pub enum Message {
     SubscriptionDownloaded { id: String, error: Option<String> },
     SelectProfile(String),
     DeleteProfile(String),
+    UpdateSubscription(String),
     SelectNode(String),
     NodeSelected { tag: String, error: Option<String> },
     StartLatencyTest,
@@ -23,4 +24,8 @@ pub enum Message {
     RoutingModeChanged(RoutingMode),
     PortInputChanged(String),
     SaveSettings,
+    FetchConnections,
+    ConnectionsFetched(Result<crate::api::ConnectionsResponse, String>),
+    CloseConnection(String),
+    ConnectionClosed(Result<String, String>),
 }

@@ -60,6 +60,9 @@ struct App {
     log_lines: Vec<String>,
     current_speed: Bandwidth,
     speed_history: Vec<(u64, u64)>, // (up, down)
+    total_uploaded: u64,
+    total_downloaded: u64,
+    active_connections: Vec<crate::api::Connection>,
     active_profile_nodes: Vec<ProxyNode>,
     selected_node_tag: Option<String>,
     latency_testing: bool,
@@ -83,6 +86,9 @@ impl App {
             log_lines: Vec::new(),
             current_speed: Bandwidth::default(),
             speed_history: vec![(0, 0); 30], // initial 30 empty data points
+            total_uploaded: 0,
+            total_downloaded: 0,
+            active_connections: Vec::new(),
             active_profile_nodes: Vec::new(),
             selected_node_tag,
             latency_testing: false,
@@ -140,6 +146,9 @@ impl App {
                         self.sys_proxy_enabled = false;
                     }
                     self.log_lines.push("[GUI] sing-box core stopped.".to_string());
+                    self.current_speed = Bandwidth::default();
+                    self.total_uploaded = 0;
+                    self.total_downloaded = 0;
                     Task::none()
                 } else {
                     let log_tx = get_log_tx();
@@ -191,6 +200,8 @@ impl App {
             }
             Message::TrafficUpdated { up, down } => {
                 self.current_speed = Bandwidth { up, down };
+                self.total_uploaded += up;
+                self.total_downloaded += down;
                 self.speed_history.push((up, down));
                 if self.speed_history.len() > 30 {
                     self.speed_history.remove(0);
@@ -240,6 +251,12 @@ impl App {
                     self.log_lines.push(format!("[GUI] Download failed: {}", err));
                 } else {
                     self.url_input.clear();
+                    // Update the updated_at timestamp for the subscription
+                    for sub in &mut self.gui_config.subscriptions {
+                        if sub.id == id {
+                            sub.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                        }
+                    }
                     self.log_lines.push("[GUI] Subscription downloaded successfully.".to_string());
                     
                     // Reload profiles list
@@ -348,14 +365,51 @@ impl App {
                 }
                 Task::none()
             }
+            Message::UpdateSubscription(id) => {
+                let sub = self.gui_config.subscriptions.iter().find(|p| p.id == id);
+                if let Some(profile) = sub {
+                    let url = profile.url.clone();
+                    let id_clone = id.clone();
+                    self.downloading = true;
+                    self.log_lines.push(format!("[GUI] Updating subscription: {}", url));
+                    
+                    Task::perform(async move {
+                        let client = reqwest::Client::new();
+                        let res = client.get(&url)
+                            .header("User-Agent", "clash")
+                            .send()
+                            .await
+                            .map_err(|e| format!("Download failed: {}", e))?;
+                        if !res.status().is_success() {
+                            return Err(format!("Server returned: {}", res.status()));
+                        }
+                        let content = res.text().await
+                            .map_err(|e| format!("Read failed: {}", e))?;
+                        let _ = crate::config::parse_clash_yaml_nodes(&content)
+                            .map_err(|e| format!("Invalid config: {}", e))?;
+                        let path = crate::config::get_profile_path(&id_clone);
+                        std::fs::write(&path, &content)
+                            .map_err(|e| format!("Save failed: {}", e))?;
+                        Ok::<String, String>(id_clone)
+                    }, |res| match res {
+                        Ok(id) => Message::SubscriptionDownloaded { id, error: None },
+                        Err(e) => Message::SubscriptionDownloaded { id: String::new(), error: Some(e) },
+                    })
+                } else {
+                    self.log_lines.push("[GUI] Subscription not found.".to_string());
+                    Task::none()
+                }
+            }
             Message::Tick => {
                 self.core_running = core::is_core_running();
                 self.core_installed = core::is_core_installed(&self.gui_config);
                 
+                let mut tasks = Vec::new();
+                
                 // Periodically fetch active node from Clash API if core running
                 if self.core_running {
                     let api_port = self.gui_config.api_port;
-                    return Task::perform(async move {
+                    tasks.push(Task::perform(async move {
                         api::fetch_proxies(api_port).await
                     }, |res| match res {
                         Ok(proxies_res) => {
@@ -367,8 +421,51 @@ impl App {
                             Message::Tick
                         }
                         Err(_) => Message::Tick,
-                    });
+                    }));
+                    
+                    if self.current_tab == Tab::Connections {
+                        tasks.push(Task::done(Message::FetchConnections));
+                    }
                 }
+                Task::batch(tasks)
+            }
+            Message::FetchConnections => {
+                if self.core_running {
+                    let api_port = self.gui_config.api_port;
+                    return Task::perform(async move {
+                        api::fetch_connections(api_port).await
+                    }, Message::ConnectionsFetched);
+                }
+                Task::none()
+            }
+            Message::ConnectionsFetched(Ok(res)) => {
+                self.active_connections = res.connections;
+                Task::none()
+            }
+            Message::ConnectionsFetched(Err(e)) => {
+                self.log_lines.push(format!("[GUI] Failed to fetch connections: {}", e));
+                Task::none()
+            }
+            Message::CloseConnection(id) => {
+                if self.core_running {
+                    let api_port = self.gui_config.api_port;
+                    let id_clone = id.clone();
+                    return Task::perform(async move {
+                        match api::close_connection(api_port, &id_clone).await {
+                            Ok(_) => Ok(id_clone),
+                            Err(e) => Err(e),
+                        }
+                    }, Message::ConnectionClosed);
+                }
+                Task::none()
+            }
+            Message::ConnectionClosed(Ok(id)) => {
+                self.log_lines.push(format!("[GUI] Closed connection {}", id));
+                self.active_connections.retain(|c| c.id != id);
+                Task::none()
+            }
+            Message::ConnectionClosed(Err(e)) => {
+                self.log_lines.push(format!("[GUI] Failed to close connection: {}", e));
                 Task::none()
             }
             Message::ErrorOccurred(err) => {
@@ -416,6 +513,8 @@ impl App {
                     self.gui_config.tcp_fast_open = !self.gui_config.tcp_fast_open;
                 } else if input == "toggle_mptcp" {
                     self.gui_config.tcp_multipath = !self.gui_config.tcp_multipath;
+                } else if input == "toggle_close_core" {
+                    self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
                 }
                 Task::none()
             }
@@ -449,23 +548,30 @@ impl App {
         // Sidebar View
         let sidebar = container(
             column![
-                text("sing-box")
-                    .size(24)
-                    .font(Font {
-                        weight: iced::font::Weight::Bold,
-                        ..Default::default()
-                    })
-                    .color(ui::theme::ACCENT_PURPLE),
                 column![
-                    make_tab_btn(Tab::Dashboard, "📊", "tab_dashboard"),
-                    make_tab_btn(Tab::Proxies, "⚡", "tab_proxies"),
-                    make_tab_btn(Tab::Profiles, "📂", "tab_profiles"),
-                    make_tab_btn(Tab::Logs, "📝", "tab_logs"),
-                    make_tab_btn(Tab::Settings, "⚙️", "tab_settings"),
+                    text("sing-box")
+                        .size(24)
+                        .font(Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        })
+                        .color(ui::theme::ACCENT_PURPLE),
+                    column![
+                        make_tab_btn(Tab::Dashboard, "📊", "tab_dashboard"),
+                        make_tab_btn(Tab::Proxies, "⚡", "tab_proxies"),
+                        make_tab_btn(Tab::Profiles, "📂", "tab_profiles"),
+                        make_tab_btn(Tab::Connections, "🌐", "tab_connections"),
+                        make_tab_btn(Tab::Logs, "📝", "tab_logs"),
+                        make_tab_btn(Tab::Settings, "⚙️", "tab_settings"),
+                    ]
+                    .spacing(8)
                 ]
-                .spacing(8)
+                .spacing(40),
+                iced::widget::Space::new().height(Length::Fill),
+                text(format!("v{}", env!("CARGO_PKG_VERSION")))
+                    .size(12)
+                    .color(ui::theme::TEXT_MUTED)
             ]
-            .spacing(40)
         )
         .width(Length::Fixed(200.0))
         .height(Length::Fill)
@@ -480,6 +586,8 @@ impl App {
                 self.sys_proxy_enabled,
                 &self.current_speed,
                 &self.speed_history,
+                self.total_uploaded,
+                self.total_downloaded,
             ),
             Tab::Proxies => ui::proxies::render(
                 &self.gui_config,
@@ -492,6 +600,7 @@ impl App {
                 &self.url_input,
                 self.downloading,
             ),
+            Tab::Connections => ui::connections::render(&self.gui_config, &self.active_connections),
             Tab::Logs => ui::logs::render(&self.gui_config, &self.log_lines),
             Tab::Settings => ui::settings::render(
                 &self.gui_config,
@@ -642,8 +751,10 @@ fn main() -> iced::Result {
         .run();
         
     // CRITICAL EXIT CLEANUP
-    core::stop_core();
     let config = config::load_gui_config();
+    if config.close_core_on_exit {
+        core::stop_core();
+    }
     let _ = sysproxy::set_system_proxy(false, config.mixed_port);
     
     res

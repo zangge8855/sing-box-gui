@@ -1,7 +1,7 @@
 use iced::widget::{button, column, container, row, svg, text};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
-use crate::state::{Bandwidth, GuiConfig};
+use crate::state::{Bandwidth, GuiConfig, RoutingMode};
 use crate::ui::theme;
 
 fn format_speed(bytes: u64) -> String {
@@ -20,6 +20,8 @@ pub fn render<'a>(
     sys_proxy_enabled: bool,
     current_speed: &Bandwidth,
     speed_history: &[(u64, u64)],
+    total_uploaded: u64,
+    total_downloaded: u64,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
@@ -95,7 +97,42 @@ pub fn render<'a>(
         proxy_card
     ]
     .spacing(20);
-    
+
+    // Connection info summary row
+    let mode_label = match gui_config.routing_mode {
+        RoutingMode::Rule => "Rule",
+        RoutingMode::Global => "Global",
+        RoutingMode::Direct => "Direct",
+    };
+
+    let mode_card = container(
+        column![
+            text(tr(lang, "active_mode")).color(theme::TEXT_MUTED).size(12),
+            text(mode_label).color(theme::TEXT_PRIMARY).size(20),
+        ]
+        .spacing(6)
+    )
+    .padding(16)
+    .width(Length::FillPortion(1))
+    .style(theme::card_bg);
+
+    let port_card = container(
+        column![
+            text(tr(lang, "listen_port")).color(theme::TEXT_MUTED).size(12),
+            text(format!("{}", gui_config.mixed_port)).color(theme::TEXT_PRIMARY).size(20),
+        ]
+        .spacing(6)
+    )
+    .padding(16)
+    .width(Length::FillPortion(1))
+    .style(theme::card_bg);
+
+    let info_row = row![
+        mode_card,
+        port_card
+    ]
+    .spacing(20);
+
     // Speed Stats cards
     let download_card = container(
         column![
@@ -103,6 +140,9 @@ pub fn render<'a>(
             text(format_speed(current_speed.down))
                 .color(theme::ACCENT_BLUE)
                 .size(28),
+            text(format!("Total: {}", format_speed(total_downloaded).replace("/s", "")))
+                .color(theme::TEXT_MUTED)
+                .size(12),
         ]
         .spacing(5)
     )
@@ -116,6 +156,9 @@ pub fn render<'a>(
             text(format_speed(current_speed.up))
                 .color(theme::ACCENT_PURPLE)
                 .size(28),
+            text(format!("Total: {}", format_speed(total_uploaded).replace("/s", "")))
+                .color(theme::TEXT_MUTED)
+                .size(12),
         ]
         .spacing(5)
     )
@@ -200,6 +243,7 @@ pub fn render<'a>(
         column![
             text(tr(lang, "tab_dashboard")).size(24).color(theme::TEXT_PRIMARY),
             controls_row,
+            info_row,
             speed_row,
             chart_card
         ]
