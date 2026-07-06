@@ -60,14 +60,15 @@ pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), Str
     };
     
     #[cfg(target_os = "macos")]
-    let (url, archive_name) = {
+    let (url, archive_name, arch) = {
         #[cfg(target_arch = "aarch64")]
         let arch = "darwin-arm64";
         #[cfg(not(target_arch = "aarch64"))]
         let arch = "darwin-amd64";
         (
-            format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.zip", version, version, arch),
-            "temp_core.zip"
+            format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.tar.gz", version, version, arch),
+            "temp_core.tar.gz",
+            arch
         )
     };
     
@@ -102,9 +103,9 @@ pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), Str
         
     let _ = progress_sender.send("Extracting core...".to_string());
     
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     {
-        // Extract using zip crate (works for Windows and macOS)
+        // Extract using zip crate for Windows
         let zip_file = File::open(&temp_archive_path)
             .map_err(|e| format!("Failed to open temp zip: {}", e))?;
             
@@ -131,12 +132,6 @@ pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), Str
         let _ = fs::remove_file(temp_archive_path);
         
         if extracted {
-            // Set permissions on Unix (macOS)
-            #[cfg(target_os = "macos")]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(0o755));
-            }
             let _ = progress_sender.send("Core installed successfully!".to_string());
             Ok(())
         } else {
@@ -144,9 +139,9 @@ pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), Str
         }
     }
     
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        // Extract using system `tar` command for Linux
+        // Extract using system `tar` command for Linux and macOS
         let status = Command::new("tar")
             .arg("-xzf")
             .arg(&temp_archive_path)
