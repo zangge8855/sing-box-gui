@@ -653,6 +653,13 @@ pub fn convert_clash_to_singbox(
             }
         }
         
+        if gui_config.tcp_fast_open {
+            outbound.insert("tcp_fast_open".to_string(), json!(true));
+        }
+        if gui_config.tcp_multipath {
+            outbound.insert("tcp_multipath".to_string(), json!(true));
+        }
+        
         outbounds.push(serde_json::Value::Object(outbound));
     }
     
@@ -663,7 +670,13 @@ pub fn convert_clash_to_singbox(
     let mut selector_outbounds = vec!["Auto".to_string()];
     selector_outbounds.extend(node_tags.clone());
     proxy_selector.insert("outbounds".to_string(), json!(selector_outbounds));
-    proxy_selector.insert("default".to_string(), json!("Auto"));
+    
+    // Remember selected node tag (Store Cache)
+    let default_node = gui_config.selected_node_tag.as_ref()
+        .filter(|tag| node_tags.contains(tag) || *tag == "Auto")
+        .cloned()
+        .unwrap_or_else(|| "Auto".to_string());
+    proxy_selector.insert("default".to_string(), json!(default_node));
     
     // Master URLTest "Auto"
     let mut auto_urltest = serde_json::Map::new();
@@ -685,24 +698,40 @@ pub fn convert_clash_to_singbox(
     final_outbounds.push(json!({ "type": "dns", "tag": "dns-out" }));
     
     // Build DNS config
+    let mut dns_servers = vec![
+        json!({
+            "tag": "dns_remote",
+            "address": gui_config.dns_server_remote,
+            "detour": "Proxy"
+        }),
+        json!({
+            "tag": "dns_local",
+            "address": gui_config.dns_server_local,
+            "detour": "direct"
+        })
+    ];
+    
+    let mut dns_rules = vec![
+        json!({ "clash_mode": "Direct", "server": "dns_local" }),
+    ];
+    
+    if gui_config.fake_ip {
+        dns_servers.push(json!({
+            "tag": "dns_fakeip",
+            "address": "fakeip",
+            "inet4_range": "198.18.0.0/15"
+        }));
+        dns_rules.push(json!({ "rule_set": ["geosite-cn"], "server": "dns_local" }));
+        dns_rules.push(json!({ "query_type": ["A", "AAAA"], "server": "dns_fakeip" }));
+        dns_rules.push(json!({ "clash_mode": "Global", "server": "dns_fakeip" }));
+    } else {
+        dns_rules.push(json!({ "clash_mode": "Global", "server": "dns_remote" }));
+        dns_rules.push(json!({ "rule_set": ["geosite-cn"], "server": "dns_local" }));
+    }
+    
     let dns = json!({
-        "servers": [
-            {
-                "tag": "dns_remote",
-                "address": gui_config.dns_server_remote,
-                "detour": "Proxy"
-            },
-            {
-                "tag": "dns_local",
-                "address": gui_config.dns_server_local,
-                "detour": "direct"
-            }
-        ],
-        "rules": [
-            { "clash_mode": "Direct", "server": "dns_local" },
-            { "clash_mode": "Global", "server": "dns_remote" },
-            { "rule_set": ["geosite-cn"], "server": "dns_local" }
-        ]
+        "servers": dns_servers,
+        "rules": dns_rules
     });
     
     // Build Inbounds

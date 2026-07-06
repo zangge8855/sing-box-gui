@@ -73,6 +73,7 @@ impl App {
     fn new() -> (Self, Task<Message>) {
         let gui_config = config::load_gui_config();
         let core_installed = core::is_core_installed(&gui_config);
+        let selected_node_tag = gui_config.selected_node_tag.clone();
         
         let mut app = Self {
             current_tab: Tab::Dashboard,
@@ -83,7 +84,7 @@ impl App {
             current_speed: Bandwidth::default(),
             speed_history: vec![(0, 0); 30], // initial 30 empty data points
             active_profile_nodes: Vec::new(),
-            selected_node_tag: None,
+            selected_node_tag,
             latency_testing: false,
             downloading: false,
             url_input: String::new(),
@@ -286,6 +287,8 @@ impl App {
             Message::SelectNode(tag) => {
                 if !self.core_running {
                     self.selected_node_tag = Some(tag.clone());
+                    self.gui_config.selected_node_tag = Some(tag.clone());
+                    let _ = config::save_gui_config(&self.gui_config);
                     return Task::none();
                 }
                 let tag_clone = tag.clone();
@@ -305,6 +308,8 @@ impl App {
                     self.log_lines.push(format!("[GUI] Failed to select node: {}", err));
                 } else {
                     self.selected_node_tag = Some(tag.clone());
+                    self.gui_config.selected_node_tag = Some(tag.clone());
+                    let _ = config::save_gui_config(&self.gui_config);
                     self.log_lines.push(format!("[GUI] Selected node: {}", tag));
                 }
                 Task::none()
@@ -405,6 +410,12 @@ impl App {
                     self.gui_config.language = state::Language::En;
                 } else if input == "lang:zh" {
                     self.gui_config.language = state::Language::Zh;
+                } else if input == "toggle_fakeip" {
+                    self.gui_config.fake_ip = !self.gui_config.fake_ip;
+                } else if input == "toggle_tfo" {
+                    self.gui_config.tcp_fast_open = !self.gui_config.tcp_fast_open;
+                } else if input == "toggle_mptcp" {
+                    self.gui_config.tcp_multipath = !self.gui_config.tcp_multipath;
                 }
                 Task::none()
             }

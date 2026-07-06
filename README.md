@@ -76,6 +76,7 @@ CI configuration file is located at `.github/workflows/build.yml`.
 Special thanks to the following open-source projects for providing core libraries and inspiration:
 - [iced-rs/iced](https://github.com/iced-rs/iced) (GUI Framework)
 - [SagerNet/sing-box](https://github.com/SagerNet/sing-box) (Proxy Core Engine)
+- [GUI-for-Cores/GUI.for.SingBox](https://github.com/GUI-for-Cores/GUI.for.SingBox) (Modern sing-box desktop client which inspired features of this project)
 
 ---
 
@@ -163,6 +164,7 @@ CI 配置文件位于 `.github/workflows/build.yml`.
 感谢以下优秀项目为本项目提供的核心支持与灵感：
 - [iced-rs/iced](https://github.com/iced-rs/iced) (GUI 框架)
 - [SagerNet/sing-box](https://github.com/SagerNet/sing-box) (代理核心引擎)
+- [GUI-for-Cores/GUI.for.SingBox](https://github.com/GUI-for-Cores/GUI.for.SingBox) (优秀的 sing-box 客户端，本项目参考并汲取了其丰富的功能特性及界面灵感)
 
 ---
 

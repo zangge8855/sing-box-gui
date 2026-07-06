@@ -73,6 +73,10 @@ pub struct GuiConfig {
     pub tun_mode: bool,
     pub system_proxy_enabled: bool,
     pub language: Language,
+    pub selected_node_tag: Option<String>,
+    pub fake_ip: bool,
+    pub tcp_fast_open: bool,
+    pub tcp_multipath: bool,
 }
 
 impl Default for GuiConfig {
@@ -90,6 +94,10 @@ impl Default for GuiConfig {
             tun_mode: false,
             system_proxy_enabled: false,
             language: Language::En,
+            selected_node_tag: None,
+            fake_ip: false,
+            tcp_fast_open: false,
+            tcp_multipath: false,
         }
     }
 }

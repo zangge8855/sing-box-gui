@@ -137,11 +137,32 @@ pub fn render<'a>(
     ]
     .spacing(20);
     
+    let tfo_btn = button(
+        text(format!("{}: {}", tr(lang, "tcp_fast_open_label"), if gui_config.tcp_fast_open { "ON" } else { "OFF" })).size(13)
+    )
+    .padding([8, 16])
+    .style(if gui_config.tcp_fast_open { theme::button_primary } else { theme::button_secondary })
+    .on_press(Message::PortInputChanged("toggle_tfo".to_string()));
+    
+    let mptcp_btn = button(
+        text(format!("{}: {}", tr(lang, "tcp_multipath_label"), if gui_config.tcp_multipath { "ON" } else { "OFF" })).size(13)
+    )
+    .padding([8, 16])
+    .style(if gui_config.tcp_multipath { theme::button_primary } else { theme::button_secondary })
+    .on_press(Message::PortInputChanged("toggle_mptcp".to_string()));
+    
+    let performance_row = row![
+        tfo_btn,
+        mptcp_btn
+    ]
+    .spacing(20);
+    
     let settings_card = container(
         column![
             text(tr(lang, "ports_config")).color(theme::TEXT_MUTED).size(13),
             ports_row,
-            toggles_row
+            toggles_row,
+            performance_row
         ]
         .spacing(15)
     )
@@ -173,10 +194,18 @@ pub fn render<'a>(
     ]
     .spacing(30);
     
+    let fakeip_btn = button(
+        text(format!("{}: {}", tr(lang, "fake_ip_label"), if gui_config.fake_ip { "ON" } else { "OFF" })).size(13)
+    )
+    .padding([8, 16])
+    .style(if gui_config.fake_ip { theme::button_primary } else { theme::button_secondary })
+    .on_press(Message::PortInputChanged("toggle_fakeip".to_string()));
+    
     let dns_card = container(
         column![
             text(tr(lang, "dns_servers")).color(theme::TEXT_MUTED).size(13),
-            dns_row
+            dns_row,
+            fakeip_btn
         ]
         .spacing(15)
     )

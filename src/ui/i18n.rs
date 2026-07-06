@@ -81,6 +81,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tun_mode_label" => "TUN Mode",
             "autostart_label" => "Start on Boot",
             "btn_save_apply" => "Save & Apply Settings",
+            "fake_ip_label" => "Fake-IP DNS Mode",
+            "tcp_fast_open_label" => "TCP Fast Open (TFO)",
+            "tcp_multipath_label" => "TCP Multi-Path (MPTCP)",
             
             _ => key,
         },
@@ -163,6 +166,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tun_mode_label" => "TUN 虚拟网卡模式",
             "autostart_label" => "开机自启",
             "btn_save_apply" => "保存并应用设置",
+            "fake_ip_label" => "Fake-IP 虚假 IP 模式",
+            "tcp_fast_open_label" => "TCP 快速打开 (TFO)",
+            "tcp_multipath_label" => "TCP 多径传输 (MPTCP)",
             
             _ => key,
         }
