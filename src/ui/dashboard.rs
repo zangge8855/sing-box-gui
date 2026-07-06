@@ -38,9 +38,9 @@ pub fn render<'a>(
     
     // Core Status Section
     let status_indicator = if core_running {
-        text(tr(lang, "status_running")).color(theme::SUCCESS).size(18)
+        text(tr(lang, "status_running")).color(theme::SUCCESS).size(18).width(Length::Fill)
     } else {
-        text(tr(lang, "status_stopped")).color(theme::DANGER).size(18)
+        text(tr(lang, "status_stopped")).color(theme::DANGER).size(18).width(Length::Fill)
     };
     
     let core_control_btn = if core_running {
@@ -74,6 +74,7 @@ pub fn render<'a>(
                 status_indicator,
                 core_control_btn
             ]
+            .width(Length::Fill)
             .align_y(Alignment::Center)
             .spacing(20)
         ]
@@ -85,9 +86,9 @@ pub fn render<'a>(
     
     // System Proxy Control Section
     let sys_proxy_indicator = if sys_proxy_enabled {
-        text(tr(lang, "enabled")).color(theme::SUCCESS).size(18)
+        text(tr(lang, "enabled")).color(theme::SUCCESS).size(18).width(Length::Fill)
     } else {
-        text(tr(lang, "disabled")).color(text_muted).size(18)
+        text(tr(lang, "disabled")).color(text_muted).size(18).width(Length::Fill)
     };
     
     let sys_proxy_btn = button(
@@ -108,6 +109,7 @@ pub fn render<'a>(
                 sys_proxy_indicator,
                 sys_proxy_btn
             ]
+            .width(Length::Fill)
             .align_y(Alignment::Center)
             .spacing(20)
         ]

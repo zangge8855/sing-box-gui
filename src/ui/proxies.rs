@@ -138,6 +138,8 @@ pub fn render<'a>(
                             }
                         }
                     }
+                } else if let Some(n) = nodes.iter().find(|n| n.name == *node_name) {
+                    node_type = n.node_type.clone();
                 }
                 
                 if latency.is_none() {

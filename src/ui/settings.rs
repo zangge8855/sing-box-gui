@@ -45,21 +45,29 @@ pub fn render<'a>(
     // Core Status / Downloader Card
     let core_downloader = if core_installed {
         row![
-            text(tr(lang, "core_installed_status")).color(theme::SUCCESS).size(14),
+            text(tr(lang, "core_installed_status")).color(theme::SUCCESS).size(14).width(Length::Fill),
             text(tr(lang, "core_ver_stable")).color(text_muted).size(12)
         ]
+        .width(Length::Fill)
         .spacing(5)
         .align_y(Alignment::Center)
     } else {
-        let btn = button(text(tr(lang, "btn_download_core")).size(13))
-            .padding([8, 16])
-            .style(theme::button_primary)
-            .on_press(Message::NewLogLine("TRIGGER_CORE_DOWNLOAD".to_string()));
+        let btn = button(
+            text(tr(lang, "btn_download_core"))
+                .size(13)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+        )
+        .padding([8, 16])
+        .width(Length::Fixed(150.0))
+        .style(theme::button_primary)
+        .on_press(Message::NewLogLine("TRIGGER_CORE_DOWNLOAD".to_string()));
             
         row![
-            text(tr(lang, "core_not_found")).color(theme::DANGER).size(14),
+            text(tr(lang, "core_not_found")).color(theme::DANGER).size(14).width(Length::Fill),
             btn
         ]
+        .width(Length::Fill)
         .spacing(20)
         .align_y(Alignment::Center)
     };
@@ -70,10 +78,16 @@ pub fn render<'a>(
         row![]
     };
     
-    let open_dir_btn = button(text(tr(lang, "btn_open_data_dir")).size(13))
-        .padding([8, 16])
-        .style(theme::button_secondary)
-        .on_press(Message::PortInputChanged("open_data_dir".to_string()));
+    let open_dir_btn = button(
+        text(tr(lang, "btn_open_data_dir"))
+            .size(13)
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
+    )
+    .padding([8, 16])
+    .width(Length::Fill)
+    .style(theme::button_secondary)
+    .on_press(Message::PortInputChanged("open_data_dir".to_string()));
 
     let core_card = container(
         column![
