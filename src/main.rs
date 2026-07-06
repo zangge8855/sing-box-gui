@@ -89,6 +89,7 @@ struct App {
     tray_menu_rule_mode: tray_icon::menu::CheckMenuItem,
     tray_menu_global_mode: tray_icon::menu::CheckMenuItem,
     tray_menu_direct_mode: tray_icon::menu::CheckMenuItem,
+    tray_menu_system_proxy: tray_icon::menu::CheckMenuItem,
     window_id: Option<iced::window::Id>,
 }
 
@@ -131,6 +132,8 @@ impl App {
         let global_mode_item = CheckMenuItem::with_id("mode_global", "全局代理 (Global)", true, false, None);
         let direct_mode_item = CheckMenuItem::with_id("mode_direct", "直接连接 (Direct)", true, false, None);
         
+        let system_proxy_item = CheckMenuItem::with_id("toggle_system_proxy", "系统代理 (System Proxy)", true, gui_config.system_proxy_enabled, None);
+        
         let mode_submenu = tray_icon::menu::Submenu::new("代理模式 (Proxy Mode)", true);
         let _ = mode_submenu.append(&rule_mode_item);
         let _ = mode_submenu.append(&global_mode_item);
@@ -141,6 +144,7 @@ impl App {
         let _ = tray_menu.append(&show_item);
         let _ = tray_menu.append(&PredefinedMenuItem::separator());
         let _ = tray_menu.append(&toggle_core_item);
+        let _ = tray_menu.append(&system_proxy_item);
         let _ = tray_menu.append(&mode_submenu);
         let _ = tray_menu.append(&PredefinedMenuItem::separator());
         let _ = tray_menu.append(&exit_item);
@@ -190,6 +194,7 @@ impl App {
             tray_menu_rule_mode: rule_mode_item,
             tray_menu_global_mode: global_mode_item,
             tray_menu_direct_mode: direct_mode_item,
+            tray_menu_system_proxy: system_proxy_item,
             window_id: None,
         };
         
@@ -251,6 +256,7 @@ impl App {
         self.tray_menu_rule_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Rule);
         self.tray_menu_global_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Global);
         self.tray_menu_direct_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Direct);
+        self.tray_menu_system_proxy.set_checked(self.gui_config.system_proxy_enabled);
     }
     
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -285,6 +291,9 @@ impl App {
                     }
                     "toggle_core" => {
                         Task::done(Message::ToggleCore)
+                    }
+                    "toggle_system_proxy" => {
+                        Task::done(Message::ToggleSystemProxy)
                     }
                     "mode_rule" => {
                         Task::done(Message::RoutingModeChanged(state::RoutingMode::Rule))
