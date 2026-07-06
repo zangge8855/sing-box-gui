@@ -73,7 +73,11 @@ CI 配置文件位于 `.github/workflows/build.yml`。
 ## 🙏 致谢
 
 感谢以下优秀项目为本项目提供的核心支持与灵感：
-- [zangge8855/sing-box-gui](https://github.com/zangge8855/sing-box-gui)
-- [iced-rs/iced](https://github.com/iced-rs/iced)
-- [SagerNet/sing-box](https://github.com/SagerNet/sing-box)
+- [iced-rs/iced](https://github.com/iced-rs/iced) (GUI 框架)
+- [SagerNet/sing-box](https://github.com/SagerNet/sing-box) (代理核心引擎)
 
+---
+
+## 📄 开源协议
+
+本项目采用 **GNU General Public License v3.0** (GPL-3.0) 协议开源。该协议与本项目所依赖的开源组件（如 `sing-box` 的 GPLv3 协议以及 `iced` 的 MIT/Apache-2.0 协议）完全兼容。
