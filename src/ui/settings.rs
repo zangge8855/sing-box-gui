@@ -1,5 +1,5 @@
-use iced::widget::{button, column, container, row, text, text_input, Column};
-use iced::{Alignment, Element, Length};
+use iced::widget::{button, column, container, row, text, text_input};
+use iced::{Alignment, Element};
 use crate::message::Message;
 use crate::state::{GuiConfig, RoutingMode};
 use crate::ui::theme;

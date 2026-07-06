@@ -1,7 +1,7 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Column};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
-use crate::state::{GuiConfig, Profile};
+use crate::state::GuiConfig;
 use crate::ui::theme;
 
 pub fn render<'a>(

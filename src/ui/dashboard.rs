@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, svg, text, Column, Row};
+use iced::widget::{button, column, container, row, svg, text};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig};

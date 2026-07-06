@@ -15,6 +15,7 @@ pub enum Message {
     SelectProfile(String),
     DeleteProfile(String),
     SelectNode(String),
+    NodeSelected { tag: String, error: Option<String> },
     StartLatencyTest,
     NodeLatencyTested { tag: String, latency: Option<u64> },
     Tick,

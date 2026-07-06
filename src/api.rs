@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
-use futures_util::StreamExt;
+
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TrafficInfo {

@@ -295,10 +295,19 @@ impl App {
                     api::select_proxy(api_port, "Proxy", &tag_clone).await
                 }, move |res| {
                     match res {
-                        Ok(_) => Message::SelectNode(tag.clone()),
-                        Err(e) => Message::ErrorOccurred(e),
+                        Ok(_) => Message::NodeSelected { tag: tag.clone(), error: None },
+                        Err(e) => Message::NodeSelected { tag: tag.clone(), error: Some(e) },
                     }
                 })
+            }
+            Message::NodeSelected { tag, error } => {
+                if let Some(err) = error {
+                    self.log_lines.push(format!("[GUI] Failed to select node: {}", err));
+                } else {
+                    self.selected_node_tag = Some(tag.clone());
+                    self.log_lines.push(format!("[GUI] Selected node: {}", tag));
+                }
+                Task::none()
             }
             Message::StartLatencyTest => {
                 if self.active_profile_nodes.is_empty() {

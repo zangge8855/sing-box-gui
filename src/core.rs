@@ -1,10 +1,10 @@
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::thread;
-use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 use crate::config::{get_app_dir, get_profile_path};
 use crate::state::GuiConfig;
 
