@@ -112,6 +112,7 @@ pub fn render<'a>(
         let mut card_elements: Vec<Element<'a, Message>> = Vec::new();
         
         if let Some(ref sub_nodes) = group_info.all {
+            let is_selector = group_info.proxy_type.to_lowercase() == "selector";
             let filtered_sub_nodes: Vec<&String> = if search_query.trim().is_empty() {
                 sub_nodes.iter().collect()
             } else {
@@ -241,7 +242,7 @@ pub fn render<'a>(
                 let group_clone = group_name.to_string();
                 let node_clone = node_name.clone();
                 
-                let card_btn = button(card_content)
+                let mut card_btn = button(card_content)
                     .padding(0)
                     .style(move |t, s| {
                         let base = if active {
@@ -250,7 +251,7 @@ pub fn render<'a>(
                             theme::card_bg(t)
                         };
                         let border_color = match s {
-                            button::Status::Hovered => theme::ACCENT_PURPLE,
+                            button::Status::Hovered if is_selector => theme::ACCENT_PURPLE,
                             _ => base.border.color,
                         };
                         button::Style {
@@ -265,11 +266,14 @@ pub fn render<'a>(
                             ..Default::default()
                         }
                     })
-                    .on_press(Message::SelectGroupNode {
+                    .width(Length::Fill);
+                    
+                if is_selector {
+                    card_btn = card_btn.on_press(Message::SelectGroupNode {
                         group: group_clone,
                         node: node_clone,
-                    })
-                    .width(Length::Fill);
+                    });
+                }
                     
                 card_elements.push(card_btn.into());
             }

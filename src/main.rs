@@ -296,8 +296,8 @@ impl App {
                             }
                         }
                     }
-                    Err(e) => {
-                        self.log_lines.push(format!("[GUI] Failed to fetch proxies: {}", e));
+                    Err(_e) => {
+                        // Suppress background polling HTTP errors to avoid cluttering log terminal
                     }
                 }
                 Task::none()
@@ -607,8 +607,8 @@ impl App {
                 self.active_connections = res.connections;
                 Task::none()
             }
-            Message::ConnectionsFetched(Err(e)) => {
-                self.log_lines.push(format!("[GUI] Failed to fetch connections: {}", e));
+            Message::ConnectionsFetched(Err(_e)) => {
+                // Suppress background polling HTTP errors to avoid cluttering log terminal
                 Task::none()
             }
             Message::CloseConnection(id) => {
