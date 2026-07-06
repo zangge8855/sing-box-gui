@@ -8,6 +8,7 @@ pub enum Message {
     NewLogLine(String),
     TrafficUpdated { up: u64, down: u64 },
     ToggleSystemProxy,
+    #[allow(dead_code)]
     SystemProxyStatusChanged(bool),
     SubscriptionInputChanged(String),
     DownloadSubscription,

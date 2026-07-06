@@ -525,18 +525,45 @@ impl App {
                     self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
                     let _ = config::save_gui_config(&self.gui_config);
                 } else if input == "open_data_dir" {
+                    #[cfg(target_os = "windows")]
                     let _ = std::process::Command::new("explorer")
                         .arg(config::get_app_dir())
                         .spawn();
+                    #[cfg(target_os = "macos")]
+                    let _ = std::process::Command::new("open")
+                        .arg(config::get_app_dir())
+                        .spawn();
+                    #[cfg(target_os = "linux")]
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg(config::get_app_dir())
+                        .spawn();
                 } else if input == "open_profiles_folder" {
+                    #[cfg(target_os = "windows")]
                     let _ = std::process::Command::new("explorer")
+                        .arg(config::get_app_dir().join("profiles"))
+                        .spawn();
+                    #[cfg(target_os = "macos")]
+                    let _ = std::process::Command::new("open")
+                        .arg(config::get_app_dir().join("profiles"))
+                        .spawn();
+                    #[cfg(target_os = "linux")]
+                    let _ = std::process::Command::new("xdg-open")
                         .arg(config::get_app_dir().join("profiles"))
                         .spawn();
                 } else if input.starts_with("edit_profile:") {
                     let id = &input[13..];
                     let path = config::get_profile_path(id);
+                    #[cfg(target_os = "windows")]
                     let _ = std::process::Command::new("cmd")
                         .args(&["/c", "start", "", &path.to_string_lossy()])
+                        .spawn();
+                    #[cfg(target_os = "macos")]
+                    let _ = std::process::Command::new("open")
+                        .arg(&path)
+                        .spawn();
+                    #[cfg(target_os = "linux")]
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg(&path)
                         .spawn();
                 }
                 Task::none()

@@ -24,15 +24,7 @@ impl Default for RoutingMode {
     }
 }
 
-impl RoutingMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            RoutingMode::Rule => "Rule",
-            RoutingMode::Global => "Global",
-            RoutingMode::Direct => "Direct",
-        }
-    }
-}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
@@ -51,14 +43,7 @@ pub enum Language {
     Zh,
 }
 
-impl Language {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Language::En => "English",
-            Language::Zh => "简体中文",
-        }
-    }
-}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuiConfig {

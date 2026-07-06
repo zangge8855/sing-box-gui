@@ -9,6 +9,7 @@ pub struct TrafficInfo {
     pub down: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProxyInfo {
     pub name: String,
@@ -30,6 +31,7 @@ pub struct DelayResponse {
     pub delay: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectionMetadata {
     pub network: String,
@@ -46,6 +48,7 @@ pub struct ConnectionMetadata {
     pub host: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Connection {
     pub id: String,
@@ -57,6 +60,7 @@ pub struct Connection {
     pub rule: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectionsResponse {
     pub connections: Vec<Connection>,

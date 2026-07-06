@@ -5,6 +5,7 @@ pub const BG_DARK: Color = Color::from_rgb(0.04, 0.06, 0.10);      // #0b0f19
 pub const SIDEBAR_BG: Color = Color::from_rgb(0.05, 0.06, 0.10);   // #0d0f1a
 pub const CARD_DARK: Color = Color::from_rgb(0.09, 0.11, 0.14);    // #161b24
 pub const CARD_LIGHT: Color = Color::from_rgb(0.12, 0.15, 0.19);   // #1f2630
+#[allow(dead_code)]
 pub const CARD_HOVER: Color = Color::from_rgb(0.14, 0.17, 0.22);   // #242b38
 pub const ACCENT_PURPLE: Color = Color::from_rgb(0.55, 0.36, 0.96); // #8b5cf6
 pub const ACCENT_BLUE: Color = Color::from_rgb(0.23, 0.51, 0.96);   // #3b82f6
