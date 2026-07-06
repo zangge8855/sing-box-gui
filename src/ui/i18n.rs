@@ -100,6 +100,11 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tcp_fast_open_label" => "TCP Fast Open (TFO)",
             "tcp_multipath_label" => "TCP Multi-Path (MPTCP)",
             "close_core_on_exit_label" => "Auto-close core on exit",
+            "mode_rules" => "Rules",
+            "mode_global" => "Global",
+            "mode_direct" => "Direct",
+            "placeholder_domain" => "e.g. google.com",
+            "placeholder_ip" => "e.g. 192.168.1.0/24",
             
             "active_mode" => "Active Mode",
             "listen_port" => "Listen Port",
@@ -219,6 +224,11 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tcp_fast_open_label" => "TCP 快速打开 (TFO)",
             "tcp_multipath_label" => "TCP 多径传输 (MPTCP)",
             "close_core_on_exit_label" => "退出时自动关闭内核",
+            "mode_rules" => "规则分流",
+            "mode_global" => "全局代理",
+            "mode_direct" => "直接连接",
+            "placeholder_domain" => "例如 google.com",
+            "placeholder_ip" => "例如 192.168.1.0/24",
 
             "active_mode" => "当前模式",
             "listen_port" => "监听端口",

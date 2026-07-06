@@ -79,6 +79,10 @@ struct App {
     proxy_domain_input: String,
     bypass_ip_input: String,
     proxy_ip_input: String,
+    mixed_port_input_str: String,
+    api_port_input_str: String,
+    dns_server_local_input_str: String,
+    dns_server_remote_input_str: String,
 }
 
 impl App {
@@ -100,6 +104,11 @@ impl App {
         let gui_config = config::load_gui_config();
         let core_installed = core::is_core_installed(&gui_config);
         let selected_node_tag = gui_config.selected_node_tag.clone();
+        
+        let mixed_port_input_str = gui_config.mixed_port.to_string();
+        let api_port_input_str = gui_config.api_port.to_string();
+        let dns_server_local_input_str = gui_config.dns_server_local.clone();
+        let dns_server_remote_input_str = gui_config.dns_server_remote.clone();
         
         let mut app = Self {
             current_tab: Tab::Dashboard,
@@ -127,6 +136,10 @@ impl App {
             proxy_domain_input: String::new(),
             bypass_ip_input: String::new(),
             proxy_ip_input: String::new(),
+            mixed_port_input_str,
+            api_port_input_str,
+            dns_server_local_input_str,
+            dns_server_remote_input_str,
         };
         
         // Load active profile nodes if profile exists
@@ -158,6 +171,13 @@ impl App {
         if self.core_running {
             // Will update selected node tag inside Tick
         }
+    }
+    
+    fn sync_input_buffers(&mut self) {
+        self.mixed_port_input_str = self.gui_config.mixed_port.to_string();
+        self.api_port_input_str = self.gui_config.api_port.to_string();
+        self.dns_server_local_input_str = self.gui_config.dns_server_local.clone();
+        self.dns_server_remote_input_str = self.gui_config.dns_server_remote.clone();
     }
     
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -409,6 +429,7 @@ impl App {
                     // Reload profiles list
                     let loaded = config::load_gui_config();
                     self.gui_config = loaded;
+                    self.sync_input_buffers();
                     
                     // If no active profile, select this one
                     if self.gui_config.active_profile_id.is_none() {
@@ -626,17 +647,25 @@ impl App {
             }
             Message::PortInputChanged(input) => {
                 if input.starts_with("mixed:") {
-                    if let Ok(p) = input[6..].parse::<u16>() {
+                    let val = &input[6..];
+                    self.mixed_port_input_str = val.to_string();
+                    if let Ok(p) = val.parse::<u16>() {
                         self.gui_config.mixed_port = p;
                     }
                 } else if input.starts_with("api:") {
-                    if let Ok(p) = input[4..].parse::<u16>() {
+                    let val = &input[4..];
+                    self.api_port_input_str = val.to_string();
+                    if let Ok(p) = val.parse::<u16>() {
                         self.gui_config.api_port = p;
                     }
                 } else if input.starts_with("dns_local:") {
-                    self.gui_config.dns_server_local = input[10..].to_string();
+                    let val = &input[10..];
+                    self.dns_server_local_input_str = val.to_string();
+                    self.gui_config.dns_server_local = val.to_string();
                 } else if input.starts_with("dns_remote:") {
-                    self.gui_config.dns_server_remote = input[11..].to_string();
+                    let val = &input[11..];
+                    self.dns_server_remote_input_str = val.to_string();
+                    self.gui_config.dns_server_remote = val.to_string();
                 } else if input == "toggle_tun" {
                     self.gui_config.tun_mode = !self.gui_config.tun_mode;
                     let _ = config::save_gui_config(&self.gui_config);
@@ -717,8 +746,42 @@ impl App {
                 Task::none()
             }
             Message::SaveSettings => {
+                if self.mixed_port_input_str.trim().is_empty() || self.api_port_input_str.trim().is_empty() {
+                    let err = if self.gui_config.language == state::Language::Zh {
+                        "端口号不能为空！".to_string()
+                    } else {
+                        "Port numbers cannot be empty!".to_string()
+                    };
+                    self.log_lines.push(format!("[GUI ERROR] {}", err));
+                    self.core_install_msg = Some(err);
+                    return Task::none();
+                }
+                
+                let mixed_parsed = self.mixed_port_input_str.trim().parse::<u16>();
+                let api_parsed = self.api_port_input_str.trim().parse::<u16>();
+                
+                if mixed_parsed.is_err() || api_parsed.is_err() {
+                    let err = if self.gui_config.language == state::Language::Zh {
+                        "端口必须是 1 到 65535 之间的有效数字！".to_string()
+                    } else {
+                        "Ports must be valid numbers between 1 and 65535!".to_string()
+                    };
+                    self.log_lines.push(format!("[GUI ERROR] {}", err));
+                    self.core_install_msg = Some(err);
+                    return Task::none();
+                }
+                
+                self.core_install_msg = None;
+                
                 let _ = config::save_gui_config(&self.gui_config);
                 self.log_lines.push("[GUI] Settings saved and applied successfully.".to_string());
+                
+                if self.core_running {
+                    core::stop_core();
+                    self.core_running = false;
+                    self.log_lines.push("[GUI] Restarting core to apply new settings...".to_string());
+                    return Task::done(Message::ToggleCore);
+                }
                 Task::none()
             }
         }
@@ -860,6 +923,10 @@ impl App {
             Tab::Logs => ui::logs::render(&self.gui_config, &self.log_lines, &active_theme),
             Tab::Settings => ui::settings::render(
                 &self.gui_config,
+                &self.mixed_port_input_str,
+                &self.api_port_input_str,
+                &self.dns_server_local_input_str,
+                &self.dns_server_remote_input_str,
                 self.core_installed,
                 self.core_install_msg.as_deref(),
                 &active_theme,
@@ -1033,6 +1100,8 @@ fn main() -> iced::Result {
     let icon = iced::window::icon::from_file_data(icon_bytes, None).ok();
     
     let window_settings = iced::window::Settings {
+        size: iced::Size::new(1080.0, 750.0),
+        min_size: Some(iced::Size::new(960.0, 680.0)),
         icon,
         ..Default::default()
     };

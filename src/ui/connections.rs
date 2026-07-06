@@ -116,7 +116,8 @@ pub fn render<'a>(
         ]
     )
     .style(theme::card_bg)
-    .height(Length::Fill);
+    .height(Length::Fill)
+    .width(Length::Fill);
 
     let content = column![
         text(tr(lang, "tab_connections")).size(24).color(text_primary),

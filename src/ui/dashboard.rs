@@ -4,14 +4,20 @@ use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
 use crate::ui::theme;
 
-fn format_speed(bytes: u64) -> String {
+fn format_size(bytes: u64) -> String {
     if bytes < 1024 {
-        format!("{} B/s", bytes)
+        format!("{} B", bytes)
     } else if bytes < 1024 * 1024 {
-        format!("{:.2} KB/s", bytes as f64 / 1024.0)
+        format!("{:.2} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
     } else {
-        format!("{:.2} MB/s", bytes as f64 / (1024.0 * 1024.0))
+        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
+}
+
+fn format_speed(bytes: u64) -> String {
+    format!("{}/s", format_size(bytes))
 }
 
 pub fn render<'a>(
@@ -123,9 +129,9 @@ pub fn render<'a>(
     };
     
     let mode_buttons = row![
-        make_mode_btn(RoutingMode::Rule, "routing_rules_desc"),
-        make_mode_btn(RoutingMode::Global, "routing_global_desc"),
-        make_mode_btn(RoutingMode::Direct, "routing_direct_desc")
+        make_mode_btn(RoutingMode::Rule, "mode_rules"),
+        make_mode_btn(RoutingMode::Global, "mode_global"),
+        make_mode_btn(RoutingMode::Direct, "mode_direct")
     ]
     .spacing(8);
 
@@ -164,7 +170,7 @@ pub fn render<'a>(
             text(format_speed(current_speed.down))
                 .color(theme::ACCENT_BLUE)
                 .size(28),
-            text(format!("Total: {}", format_speed(total_downloaded).replace("/s", "")))
+            text(format!("Total: {}", format_size(total_downloaded)))
                 .color(text_muted)
                 .size(12),
         ]
@@ -180,7 +186,7 @@ pub fn render<'a>(
             text(format_speed(current_speed.up))
                 .color(theme::ACCENT_PURPLE)
                 .size(28),
-            text(format!("Total: {}", format_speed(total_uploaded).replace("/s", "")))
+            text(format!("Total: {}", format_size(total_uploaded)))
                 .color(text_muted)
                 .size(12),
         ]

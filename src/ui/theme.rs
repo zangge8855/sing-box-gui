@@ -260,6 +260,25 @@ pub fn button_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
     }
 }
 
+// Simple list item styling (flat, no shadow)
+pub fn list_item_bg(theme: &iced::Theme) -> container::Style {
+    let bg = if is_dark(theme) {
+        Color::from_rgb(0.06, 0.08, 0.12)
+    } else {
+        Color::from_rgb(0.97, 0.98, 0.99)
+    };
+    let border = if is_dark(theme) { BORDER_DARK } else { BORDER_LIGHT };
+    container::Style {
+        background: Some(Background::Color(bg)),
+        border: Border {
+            color: border,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
 // Monospace Console box background
 pub fn console_bg(theme: &iced::Theme) -> container::Style {
     let bg = if is_dark(theme) {

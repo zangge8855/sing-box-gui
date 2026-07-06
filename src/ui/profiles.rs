@@ -24,7 +24,9 @@ pub fn render<'a>(
     // Add subscription input form
     let input = text_input(tr(lang, "sub_url_placeholder"), url_input)
         .on_input(Message::SubscriptionInputChanged)
+        .on_submit(Message::DownloadSubscription)
         .padding(12)
+        .width(Length::Fill)
         .style(theme::input_field);
         
     let download_btn = if downloading {
@@ -104,44 +106,37 @@ pub fn render<'a>(
         for profile in &gui_config.subscriptions {
             let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
             
-            let status_badge = if is_active {
+            let select_action: Element<'a, Message> = if is_active {
                 container(text(tr(lang, "active_profile")).color(Color::WHITE).size(12))
-                    .padding([4, 8])
-                    .style(|_theme| container::Style {
+                    .padding([6, 12])
+                    .style(|_theme: &iced::Theme| container::Style {
                         background: Some(iced::Background::Color(theme::SUCCESS)),
                         border: iced::Border {
-                            radius: 4.0.into(),
+                            radius: 6.0.into(),
                             ..Default::default()
                         },
                         ..Default::default()
                     })
+                    .into()
             } else {
-                container(text(tr(lang, "btn_select")).color(text_muted).size(12))
-                    .padding([4, 8])
-                    .style(theme::card_bg)
-            };
-            
-            let select_action = if is_active {
-                // If already active, clicking does nothing
-                button(status_badge)
-                    .style(theme::button_secondary)
-            } else {
-                button(status_badge)
+                button(text(tr(lang, "btn_select")).size(12))
+                    .padding([6, 12])
                     .style(theme::button_secondary)
                     .on_press(Message::SelectProfile(profile.id.clone()))
+                    .into()
             };
             
-            let update_btn = button(text(tr(lang, "btn_update")).size(12).color(Color::WHITE))
+            let update_btn = button(text(tr(lang, "btn_update")).size(12))
                 .padding([6, 12])
                 .style(theme::button_primary)
                 .on_press(Message::UpdateSubscription(profile.id.clone()));
-
-            let delete_btn = button(text(tr(lang, "btn_delete")).size(12).color(Color::WHITE))
+ 
+            let delete_btn = button(text(tr(lang, "btn_delete")).size(12))
                 .padding([6, 12])
                 .style(theme::button_danger)
                 .on_press(Message::DeleteProfile(profile.id.clone()));
                 
-            let edit_btn = button(text(tr(lang, "btn_edit")).size(12).color(if theme::is_dark(theme) { theme::TEXT_PRIMARY } else { theme::TEXT_PRIMARY_LIGHT }))
+            let edit_btn = button(text(tr(lang, "btn_edit")).size(12))
                 .padding([6, 12])
                 .style(theme::button_secondary)
                 .on_press(Message::PortInputChanged(format!("edit_profile:{}", profile.id)));

@@ -6,6 +6,10 @@ use crate::ui::theme;
 
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
+    mixed_port_str: &'a str,
+    api_port_str: &'a str,
+    dns_local_str: &'a str,
+    dns_remote_str: &'a str,
     core_installed: bool,
     install_message: Option<&'a str>,
     theme: &iced::Theme,
@@ -60,6 +64,7 @@ pub fn render<'a>(
         .spacing(15)
     )
     .padding(20)
+    .width(Length::Fill)
     .style(theme::card_bg);
     
     // Routing Mode Selector
@@ -85,9 +90,9 @@ pub fn render<'a>(
     };
     
     let routing_row = row![
-        make_mode_btn(RoutingMode::Rule, "routing_rules_desc"),
-        make_mode_btn(RoutingMode::Global, "routing_global_desc"),
-        make_mode_btn(RoutingMode::Direct, "routing_direct_desc")
+        make_mode_btn(RoutingMode::Rule, "mode_rules"),
+        make_mode_btn(RoutingMode::Global, "mode_global"),
+        make_mode_btn(RoutingMode::Direct, "mode_direct")
     ]
     .spacing(15);
     
@@ -99,17 +104,20 @@ pub fn render<'a>(
         .spacing(10)
     )
     .padding(20)
+    .width(Length::Fill)
     .style(theme::card_bg);
     
     // Inbound & Port Settings Card
-    let mixed_port_input = text_input("2080", &gui_config.mixed_port.to_string())
+    let mixed_port_input = text_input("2080", mixed_port_str)
         .on_input(|s| Message::PortInputChanged(format!("mixed:{}", s)))
+        .on_submit(Message::SaveSettings)
         .padding(10)
         .style(theme::input_field)
         .width(100);
         
-    let api_port_input = text_input("9090", &gui_config.api_port.to_string())
+    let api_port_input = text_input("9090", api_port_str)
         .on_input(|s| Message::PortInputChanged(format!("api:{}", s)))
+        .on_submit(Message::SaveSettings)
         .padding(10)
         .style(theme::input_field)
         .width(100);
@@ -185,17 +193,20 @@ pub fn render<'a>(
         .spacing(15)
     )
     .padding(20)
+    .width(Length::Fill)
     .style(theme::card_bg);
     
     // DNS settings card
-    let dns_local_input = text_input("223.5.5.5", &gui_config.dns_server_local)
+    let dns_local_input = text_input("223.5.5.5", dns_local_str)
         .on_input(|s| Message::PortInputChanged(format!("dns_local:{}", s)))
+        .on_submit(Message::SaveSettings)
         .padding(10)
         .style(theme::input_field)
         .width(220);
         
-    let dns_remote_input = text_input("8.8.8.8", &gui_config.dns_server_remote)
+    let dns_remote_input = text_input("8.8.8.8", dns_remote_str)
         .on_input(|s| Message::PortInputChanged(format!("dns_remote:{}", s)))
+        .on_submit(Message::SaveSettings)
         .padding(10)
         .style(theme::input_field)
         .width(220);
@@ -228,6 +239,7 @@ pub fn render<'a>(
         .spacing(15)
     )
     .padding(20)
+    .width(Length::Fill)
     .style(theme::card_bg);
     
     // Language card
@@ -270,6 +282,7 @@ pub fn render<'a>(
         .spacing(10)
     )
     .padding(20)
+    .width(Length::Fill)
     .style(theme::card_bg);
     
     // Theme card
@@ -314,6 +327,7 @@ pub fn render<'a>(
         .spacing(10)
     )
     .padding(20)
+    .width(Length::Fill)
     .style(theme::card_bg);
     
     // Save button

@@ -52,14 +52,23 @@ pub fn render<'a>(
                 .spacing(10)
                 .padding([4, 8]);
                 
-                list_col = list_col.push(container(item_row).style(theme::status_card));
+                list_col = list_col.push(container(item_row).style(theme::list_item_bg));
             }
         }
         
-        let input_box = text_input("e.g. google.com", input_value)
+        let placeholder = if field_name.contains("ip") {
+            tr(lang, "placeholder_ip")
+        } else {
+            tr(lang, "placeholder_domain")
+        };
+        
+        let input_box = text_input(placeholder, input_value)
             .on_input(move |s| Message::RulesInputChanged {
                 field: field_name.to_string(),
                 value: s,
+            })
+            .on_submit(Message::AddRule {
+                field: field_name.to_string(),
             })
             .padding(10)
             .style(theme::input_field);
