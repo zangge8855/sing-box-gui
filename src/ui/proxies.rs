@@ -147,35 +147,86 @@ pub fn render<'a>(
                 
                 let latency_text = match latency {
                     Some(ms) => {
+                        let col = if ms < 150 {
+                            theme::SUCCESS
+                        } else if ms < 300 {
+                            theme::WARNING
+                        } else {
+                            theme::DANGER
+                        };
+                        
                         if ms >= 9999 {
-                            text("Timeout").color(theme::DANGER).size(12)
+                            text("Timeout")
+                                .color(theme::DANGER)
+                                .size(11)
+                                .font(iced::Font {
+                                    weight: iced::font::Weight::Bold,
+                                    ..Default::default()
+                                })
                         } else {
                             text(format!("{} ms", ms))
-                                .color(if ms < 150 {
-                                    theme::SUCCESS
-                                } else if ms < 300 {
-                                    theme::WARNING
-                                } else {
-                                    theme::DANGER
+                                .color(col)
+                                .size(11)
+                                .font(iced::Font {
+                                    weight: iced::font::Weight::Bold,
+                                    ..Default::default()
                                 })
-                                .size(12)
                         }
                     }
-                    None => text("-").color(text_muted).size(12),
+                    None => text("-")
+                        .color(text_muted)
+                        .size(11)
+                        .font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        }),
                 };
+                
+                let type_tag = container(
+                    text(node_type.to_uppercase())
+                        .size(9)
+                        .color(text_muted)
+                        .font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        })
+                )
+                .padding([2, 6])
+                .style(move |t| {
+                    let bg_color = if theme::is_dark(t) {
+                        Color::from_rgb(0.14, 0.17, 0.22)
+                    } else {
+                        Color::from_rgb(0.92, 0.94, 0.97)
+                    };
+                    container::Style {
+                        background: Some(iced::Background::Color(bg_color)),
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                });
                 
                 let card_content = container(
                     column![
                         row![
-                            text(node_name).color(text_primary).size(14).width(Length::Fill),
+                            text(node_name)
+                                .color(text_primary)
+                                .size(14)
+                                .font(iced::Font {
+                                    weight: iced::font::Weight::Medium,
+                                    ..Default::default()
+                                })
+                                .width(Length::Fill),
                             latency_text
                         ]
                         .align_y(Alignment::Center),
                         row![
-                            text(node_type.to_uppercase()).color(text_muted).size(11),
+                            type_tag
                         ]
                     ]
-                    .spacing(8)
+                    .spacing(6)
                 )
                 .padding(15)
                 .width(Length::Fill)
