@@ -280,7 +280,7 @@ pub fn render<'a>(
     ]
     .spacing(20)
     .width(Length::Fill)
-    .max_width(800.0);
+    .max_width(600.0);
 
     let header_row = container(
         row![
@@ -288,7 +288,7 @@ pub fn render<'a>(
         ]
         .width(Length::Fill)
     )
-    .max_width(800.0)
+    .max_width(600.0)
     .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 10.0, left: 0.0 });
 
     let content_col = column![

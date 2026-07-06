@@ -390,7 +390,7 @@ pub fn render<'a>(
         .spacing(20)
     )
     .width(Length::Fill)
-    .max_width(800.0)
+    .max_width(600.0)
     .center_x(Length::Fill);
     
     // Header row with Title and Save button
@@ -403,9 +403,9 @@ pub fn render<'a>(
         .align_y(Alignment::Center)
         .width(Length::Fill)
     )
-    .max_width(800.0)
+    .max_width(600.0)
     .center_x(Length::Fill)
-    .padding([0, 30]);
+    .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 10.0, left: 0.0 });
 
     let content_col = column![
         header_row,
