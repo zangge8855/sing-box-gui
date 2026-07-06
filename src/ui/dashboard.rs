@@ -22,9 +22,13 @@ pub fn render<'a>(
     speed_history: &[(u64, u64)],
     total_uploaded: u64,
     total_downloaded: u64,
+    theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
+    
+    let text_primary = theme::text_primary(theme);
+    let text_muted = theme::text_muted(theme);
     
     // Core Status Section
     let status_indicator = if core_running {
@@ -47,7 +51,7 @@ pub fn render<'a>(
     
     let core_card = container(
         column![
-            text(tr(lang, "singbox_core")).color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "singbox_core")).color(text_muted).size(14),
             row![
                 status_indicator,
                 core_control_btn
@@ -65,7 +69,7 @@ pub fn render<'a>(
     let sys_proxy_indicator = if sys_proxy_enabled {
         text(tr(lang, "enabled")).color(theme::SUCCESS).size(18)
     } else {
-        text(tr(lang, "disabled")).color(theme::TEXT_MUTED).size(18)
+        text(tr(lang, "disabled")).color(text_muted).size(18)
     };
     
     let sys_proxy_btn = button(
@@ -77,7 +81,7 @@ pub fn render<'a>(
     
     let proxy_card = container(
         column![
-            text(tr(lang, "system_proxy")).color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "system_proxy")).color(text_muted).size(14),
             row![
                 sys_proxy_indicator,
                 sys_proxy_btn
@@ -107,8 +111,8 @@ pub fn render<'a>(
 
     let mode_card = container(
         column![
-            text(tr(lang, "active_mode")).color(theme::TEXT_MUTED).size(12),
-            text(mode_label).color(theme::TEXT_PRIMARY).size(20),
+            text(tr(lang, "active_mode")).color(text_muted).size(12),
+            text(mode_label).color(text_primary).size(20),
         ]
         .spacing(6)
     )
@@ -118,8 +122,8 @@ pub fn render<'a>(
 
     let port_card = container(
         column![
-            text(tr(lang, "listen_port")).color(theme::TEXT_MUTED).size(12),
-            text(format!("{}", gui_config.mixed_port)).color(theme::TEXT_PRIMARY).size(20),
+            text(tr(lang, "listen_port")).color(text_muted).size(12),
+            text(format!("{}", gui_config.mixed_port)).color(text_primary).size(20),
         ]
         .spacing(6)
     )
@@ -136,12 +140,12 @@ pub fn render<'a>(
     // Speed Stats cards
     let download_card = container(
         column![
-            text(tr(lang, "download")).color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "download")).color(text_muted).size(14),
             text(format_speed(current_speed.down))
                 .color(theme::ACCENT_BLUE)
                 .size(28),
             text(format!("Total: {}", format_speed(total_downloaded).replace("/s", "")))
-                .color(theme::TEXT_MUTED)
+                .color(text_muted)
                 .size(12),
         ]
         .spacing(5)
@@ -152,12 +156,12 @@ pub fn render<'a>(
     
     let upload_card = container(
         column![
-            text(tr(lang, "upload")).color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "upload")).color(text_muted).size(14),
             text(format_speed(current_speed.up))
                 .color(theme::ACCENT_PURPLE)
                 .size(28),
             text(format!("Total: {}", format_speed(total_uploaded).replace("/s", "")))
-                .color(theme::TEXT_MUTED)
+                .color(text_muted)
                 .size(12),
         ]
         .spacing(5)
@@ -220,7 +224,7 @@ pub fn render<'a>(
              <path d="{}" fill="url(#downGrad)" stroke="#3b82f6" stroke-width="1.5"/>
              <path d="{}" fill="none" stroke="#8b5cf6" stroke-width="1.5"/>
            </svg>"##,
-        down_path, up_path
+         down_path, up_path
     );
     
     let chart_handle = svg::Handle::from_memory(svg_xml.into_bytes());
@@ -230,7 +234,7 @@ pub fn render<'a>(
         
     let chart_card = container(
         column![
-            text(tr(lang, "speed_history_chart")).color(theme::TEXT_MUTED).size(14),
+            text(tr(lang, "speed_history_chart")).color(text_muted).size(14),
             chart_svg
         ]
         .spacing(10)
@@ -241,7 +245,7 @@ pub fn render<'a>(
     // Overall view layout
     container(
         column![
-            text(tr(lang, "tab_dashboard")).size(24).color(theme::TEXT_PRIMARY),
+            text(tr(lang, "tab_dashboard")).size(24).color(text_primary),
             controls_row,
             info_row,
             speed_row,

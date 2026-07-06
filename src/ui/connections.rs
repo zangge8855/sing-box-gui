@@ -7,18 +7,22 @@ use crate::api::Connection;
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
     active_connections: &'a Vec<Connection>,
+    theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
     
+    let text_primary = theme::text_primary(theme);
+    let text_muted = theme::text_muted(theme);
+    
     // Build Header
     let header = row![
-        text(tr(lang, "host")).width(Length::FillPortion(3)).color(theme::TEXT_MUTED).size(14),
-        text(tr(lang, "network")).width(Length::FillPortion(1)).color(theme::TEXT_MUTED).size(14),
-        text(tr(lang, "chains")).width(Length::FillPortion(2)).color(theme::TEXT_MUTED).size(14),
-        text(tr(lang, "rule")).width(Length::FillPortion(1)).color(theme::TEXT_MUTED).size(14),
-        text(tr(lang, "download")).width(Length::FillPortion(1)).color(theme::TEXT_MUTED).size(14),
-        text(tr(lang, "upload")).width(Length::FillPortion(1)).color(theme::TEXT_MUTED).size(14),
+        text(tr(lang, "host")).width(Length::FillPortion(3)).color(text_muted).size(14),
+        text(tr(lang, "network")).width(Length::FillPortion(1)).color(text_muted).size(14),
+        text(tr(lang, "chains")).width(Length::FillPortion(2)).color(text_muted).size(14),
+        text(tr(lang, "rule")).width(Length::FillPortion(1)).color(text_muted).size(14),
+        text(tr(lang, "download")).width(Length::FillPortion(1)).color(text_muted).size(14),
+        text(tr(lang, "upload")).width(Length::FillPortion(1)).color(text_muted).size(14),
         Space::new().width(Length::FillPortion(1))
     ]
     .spacing(10)
@@ -28,7 +32,7 @@ pub fn render<'a>(
     let mut list = column!().spacing(8);
     if active_connections.is_empty() {
         list = list.push(
-            container(text(tr(lang, "no_active_connections")).color(theme::TEXT_MUTED))
+            container(text(tr(lang, "no_active_connections")).color(text_muted))
                 .width(Length::Fill)
                 .center_x(Length::Fill)
                 .padding(40)
@@ -58,12 +62,12 @@ pub fn render<'a>(
             .on_press(Message::CloseConnection(conn.id.clone()));
             
             let row_content = row![
-                text(host_text).width(Length::FillPortion(3)).size(13),
+                text(host_text).width(Length::FillPortion(3)).size(13).color(text_primary),
                 text(&conn.metadata.network).width(Length::FillPortion(1)).size(13).color(theme::ACCENT_GREEN),
-                text(chains_text).width(Length::FillPortion(2)).size(13).color(theme::TEXT_MUTED),
-                text(&conn.rule).width(Length::FillPortion(1)).size(13),
-                text(dl_text).width(Length::FillPortion(1)).size(13),
-                text(ul_text).width(Length::FillPortion(1)).size(13),
+                text(chains_text).width(Length::FillPortion(2)).size(13).color(text_muted),
+                text(&conn.rule).width(Length::FillPortion(1)).size(13).color(text_primary),
+                text(dl_text).width(Length::FillPortion(1)).size(13).color(text_primary),
+                text(ul_text).width(Length::FillPortion(1)).size(13).color(text_primary),
                 container(close_btn).width(Length::FillPortion(1)).center_x(Length::FillPortion(1))
             ]
             .align_y(Alignment::Center)
@@ -75,7 +79,7 @@ pub fn render<'a>(
     }
     
     let content = column![
-        text(tr(lang, "tab_connections")).size(24).color(theme::TEXT_PRIMARY),
+        text(tr(lang, "tab_connections")).size(24).color(text_primary),
         container(header).padding([10, 0]),
         scrollable(list).height(Length::Fill)
     ]

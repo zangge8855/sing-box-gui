@@ -9,9 +9,13 @@ pub fn render<'a>(
     nodes: &'a [ProxyNode],
     selected_node: Option<&str>,
     latency_testing: bool,
+    theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
+    
+    let text_primary = theme::text_primary(theme);
+    let text_muted = theme::text_muted(theme);
     
     // Header controls
     let speed_test_btn = if latency_testing {
@@ -26,7 +30,7 @@ pub fn render<'a>(
     };
     
     let header = row![
-        text(tr(lang, "proxy_nodes")).size(24).color(theme::TEXT_PRIMARY),
+        text(tr(lang, "proxy_nodes")).size(24).color(text_primary),
         speed_test_btn
     ]
     .spacing(20)
@@ -39,7 +43,7 @@ pub fn render<'a>(
                 header,
                 container(
                     text(tr(lang, "no_nodes"))
-                        .color(theme::TEXT_MUTED)
+                        .color(text_muted)
                         .size(15)
                 )
                 .padding(40)
@@ -75,21 +79,21 @@ pub fn render<'a>(
                         .size(12)
                 }
             }
-            None => text("-").color(theme::TEXT_MUTED).size(12),
+            None => text("-").color(text_muted).size(12),
         };
         
         // Custom card drawing as a button content
         let card_content = container(
             column![
                 row![
-                    text(&node.name).color(theme::TEXT_PRIMARY).size(14).width(Length::Fill),
+                    text(&node.name).color(text_primary).size(14).width(Length::Fill),
                     latency_text
                 ]
                 .align_y(Alignment::Center),
                 row![
-                    text(node.node_type.to_uppercase()).color(theme::TEXT_MUTED).size(11),
+                    text(node.node_type.to_uppercase()).color(text_muted).size(11),
                     text(format!(" {}:{}", node.server, node.port))
-                        .color(theme::TEXT_MUTED)
+                        .color(text_muted)
                         .size(11)
                         .width(Length::Fill)
                 ]
@@ -122,9 +126,11 @@ pub fn render<'a>(
                     _ => base.border.color,
                 };
                 
+                let text_color = if theme::is_dark(_theme) { theme::TEXT_PRIMARY } else { theme::TEXT_PRIMARY_LIGHT };
+                
                 button::Style {
                     background: base.background,
-                    text_color: theme::TEXT_PRIMARY,
+                    text_color,
                     border: iced::Border {
                         color: border_color,
                         width: base.border.width,

@@ -64,6 +64,15 @@ pub struct GuiConfig {
     pub tcp_fast_open: bool,
     pub tcp_multipath: bool,
     pub close_core_on_exit: bool,
+    pub theme: AppTheme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AppTheme {
+    #[default]
+    Auto,
+    Dark,
+    Light,
 }
 
 impl Default for GuiConfig {
@@ -99,6 +108,7 @@ impl Default for GuiConfig {
             tcp_fast_open: false,
             tcp_multipath: false,
             close_core_on_exit: true,
+            theme: AppTheme::Auto,
         }
     }
 }

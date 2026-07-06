@@ -6,12 +6,16 @@ use crate::ui::theme;
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
     log_lines: &'a [String],
+    theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
     
+    let text_primary = theme::text_primary(theme);
+    let text_muted = theme::text_muted(theme);
+    
     let header = row![
-        text(tr(lang, "console_logs")).size(24).color(theme::TEXT_PRIMARY).width(Length::Fill),
+        text(tr(lang, "console_logs")).size(24).color(text_primary).width(Length::Fill),
         button(text(tr(lang, "clear_logs")).size(14))
             .padding([8, 16])
             .style(theme::button_secondary)
@@ -25,7 +29,7 @@ pub fn render<'a>(
     if log_lines.is_empty() {
         logs_col = logs_col.push(
             text(tr(lang, "no_logs"))
-                .color(theme::TEXT_MUTED)
+                .color(text_muted)
                 .font(Font::MONOSPACE)
                 .size(12)
         );
@@ -39,7 +43,7 @@ pub fn render<'a>(
             } else if line.contains("INFO") {
                 theme::SUCCESS
             } else {
-                theme::TEXT_MUTED
+                text_muted
             };
             
             logs_col = logs_col.push(

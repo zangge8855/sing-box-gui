@@ -74,6 +74,20 @@ struct App {
 }
 
 impl App {
+    fn theme(&self) -> iced::Theme {
+        match self.gui_config.theme {
+            state::AppTheme::Dark => iced::Theme::Dark,
+            state::AppTheme::Light => iced::Theme::Light,
+            state::AppTheme::Auto => {
+                if detect_system_theme() {
+                    iced::Theme::Light
+                } else {
+                    iced::Theme::Dark
+                }
+            }
+        }
+    }
+
     fn new() -> (Self, Task<Message>) {
         let gui_config = config::load_gui_config();
         let core_installed = core::is_core_installed(&gui_config);
@@ -524,6 +538,15 @@ impl App {
                 } else if input == "toggle_close_core" {
                     self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
                     let _ = config::save_gui_config(&self.gui_config);
+                } else if input == "theme:auto" {
+                    self.gui_config.theme = state::AppTheme::Auto;
+                    let _ = config::save_gui_config(&self.gui_config);
+                } else if input == "theme:dark" {
+                    self.gui_config.theme = state::AppTheme::Dark;
+                    let _ = config::save_gui_config(&self.gui_config);
+                } else if input == "theme:light" {
+                    self.gui_config.theme = state::AppTheme::Light;
+                    let _ = config::save_gui_config(&self.gui_config);
                 } else if input == "open_data_dir" {
                     #[cfg(target_os = "windows")]
                     let _ = std::process::Command::new("explorer")
@@ -578,6 +601,8 @@ impl App {
     
     fn view(&self) -> Element<'_, Message> {
         let lang = self.gui_config.language;
+        let active_theme = self.theme();
+        
         let make_tab_btn = |tab: Tab, icon: &str, key: &'static str| {
             let active = self.current_tab == tab;
             let label = format!("{} {}", icon, ui::i18n::tr(lang, key));
@@ -620,7 +645,7 @@ impl App {
                 iced::widget::Space::new().height(Length::Fill),
                 text(format!("v{}", env!("CARGO_PKG_VERSION")))
                     .size(12)
-                    .color(ui::theme::TEXT_MUTED)
+                    .color(ui::theme::text_muted(&active_theme))
             ]
         )
         .width(Length::Fixed(200.0))
@@ -638,24 +663,28 @@ impl App {
                 &self.speed_history,
                 self.total_uploaded,
                 self.total_downloaded,
+                &active_theme,
             ),
             Tab::Proxies => ui::proxies::render(
                 &self.gui_config,
                 &self.active_profile_nodes,
                 self.selected_node_tag.as_deref(),
                 self.latency_testing,
+                &active_theme,
             ),
             Tab::Profiles => ui::profiles::render(
                 &self.gui_config,
                 &self.url_input,
                 self.downloading,
+                &active_theme,
             ),
-            Tab::Connections => ui::connections::render(&self.gui_config, &self.active_connections),
-            Tab::Logs => ui::logs::render(&self.gui_config, &self.log_lines),
+            Tab::Connections => ui::connections::render(&self.gui_config, &self.active_connections, &active_theme),
+            Tab::Logs => ui::logs::render(&self.gui_config, &self.log_lines, &active_theme),
             Tab::Settings => ui::settings::render(
                 &self.gui_config,
                 self.core_installed,
                 self.core_install_msg.as_deref(),
+                &active_theme,
             ),
         };
         
@@ -807,6 +836,20 @@ fn set_windows_autostart(enable: bool) -> Result<(), String> {
     Ok(())
 }
 
+fn detect_system_theme() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::RegKey;
+        use winreg::enums::HKEY_CURRENT_USER;
+        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize") {
+            if let Ok(val) = hkcu.get_value::<u32, _>("AppsUseLightTheme") {
+                return val == 1; // 1 = Light Mode, 0 = Dark Mode
+            }
+        }
+    }
+    false // Default to dark mode (0)
+}
+
 fn main() -> iced::Result {
     let icon_bytes = include_bytes!("../assets/logo.jpg");
     let icon = iced::window::icon::from_file_data(icon_bytes, None).ok();
@@ -819,6 +862,7 @@ fn main() -> iced::Result {
     let res = iced::application(App::new, App::update, App::view)
         .title("sing-box GUI")
         .window(window_settings)
+        .theme(App::theme)
         .subscription(App::subscription)
         .run();
         

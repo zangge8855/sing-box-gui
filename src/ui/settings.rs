@@ -8,16 +8,20 @@ pub fn render<'a>(
     gui_config: &'a GuiConfig,
     core_installed: bool,
     install_message: Option<&'a str>,
+    theme: &iced::Theme,
 ) -> Element<'a, Message> {
     
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
     
+    let text_primary = theme::text_primary(theme);
+    let text_muted = theme::text_muted(theme);
+    
     // Core Status / Downloader Card
     let core_downloader = if core_installed {
         row![
             text(tr(lang, "core_installed_status")).color(theme::SUCCESS).size(14),
-            text(tr(lang, "core_ver_stable")).color(theme::TEXT_MUTED).size(12)
+            text(tr(lang, "core_ver_stable")).color(text_muted).size(12)
         ]
         .spacing(5)
         .align_y(Alignment::Center)
@@ -48,7 +52,7 @@ pub fn render<'a>(
 
     let core_card = container(
         column![
-            text(tr(lang, "core_components")).color(theme::TEXT_MUTED).size(13),
+            text(tr(lang, "core_components")).color(text_muted).size(13),
             core_downloader,
             open_dir_btn,
             install_status_row
@@ -59,7 +63,7 @@ pub fn render<'a>(
     .style(theme::card_bg);
     
     // Routing Mode Selector
-    let routing_label = text(tr(lang, "routing_rule_mode")).color(theme::TEXT_MUTED).size(13);
+    let routing_label = text(tr(lang, "routing_rule_mode")).color(text_muted).size(13);
     
     let make_mode_btn = |mode: RoutingMode, key: &'static str| {
         let active = gui_config.routing_mode == mode;
@@ -112,11 +116,11 @@ pub fn render<'a>(
         
     let ports_row = row![
         column![
-            text(tr(lang, "mixed_port_label")).color(theme::TEXT_MUTED).size(12),
+            text(tr(lang, "mixed_port_label")).color(text_muted).size(12),
             mixed_port_input
         ].spacing(5),
         column![
-            text(tr(lang, "api_port_label")).color(theme::TEXT_MUTED).size(12),
+            text(tr(lang, "api_port_label")).color(text_muted).size(12),
             api_port_input
         ].spacing(5),
     ]
@@ -173,7 +177,7 @@ pub fn render<'a>(
     
     let settings_card = container(
         column![
-            text(tr(lang, "ports_config")).color(theme::TEXT_MUTED).size(13),
+            text(tr(lang, "ports_config")).color(text_muted).size(13),
             ports_row,
             toggles_row,
             performance_row
@@ -198,11 +202,11 @@ pub fn render<'a>(
         
     let dns_row = row![
         column![
-            text(tr(lang, "dns_local")).color(theme::TEXT_MUTED).size(12),
+            text(tr(lang, "dns_local")).color(text_muted).size(12),
             dns_local_input
         ].spacing(5),
         column![
-            text(tr(lang, "dns_remote")).color(theme::TEXT_MUTED).size(12),
+            text(tr(lang, "dns_remote")).color(text_muted).size(12),
             dns_remote_input
         ].spacing(5),
     ]
@@ -217,7 +221,7 @@ pub fn render<'a>(
     
     let dns_card = container(
         column![
-            text(tr(lang, "dns_servers")).color(theme::TEXT_MUTED).size(13),
+            text(tr(lang, "dns_servers")).color(text_muted).size(13),
             dns_row,
             fakeip_btn
         ]
@@ -227,7 +231,7 @@ pub fn render<'a>(
     .style(theme::card_bg);
     
     // Language card
-    let lang_label = text(tr(lang, "app_language")).color(theme::TEXT_MUTED).size(13);
+    let lang_label = text(tr(lang, "app_language")).color(text_muted).size(13);
     
     let make_lang_btn = |target_lang: crate::state::Language, label: &'static str| {
         let active = gui_config.language == target_lang;
@@ -268,6 +272,50 @@ pub fn render<'a>(
     .padding(20)
     .style(theme::card_bg);
     
+    // Theme card
+    let theme_label = text(tr(lang, "app_theme")).color(text_muted).size(13);
+    
+    let make_theme_btn = |target_theme: crate::state::AppTheme, label_key: &'static str| {
+        let active = gui_config.theme == target_theme;
+        let btn = button(text(tr(lang, label_key)).size(13))
+            .padding([8, 16])
+            .style(move |theme, status| {
+                if active {
+                    theme::button_primary(theme, status)
+                } else {
+                    theme::button_secondary(theme, status)
+                }
+            });
+            
+        if active {
+            btn
+        } else {
+            let msg_str = match target_theme {
+                crate::state::AppTheme::Auto => "theme:auto",
+                crate::state::AppTheme::Dark => "theme:dark",
+                crate::state::AppTheme::Light => "theme:light",
+            };
+            btn.on_press(Message::PortInputChanged(msg_str.to_string()))
+        }
+    };
+    
+    let theme_row = row![
+        make_theme_btn(crate::state::AppTheme::Auto, "theme_auto"),
+        make_theme_btn(crate::state::AppTheme::Dark, "theme_dark"),
+        make_theme_btn(crate::state::AppTheme::Light, "theme_light")
+    ]
+    .spacing(15);
+    
+    let theme_card = container(
+        column![
+            theme_label,
+            theme_row
+        ]
+        .spacing(10)
+    )
+    .padding(20)
+    .style(theme::card_bg);
+    
     // Save button
     let save_btn = button(text(tr(lang, "btn_save_apply")).size(14))
         .padding([10, 20])
@@ -276,12 +324,13 @@ pub fn render<'a>(
         
     container(
         column![
-            text(tr(lang, "tab_settings")).size(24).color(theme::TEXT_PRIMARY),
+            text(tr(lang, "tab_settings")).size(24).color(text_primary),
             core_card,
             routing_card,
             settings_card,
             dns_card,
             lang_card,
+            theme_card,
             save_btn
         ]
         .spacing(20)

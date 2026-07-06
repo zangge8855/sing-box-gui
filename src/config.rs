@@ -764,8 +764,7 @@ pub fn convert_clash_to_singbox(
             "type": "mixed",
             "tag": "mixed-in",
             "listen": "127.0.0.1",
-            "listen_port": gui_config.mixed_port,
-            "sniff": true
+            "listen_port": gui_config.mixed_port
         })
     ];
     
@@ -777,14 +776,14 @@ pub fn convert_clash_to_singbox(
             "address": ["172.19.0.1/30"],
             "auto_route": true,
             "strict_route": true,
-            "stack": "system",
-            "sniff": true
+            "stack": "system"
         }));
     }
     
     // Build Rules
     let rules = json!({
         "rules": [
+            { "action": "sniff", "sniffer": ["http", "tls", "quic", "dns"] },
             { "protocol": "dns", "outbound": "dns-out" },
             { "port": 53, "outbound": "dns-out" },
             { "clash_mode": "Direct", "outbound": "direct" },
