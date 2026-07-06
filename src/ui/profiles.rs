@@ -150,6 +150,13 @@ pub fn render<'a>(
                 .push(edit_btn)
                 .push(delete_btn);
                 
+            let display_url = if profile.url.chars().count() > 60 {
+                let truncated: String = profile.url.chars().take(60).collect();
+                format!("{}...", truncated)
+            } else {
+                profile.url.clone()
+            };
+
             let card_layout = column![
                 column![
                     text(&profile.name)
@@ -159,7 +166,7 @@ pub fn render<'a>(
                             weight: iced::font::Weight::Bold,
                             ..Default::default()
                         }),
-                    text(&profile.url).color(text_muted).size(12),
+                    text(display_url).color(text_muted).size(12),
                     text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(text_muted).size(11),
                 ]
                 .spacing(6)
