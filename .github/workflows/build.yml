@@ -158,6 +158,16 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Extract version from Cargo.toml
+      id: get_version
+      shell: bash
+      run: |
+        VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d'"' -f 2)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
     - name: Download Windows artifacts
       uses: actions/download-artifact@v4
       with:
@@ -185,8 +195,8 @@ jobs:
     - name: Create Release and Upload Assets
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v2026.7.6.2
-        name: Release v2026.7.6.2
+        tag_name: v${{ steps.get_version.outputs.version }}
+        name: Release v${{ steps.get_version.outputs.version }}
         draft: false
         prerelease: false
         files: dist/*
