@@ -38,9 +38,10 @@ jobs:
     - name: Prepare Artifacts
       shell: bash
       run: |
+        VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d'"' -f 2)
         mkdir -p dist
-        cp target/x86_64-pc-windows-msvc/release/sing-box-gui.exe dist/sing-box-gui-windows-amd64.exe
-        cp target/aarch64-pc-windows-msvc/release/sing-box-gui.exe dist/sing-box-gui-windows-arm64.exe
+        cp target/x86_64-pc-windows-msvc/release/sing-box-gui.exe dist/sing-box-gui-v${VERSION}-windows-amd64.exe
+        cp target/aarch64-pc-windows-msvc/release/sing-box-gui.exe dist/sing-box-gui-v${VERSION}-windows-arm64.exe
 
     - name: Upload Windows Artifacts
       uses: actions/upload-artifact@v4
@@ -72,9 +73,10 @@ jobs:
 
     - name: Create Universal Binary
       run: |
+        VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d'"' -f 2)
         mkdir -p dist
         lipo -create \
-          -output dist/sing-box-gui-macos-universal \
+          -output dist/sing-box-gui-v${VERSION}-macos-universal \
           target/x86_64-apple-darwin/release/sing-box-gui \
           target/aarch64-apple-darwin/release/sing-box-gui
 
@@ -109,8 +111,9 @@ jobs:
 
     - name: Prepare Artifact
       run: |
+        VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d'"' -f 2)
         mkdir -p dist
-        cp target/release/sing-box-gui dist/sing-box-gui-linux-amd64
+        cp target/release/sing-box-gui dist/sing-box-gui-v${VERSION}-linux-amd64
 
     - name: Upload Linux x64 Artifact
       uses: actions/upload-artifact@v4
@@ -143,8 +146,9 @@ jobs:
 
     - name: Prepare Artifact
       run: |
+        VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d'"' -f 2)
         mkdir -p dist
-        cp target/release/sing-box-gui dist/sing-box-gui-linux-arm64
+        cp target/release/sing-box-gui dist/sing-box-gui-v${VERSION}-linux-arm64
 
     - name: Upload Linux ARM64 Artifact
       uses: actions/upload-artifact@v4
