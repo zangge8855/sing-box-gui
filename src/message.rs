@@ -4,6 +4,7 @@ use crate::state::{Tab, RoutingMode};
 pub enum Message {
     TabChanged(Tab),
     NodeSearchChanged(String),
+    ConnectionsSearchChanged(String),
     SelectGroup(String),
     SelectGroupNode { group: String, node: String },
     GroupNodeSelected { group: String, node: String, error: Option<String> },

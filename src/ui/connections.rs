@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::ui::theme;
@@ -7,6 +7,7 @@ use crate::api::Connection;
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
     active_connections: &'a Vec<Connection>,
+    search_query: &'a str,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -28,17 +29,43 @@ pub fn render<'a>(
     .spacing(10)
     .padding([0, 10]);
 
+    // Filter connections
+    let filtered_connections: Vec<&Connection> = if search_query.trim().is_empty() {
+        active_connections.iter().collect()
+    } else {
+        let q = search_query.to_lowercase();
+        active_connections.iter()
+            .filter(|conn| {
+                let host_text = if !conn.metadata.host.is_empty() {
+                    &conn.metadata.host
+                } else {
+                    &conn.metadata.destination_ip
+                };
+                host_text.to_lowercase().contains(&q)
+                    || conn.metadata.destination_ip.to_lowercase().contains(&q)
+                    || conn.chains.iter().any(|c| c.to_lowercase().contains(&q))
+                    || conn.rule.to_lowercase().contains(&q)
+                    || conn.metadata.network.to_lowercase().contains(&q)
+            })
+            .collect()
+    };
+
     // Build List
     let mut list = column!().spacing(0);
-    if active_connections.is_empty() {
+    if filtered_connections.is_empty() {
+        let empty_msg = if search_query.trim().is_empty() {
+            tr(lang, "no_active_connections")
+        } else {
+            tr(lang, "no_matching_connections")
+        };
         list = list.push(
-            container(text(tr(lang, "no_active_connections")).color(text_muted))
+            container(text(empty_msg).color(text_muted))
                 .width(Length::Fill)
                 .center_x(Length::Fill)
                 .padding(40)
         );
     } else {
-        for conn in active_connections {
+        for conn in filtered_connections {
             let host_text = if !conn.metadata.host.is_empty() {
                 conn.metadata.host.clone()
             } else {
@@ -119,8 +146,27 @@ pub fn render<'a>(
     .height(Length::Fill)
     .width(Length::Fill);
 
+    let search_placeholder = if lang == crate::state::Language::Zh {
+        "搜索域名、IP、分流规则或代理链..."
+    } else {
+        "Search host, IP, rule, proxy chain..."
+    };
+
+    let search_input = text_input(search_placeholder, search_query)
+        .on_input(Message::ConnectionsSearchChanged)
+        .padding(8)
+        .width(280)
+        .style(theme::input_field);
+
+    let title_row = row![
+        text(tr(lang, "tab_connections")).size(24).color(text_primary).width(Length::Fill),
+        search_input
+    ]
+    .align_y(Alignment::Center)
+    .spacing(20);
+
     let content = column![
-        text(tr(lang, "tab_connections")).size(24).color(text_primary),
+        title_row,
         table_container
     ]
     .spacing(20);

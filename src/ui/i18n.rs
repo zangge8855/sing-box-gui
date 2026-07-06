@@ -123,6 +123,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "rule" => "Rule",
             "close_conn" => "Close",
             "no_active_connections" => "No active connections.",
+            "no_matching_connections" => "No matching connections found.",
 
             _ => key,
         },
@@ -247,6 +248,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "rule" => "规则",
             "close_conn" => "断开",
             "no_active_connections" => "当前没有活动的连接。",
+            "no_matching_connections" => "未找到匹配的活动连接。",
             
             _ => key,
         }

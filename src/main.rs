@@ -83,6 +83,7 @@ struct App {
     api_port_input_str: String,
     dns_server_local_input_str: String,
     dns_server_remote_input_str: String,
+    connections_search: String,
 }
 
 impl App {
@@ -140,6 +141,7 @@ impl App {
             api_port_input_str,
             dns_server_local_input_str,
             dns_server_remote_input_str,
+            connections_search: String::new(),
         };
         
         // Load active profile nodes if profile exists
@@ -192,6 +194,10 @@ impl App {
             }
             Message::NodeSearchChanged(query) => {
                 self.node_search = query;
+                Task::none()
+            }
+            Message::ConnectionsSearchChanged(query) => {
+                self.connections_search = query;
                 Task::none()
             }
             Message::SelectGroup(group) => {
@@ -917,7 +923,12 @@ impl App {
                 &self.proxy_ip_input,
                 &active_theme,
             ),
-            Tab::Connections => ui::connections::render(&self.gui_config, &self.active_connections, &active_theme),
+            Tab::Connections => ui::connections::render(
+                &self.gui_config,
+                &self.active_connections,
+                &self.connections_search,
+                &active_theme,
+            ),
             Tab::Logs => ui::logs::render(&self.gui_config, &self.log_lines, &active_theme),
             Tab::Settings => ui::settings::render(
                 &self.gui_config,
