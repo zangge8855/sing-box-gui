@@ -223,6 +223,7 @@ pub fn start_core(
     let mut cmd = Command::new(&core_path);
     cmd.args(&["run", "-c", &run_config_path.to_string_lossy()]);
     cmd.env("ENABLE_DEPRECATED_LEGACY_DNS_SERVERS", "true");
+    cmd.env("ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER", "true");
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     

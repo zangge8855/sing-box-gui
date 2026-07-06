@@ -719,7 +719,6 @@ pub fn convert_clash_to_singbox(
     // Standard direct/block/dns outbounds
     final_outbounds.push(json!({ "type": "direct", "tag": "direct" }));
     final_outbounds.push(json!({ "type": "block", "tag": "block" }));
-    final_outbounds.push(json!({ "type": "dns", "tag": "dns-out" }));
     
     // Build DNS config
     let mut dns_servers = vec![
@@ -783,8 +782,8 @@ pub fn convert_clash_to_singbox(
     // Build Rules
     let mut rules_list = vec![
         json!({ "action": "sniff", "sniffer": ["http", "tls", "quic", "dns"] }),
-        json!({ "protocol": "dns", "outbound": "dns-out" }),
-        json!({ "port": 53, "outbound": "dns-out" }),
+        json!({ "protocol": "dns", "action": "hijack-dns" }),
+        json!({ "port": 53, "action": "hijack-dns" }),
         json!({ "clash_mode": "Direct", "outbound": "direct" }),
         json!({ "clash_mode": "Global", "outbound": "Proxy" }),
     ];
@@ -837,7 +836,8 @@ pub fn convert_clash_to_singbox(
                 "download_detour": "direct"
             }
         ],
-        "auto_detect_interface": true
+        "auto_detect_interface": true,
+        "default_domain_resolver": "dns_local"
     });
     
     let config = json!({
@@ -1049,6 +1049,33 @@ proxies:
         assert_eq!(nodes_ss[0].node_type, "ss");
         assert_eq!(nodes_ss[0].server, "2.2.2.2");
         assert_eq!(nodes_ss[0].port, 443);
+    }
+
+    #[test]
+    fn test_user_actual_config() {
+        let app_dir = get_app_dir();
+        let active_id = "1783319263498";
+        let path = app_dir.join("profiles").join(format!("{}.json", active_id));
+        if path.exists() {
+            let content = std::fs::read_to_string(&path).unwrap();
+            let mut config = GuiConfig::default();
+            config.api_port = 9090;
+            config.mixed_port = 2080;
+            let final_config = convert_clash_to_singbox(&content, &config).unwrap();
+            let out_str = serde_json::to_string_pretty(&final_config).unwrap();
+            let temp_path = std::env::temp_dir().join("test_run_config.json");
+            std::fs::write(&temp_path, out_str).unwrap();
+            
+            let core_path = app_dir.join("bin").join("sing-box.exe");
+            if core_path.exists() {
+                let mut cmd = std::process::Command::new(&core_path);
+                cmd.args(&["check", "-c", &temp_path.to_string_lossy()]);
+                cmd.env("ENABLE_DEPRECATED_LEGACY_DNS_SERVERS", "true");
+                cmd.env("ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER", "true");
+                let status = cmd.status().unwrap();
+                assert!(status.success(), "sing-box check failed!");
+            }
+        }
     }
 }
 
