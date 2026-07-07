@@ -273,17 +273,17 @@ pub fn render<'a>(
 
     let mut grid_lines = String::new();
     for y in [20, 40, 60, 80] {
-        grid_lines.push_str(&format!(r#"<line x1="0" y1="{}" x2="300" y2="{}" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, y, y, grid_color));
+        grid_lines.push_str(&format!(r#"<line x1="-5" y1="{}" x2="305" y2="{}" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, y, y, grid_color));
     }
     for x in [50, 100, 150, 200, 250] {
-        grid_lines.push_str(&format!(r#"<line x1="{}" y1="0" x2="{}" y2="100" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, x, x, grid_color));
+        grid_lines.push_str(&format!(r#"<line x1="{}" y1="-5" x2="{}" y2="105" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, x, x, grid_color));
     }
 
     let down_color_hex = format!("rgba({}, {}, {}, {})", (theme::ACCENT_BLUE.r * 255.0) as u8, (theme::ACCENT_BLUE.g * 255.0) as u8, (theme::ACCENT_BLUE.b * 255.0) as u8, 1.0);
     let up_color_hex = format!("rgba({}, {}, {}, {})", (theme::ACCENT_PURPLE.r * 255.0) as u8, (theme::ACCENT_PURPLE.g * 255.0) as u8, (theme::ACCENT_PURPLE.b * 255.0) as u8, 1.0);
 
     let svg_xml = format!(
-        r##"<svg viewBox="0 0 300 100" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+        r##"<svg viewBox="-5 -5 310 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
              <defs>
                <linearGradient id="downGrad" x1="0" y1="0" x2="0" y2="1">
                  <stop offset="0%" stop-color="{}" stop-opacity="0.4"/>
@@ -300,7 +300,8 @@ pub fn render<'a>(
     let chart_handle = svg::Handle::from_memory(svg_xml.into_bytes());
     let chart_svg = svg(chart_handle)
         .width(Length::Fill)
-        .height(Length::Fill);
+        .height(Length::Fill)
+        .content_fit(iced::ContentFit::Fill);
         
     let chart_card = container(
         column![
@@ -320,17 +321,20 @@ pub fn render<'a>(
     // Balanced 2-Column Responsive Dashboard Layout
     let left_col = column![
         system_control_card,
-        mode_card
+        mode_card,
+        Space::new().height(Length::Fill)
     ]
     .spacing(20)
-    .width(Length::FillPortion(5));
+    .width(Length::FillPortion(5))
+    .height(Length::Fill);
     
     let right_col = column![
         speed_row,
-        container(chart_card).height(Length::Fixed(220.0))
+        chart_card
     ]
     .spacing(20)
-    .width(Length::FillPortion(7));
+    .width(Length::FillPortion(7))
+    .height(Length::Fill);
     
     let main_content = container(
         row![
@@ -339,8 +343,10 @@ pub fn render<'a>(
         ]
         .spacing(20)
         .width(Length::Fill)
+        .height(Length::Fill)
     )
-    .max_width(1200.0);
+    .max_width(1200.0)
+    .height(Length::Fill);
 
     let header_row = container(
         row![
@@ -358,12 +364,14 @@ pub fn render<'a>(
     ]
     .spacing(10)
     .width(Length::Fill)
+    .height(Length::Fill)
     .align_x(Alignment::Center);
 
     container(
         scrollable(
             container(content_col)
                 .width(Length::Fill)
+                .height(Length::Fill)
                 .center_x(Length::Fill)
                 .padding(iced::Padding { top: 10.0, right: 20.0, bottom: 30.0, left: 20.0 })
         )
