@@ -1,12 +1,16 @@
-use iced::widget::{button, column, container, row, scrollable, svg, text};
+use iced::widget::{button, column, container, row, scrollable, svg, text, Space};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
 use crate::ui::theme;
 
+fn icon(unicode: char) -> text::Text<'static> {
+    text(unicode.to_string()).font(iced::Font::with_name("Icons")).size(16)
+}
+
 fn format_size(bytes: u64) -> String {
     if bytes < 1024 {
-        format!("{} B", bytes)
+        format!("{:.2} B", bytes as f64)
     } else if bytes < 1024 * 1024 {
         format!("{:.2} KB", bytes as f64 / 1024.0)
     } else if bytes < 1024 * 1024 * 1024 {
@@ -38,17 +42,16 @@ pub fn render<'a>(
     
     // Core Status Section
     let status_indicator = if core_running {
-        text(tr(lang, "status_running")).color(theme::SUCCESS).size(16).width(Length::Fill)
+        text(tr(lang, "status_running")).color(theme::SUCCESS).size(16)
     } else {
-        text(tr(lang, "status_stopped")).color(theme::DANGER).size(16).width(Length::Fill)
+        text(tr(lang, "status_stopped")).color(theme::DANGER).size(16)
     };
     
     let core_control_btn = if core_running {
         button(
-            text(tr(lang, "btn_stop_core"))
-                .size(13)
-                .width(Length::Fill)
-                .align_x(Alignment::Center)
+            row![icon('\u{E047}'), text(tr(lang, "btn_stop_core")).size(13)]
+                .spacing(8)
+                .align_y(Alignment::Center)
         )
         .padding([8, 16])
         .width(Length::Fixed(120.0))
@@ -56,10 +59,9 @@ pub fn render<'a>(
         .on_press(Message::ToggleCore)
     } else {
         button(
-            text(tr(lang, "btn_start_core"))
-                .size(13)
-                .width(Length::Fill)
-                .align_x(Alignment::Center)
+            row![icon('\u{E037}'), text(tr(lang, "btn_start_core")).size(13)]
+                .spacing(8)
+                .align_y(Alignment::Center)
         )
         .padding([8, 16])
         .width(Length::Fixed(120.0))
@@ -69,16 +71,18 @@ pub fn render<'a>(
     
     // System Proxy Control Section
     let sys_proxy_indicator = if sys_proxy_enabled {
-        text(tr(lang, "enabled")).color(theme::SUCCESS).size(16).width(Length::Fill)
+        text(tr(lang, "enabled")).color(theme::SUCCESS).size(16)
     } else {
-        text(tr(lang, "disabled")).color(text_muted).size(16).width(Length::Fill)
+        text(tr(lang, "disabled")).color(text_muted).size(16)
     };
     
     let sys_proxy_btn = button(
-        text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") })
-            .size(13)
-            .width(Length::Fill)
-            .align_x(Alignment::Center)
+        row![
+            icon(if sys_proxy_enabled { '\u{E047}' } else { '\u{E037}' }),
+            text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") }).size(13)
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
     )
     .padding([8, 16])
     .width(Length::Fixed(120.0))
@@ -88,22 +92,24 @@ pub fn render<'a>(
     let system_control_card = container(
         column![
             row![
-                text(tr(lang, "singbox_core")).color(text_muted).size(13).width(Length::Fixed(110.0)),
+                row![icon('\u{E322}'), text(tr(lang, "singbox_core")).color(text_muted).size(13)].spacing(8).align_y(Alignment::Center),
+                Space::new().width(Length::Fill),
                 status_indicator,
+                Space::new().width(Length::Fixed(16.0)),
                 core_control_btn
             ]
             .width(Length::Fill)
-            .align_y(Alignment::Center)
-            .spacing(15),
+            .align_y(Alignment::Center),
             
             row![
-                text(tr(lang, "system_proxy")).color(text_muted).size(13).width(Length::Fixed(110.0)),
+                row![icon('\u{E32A}'), text(tr(lang, "system_proxy")).color(text_muted).size(13)].spacing(8).align_y(Alignment::Center),
+                Space::new().width(Length::Fill),
                 sys_proxy_indicator,
+                Space::new().width(Length::Fixed(16.0)),
                 sys_proxy_btn
             ]
             .width(Length::Fill)
             .align_y(Alignment::Center)
-            .spacing(15)
         ]
         .spacing(24) // Increased spacing
     )
@@ -160,33 +166,53 @@ pub fn render<'a>(
     // Speed Stats cards
     let download_card = container(
         column![
-            text(tr(lang, "download")).color(text_muted).size(13),
+            row![
+                icon('\u{E5DB}').color(theme::ACCENT_BLUE),
+                text(tr(lang, "download")).color(text_muted).size(13)
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
             text(format_speed(current_speed.down))
+                .font(iced::Font {
+                    family: iced::font::Family::Monospace,
+                    weight: iced::font::Weight::Bold,
+                    ..Default::default()
+                })
                 .color(theme::ACCENT_BLUE)
-                .size(28),
+                .size(32),
             text(format!("{} {}", tr(lang, "total_label"), format_size(total_downloaded)))
-                .color(text_muted)
+                .color(theme::text_tertiary(theme))
                 .size(11),
         ]
-        .spacing(8)
+        .spacing(12)
     )
-    .padding(20)
+    .padding(24)
     .width(Length::FillPortion(1))
     .style(theme::card_bg);
     
     let upload_card = container(
         column![
-            text(tr(lang, "upload")).color(text_muted).size(13),
+            row![
+                icon('\u{E5D8}').color(theme::ACCENT_PURPLE),
+                text(tr(lang, "upload")).color(text_muted).size(13)
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
             text(format_speed(current_speed.up))
+                .font(iced::Font {
+                    family: iced::font::Family::Monospace,
+                    weight: iced::font::Weight::Bold,
+                    ..Default::default()
+                })
                 .color(theme::ACCENT_PURPLE)
-                .size(28),
+                .size(32),
             text(format!("{} {}", tr(lang, "total_label"), format_size(total_uploaded)))
-                .color(text_muted)
+                .color(theme::text_tertiary(theme))
                 .size(11),
         ]
-        .spacing(8)
+        .spacing(12)
     )
-    .padding(20)
+    .padding(24)
     .width(Length::FillPortion(1))
     .style(theme::card_bg);
     
@@ -209,22 +235,30 @@ pub fn render<'a>(
     let mut up_path = String::new();
     
     if points_count > 1 {
-        down_path.push_str("M 0 100");
-        for (i, &(_, down)) in speed_history.iter().enumerate() {
-            let x = i as f32 * (300.0 / (points_count - 1) as f32);
-            let y = 100.0 - (down as f32 / max_speed as f32 * 80.0);
-            down_path.push_str(&format!(" L {:.2} {:.2}", x, y));
+        let get_x = |i: usize| i as f32 * (300.0 / (points_count - 1) as f32);
+        let get_y_down = |down: u64| 100.0 - (down as f32 / max_speed as f32 * 80.0);
+        let get_y_up = |up: u64| 100.0 - (up as f32 / max_speed as f32 * 80.0);
+        
+        down_path.push_str(&format!("M 0 100 L 0 {:.2}", get_y_down(speed_history[0].1)));
+        
+        for i in 0..points_count - 1 {
+            let x0 = get_x(i);
+            let y0 = get_y_down(speed_history[i].1);
+            let x1 = get_x(i + 1);
+            let y1 = get_y_down(speed_history[i + 1].1);
+            let cx = (x0 + x1) / 2.0;
+            down_path.push_str(&format!(" C {:.2} {:.2}, {:.2} {:.2}, {:.2} {:.2}", cx, y0, cx, y1, x1, y1));
         }
         down_path.push_str(" L 300 100 Z");
         
-        for (i, &(up, _)) in speed_history.iter().enumerate() {
-            let x = i as f32 * (300.0 / (points_count - 1) as f32);
-            let y = 100.0 - (up as f32 / max_speed as f32 * 80.0);
-            if i == 0 {
-                up_path.push_str(&format!("M {:.2} {:.2}", x, y));
-            } else {
-                up_path.push_str(&format!(" L {:.2} {:.2}", x, y));
-            }
+        up_path.push_str(&format!("M 0 {:.2}", get_y_up(speed_history[0].0)));
+        for i in 0..points_count - 1 {
+            let x0 = get_x(i);
+            let y0 = get_y_up(speed_history[i].0);
+            let x1 = get_x(i + 1);
+            let y1 = get_y_up(speed_history[i + 1].0);
+            let cx = (x0 + x1) / 2.0;
+            up_path.push_str(&format!(" C {:.2} {:.2}, {:.2} {:.2}, {:.2} {:.2}", cx, y0, cx, y1, x1, y1));
         }
     } else {
         down_path = "M 0 100 L 300 100 Z".to_string();
@@ -237,6 +271,14 @@ pub fn render<'a>(
         "rgba(0, 0, 0, 0.04)"
     };
 
+    let mut grid_lines = String::new();
+    for y in [20, 40, 60, 80] {
+        grid_lines.push_str(&format!(r#"<line x1="0" y1="{}" x2="300" y2="{}" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, y, y, grid_color));
+    }
+    for x in [50, 100, 150, 200, 250] {
+        grid_lines.push_str(&format!(r#"<line x1="{}" y1="0" x2="{}" y2="100" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, x, x, grid_color));
+    }
+
     let down_color_hex = format!("rgba({}, {}, {}, {})", (theme::ACCENT_BLUE.r * 255.0) as u8, (theme::ACCENT_BLUE.g * 255.0) as u8, (theme::ACCENT_BLUE.b * 255.0) as u8, 1.0);
     let up_color_hex = format!("rgba({}, {}, {}, {})", (theme::ACCENT_PURPLE.r * 255.0) as u8, (theme::ACCENT_PURPLE.g * 255.0) as u8, (theme::ACCENT_PURPLE.b * 255.0) as u8, 1.0);
 
@@ -244,18 +286,15 @@ pub fn render<'a>(
         r##"<svg viewBox="0 0 300 100" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
              <defs>
                <linearGradient id="downGrad" x1="0" y1="0" x2="0" y2="1">
-                 <stop offset="0%" stop-color="{}" stop-opacity="0.3"/>
+                 <stop offset="0%" stop-color="{}" stop-opacity="0.4"/>
                  <stop offset="100%" stop-color="{}" stop-opacity="0"/>
                </linearGradient>
              </defs>
-             <line x1="0" y1="20" x2="300" y2="20" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
-             <line x1="0" y1="40" x2="300" y2="40" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
-             <line x1="0" y1="60" x2="300" y2="60" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
-             <line x1="0" y1="80" x2="300" y2="80" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
-             <path d="{}" fill="url(#downGrad)" stroke="{}" stroke-width="1.5"/>
-             <path d="{}" fill="none" stroke="{}" stroke-width="1.5"/>
+             {}
+             <path d="{}" fill="url(#downGrad)" stroke="{}" stroke-width="2.5"/>
+             <path d="{}" fill="none" stroke="{}" stroke-width="2.5"/>
            </svg>"##,
-          down_color_hex, down_color_hex, grid_color, grid_color, grid_color, grid_color, down_path, down_color_hex, up_path, up_color_hex
+          down_color_hex, down_color_hex, grid_lines, down_path, down_color_hex, up_path, up_color_hex
     );
     
     let chart_handle = svg::Handle::from_memory(svg_xml.into_bytes());

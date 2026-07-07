@@ -52,7 +52,7 @@ pub fn render<'a>(
                 .spacing(10)
                 .padding([4, 8]);
                 
-                list_col = list_col.push(container(item_row).style(theme::list_item_bg));
+                list_col = list_col.push(container(item_row).style(move |t| theme::list_item_style(t, false, false)));
             }
         }
         

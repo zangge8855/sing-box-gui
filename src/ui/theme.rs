@@ -8,18 +8,20 @@ pub const CARD_DARK: Color = Color::from_rgb(0.10, 0.10, 0.12);    // Softer car
 pub const CARD_LIGHT: Color = Color::from_rgb(0.13, 0.13, 0.16);
 #[allow(dead_code)]
 pub const CARD_HOVER: Color = Color::from_rgb(0.15, 0.15, 0.18);
-pub const BORDER_DARK: Color = Color::from_rgba(0.25, 0.25, 0.30, 0.3); // Semi-transparent subtle border
+pub const BORDER_DARK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.08); // Subtle top-light highlight
 pub const TEXT_PRIMARY: Color = Color::from_rgb(0.95, 0.96, 0.98);
 pub const TEXT_MUTED: Color = Color::from_rgb(0.55, 0.58, 0.63);
+pub const TEXT_TERTIARY: Color = Color::from_rgb(0.35, 0.38, 0.42);
 
 // Light mode palette
 pub const BG_LIGHT: Color = Color::from_rgb(0.97, 0.97, 0.98);      // Very light gray/off-white
 pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb(0.93, 0.93, 0.95);
 pub const CARD_LIGHT_BG: Color = Color::from_rgb(1.0, 1.0, 1.0);    // Pure white for crispness
 pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb(0.95, 0.96, 1.0);
-pub const BORDER_LIGHT: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.06); // Extremely subtle border
+pub const BORDER_LIGHT: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.03); // Extremely subtle border
 pub const TEXT_PRIMARY_LIGHT: Color = Color::from_rgb(0.10, 0.11, 0.14);
 pub const TEXT_MUTED_LIGHT: Color = Color::from_rgb(0.45, 0.48, 0.52);
+pub const TEXT_TERTIARY_LIGHT: Color = Color::from_rgb(0.65, 0.68, 0.72);
 
 // Accent colors (work well in both light & dark)
 pub const ACCENT_PURPLE: Color = Color::from_rgb(0.55, 0.36, 0.96); // #8b5cf6
@@ -66,9 +68,9 @@ pub fn card_bg(theme: &iced::Theme) -> container::Style {
     let bg = if is_dark(theme) { CARD_DARK } else { CARD_LIGHT_BG };
     let border = if is_dark(theme) { BORDER_DARK } else { BORDER_LIGHT };
     let shadow_color = if is_dark(theme) {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.40)
+        Color::from_rgba(0.0, 0.0, 0.0, 0.25) // Softer shadow
     } else {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.05)
+        Color::from_rgba(0.0, 0.0, 0.0, 0.03) // Very light shadow
     };
     container::Style {
         background: Some(Background::Color(bg)),
@@ -79,8 +81,8 @@ pub fn card_bg(theme: &iced::Theme) -> container::Style {
         },
         shadow: Shadow {
             color: shadow_color,
-            offset: iced::Vector::new(0.0, 6.0),
-            blur_radius: 16.0, // Wider, softer shadow
+            offset: iced::Vector::new(0.0, 8.0),
+            blur_radius: 24.0, // Wider, softer shadow
         },
         ..Default::default()
     }
@@ -142,11 +144,18 @@ pub fn status_card(theme: &iced::Theme) -> container::Style {
 // Primary Action Button styling
 pub fn button_primary(_theme: &iced::Theme, status: button::Status) -> button::Style {
     let base_color = ACCENT_PURPLE;
-    let bg = match status {
-        button::Status::Hovered => Color::from_rgb(0.60, 0.43, 0.98),
-        button::Status::Pressed => Color::from_rgb(0.50, 0.30, 0.90),
-        button::Status::Disabled => Color::from_rgb(0.25, 0.20, 0.35),
-        button::Status::Active => base_color,
+    let (bg, shadow) = match status {
+        button::Status::Hovered => (
+            Color::from_rgb(0.65, 0.48, 1.0), // Brighter hover
+            Shadow {
+                color: Color::from_rgba(0.55, 0.36, 0.96, 0.5),
+                offset: iced::Vector::new(0.0, 4.0),
+                blur_radius: 12.0,
+            }
+        ),
+        button::Status::Pressed => (Color::from_rgb(0.50, 0.30, 0.90), Shadow::default()),
+        button::Status::Disabled => (Color::from_rgb(0.25, 0.20, 0.35), Shadow::default()),
+        button::Status::Active => (base_color, Shadow::default()),
     };
     
     button::Style {
@@ -157,7 +166,7 @@ pub fn button_primary(_theme: &iced::Theme, status: button::Status) -> button::S
             width: 0.0,
             color: Color::TRANSPARENT,
         },
-        shadow: Shadow::default(),
+        shadow,
         ..Default::default()
     }
 }
@@ -259,20 +268,30 @@ pub fn button_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
     }
 }
 
-// Simple list item styling (flat, no shadow)
-pub fn list_item_bg(theme: &iced::Theme) -> container::Style {
-    let bg = if is_dark(theme) {
-        Color::from_rgb(0.06, 0.08, 0.12)
+// Simple list item styling with interactive states
+pub fn list_item_style(theme: &iced::Theme, is_selected: bool, is_hovered: bool) -> container::Style {
+    let dark = is_dark(theme);
+    
+    let base_bg = if dark { Color::from_rgb(0.06, 0.08, 0.12) } else { Color::from_rgb(0.97, 0.98, 0.99) };
+    let hover_bg = if dark { Color::from_rgb(0.09, 0.11, 0.15) } else { Color::from_rgb(0.93, 0.94, 0.96) };
+    let selected_bg = if dark { Color::from_rgb(0.12, 0.14, 0.18) } else { Color::from_rgb(0.89, 0.91, 0.94) };
+
+    let bg = if is_selected {
+        selected_bg
+    } else if is_hovered {
+        hover_bg
     } else {
-        Color::from_rgb(0.97, 0.98, 0.99)
+        base_bg
     };
-    let border = if is_dark(theme) { BORDER_DARK } else { BORDER_LIGHT };
+
+    let border = if dark { BORDER_DARK } else { BORDER_LIGHT };
+    
     container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
-            color: border,
-            width: 1.0,
-            radius: 4.0.into(),
+            color: if is_selected { ACCENT_PURPLE } else { border },
+            width: if is_selected { 1.5 } else { 1.0 },
+            radius: 6.0.into(),
         },
         ..Default::default()
     }
@@ -340,4 +359,8 @@ pub fn text_primary(theme: &iced::Theme) -> Color {
 
 pub fn text_muted(theme: &iced::Theme) -> Color {
     if is_dark(theme) { TEXT_MUTED } else { TEXT_MUTED_LIGHT }
+}
+
+pub fn text_tertiary(theme: &iced::Theme) -> Color {
+    if is_dark(theme) { TEXT_TERTIARY } else { TEXT_TERTIARY_LIGHT }
 }
