@@ -38,57 +38,57 @@ pub fn render<'a>(
     
     // Core Status Section
     let status_indicator = if core_running {
-        text(tr(lang, "status_running")).color(theme::SUCCESS).size(18).width(Length::Fill)
+        text(tr(lang, "status_running")).color(theme::SUCCESS).size(16).width(Length::Fill)
     } else {
-        text(tr(lang, "status_stopped")).color(theme::DANGER).size(18).width(Length::Fill)
+        text(tr(lang, "status_stopped")).color(theme::DANGER).size(16).width(Length::Fill)
     };
     
     let core_control_btn = if core_running {
         button(
             text(tr(lang, "btn_stop_core"))
-                .size(14)
+                .size(13)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
         )
-        .padding([10, 20])
-        .width(Length::Fixed(150.0))
+        .padding([8, 16])
+        .width(Length::Fixed(120.0))
         .style(theme::button_danger)
         .on_press(Message::ToggleCore)
     } else {
         button(
             text(tr(lang, "btn_start_core"))
-                .size(14)
+                .size(13)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
         )
-        .padding([10, 20])
-        .width(Length::Fixed(150.0))
+        .padding([8, 16])
+        .width(Length::Fixed(120.0))
         .style(theme::button_primary)
         .on_press(Message::ToggleCore)
     };
     
     // System Proxy Control Section
     let sys_proxy_indicator = if sys_proxy_enabled {
-        text(tr(lang, "enabled")).color(theme::SUCCESS).size(18).width(Length::Fill)
+        text(tr(lang, "enabled")).color(theme::SUCCESS).size(16).width(Length::Fill)
     } else {
-        text(tr(lang, "disabled")).color(text_muted).size(18).width(Length::Fill)
+        text(tr(lang, "disabled")).color(text_muted).size(16).width(Length::Fill)
     };
     
     let sys_proxy_btn = button(
         text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") })
-            .size(14)
+            .size(13)
             .width(Length::Fill)
             .align_x(Alignment::Center)
     )
-    .padding([10, 20])
-    .width(Length::Fixed(150.0))
+    .padding([8, 16])
+    .width(Length::Fixed(120.0))
     .style(if sys_proxy_enabled { theme::button_danger } else { theme::button_primary })
     .on_press(Message::ToggleSystemProxy);
 
     let system_control_card = container(
         column![
             row![
-                text(tr(lang, "singbox_core")).color(text_muted).size(13).width(Length::Fixed(140.0)),
+                text(tr(lang, "singbox_core")).color(text_muted).size(13).width(Length::Fixed(110.0)),
                 status_indicator,
                 core_control_btn
             ]
@@ -97,7 +97,7 @@ pub fn render<'a>(
             .spacing(15),
             
             row![
-                text(tr(lang, "system_proxy")).color(text_muted).size(13).width(Length::Fixed(140.0)),
+                text(tr(lang, "system_proxy")).color(text_muted).size(13).width(Length::Fixed(110.0)),
                 sys_proxy_indicator,
                 sys_proxy_btn
             ]
@@ -107,7 +107,7 @@ pub fn render<'a>(
         ]
         .spacing(20)
     )
-    .padding(25)
+    .padding(20)
     .width(Length::Fill)
     .style(theme::card_bg);
     
@@ -116,11 +116,11 @@ pub fn render<'a>(
         let active = gui_config.routing_mode == mode;
         let btn = button(
             text(tr(lang, key))
-                .size(13)
+                .size(12)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
         )
-        .padding([8, 16])
+        .padding([8, 10])
         .width(Length::Fill)
         .style(move |t, s| {
             if active {
@@ -143,7 +143,7 @@ pub fn render<'a>(
         make_mode_btn(RoutingMode::Global, "routing_global_desc"),
         make_mode_btn(RoutingMode::Direct, "routing_direct_desc")
     ]
-    .spacing(15)
+    .spacing(10)
     .width(Length::Fill);
     
     let mode_card = container(
@@ -153,7 +153,7 @@ pub fn render<'a>(
         ]
         .spacing(15)
     )
-    .padding(25)
+    .padding(20)
     .width(Length::Fill)
     .style(theme::card_bg);
 
@@ -163,14 +163,14 @@ pub fn render<'a>(
             text(tr(lang, "download")).color(text_muted).size(13),
             text(format_speed(current_speed.down))
                 .color(theme::ACCENT_BLUE)
-                .size(32),
+                .size(28),
             text(format!("{} {}", tr(lang, "total_label"), format_size(total_downloaded)))
                 .color(text_muted)
-                .size(12),
+                .size(11),
         ]
         .spacing(5)
     )
-    .padding(20)
+    .padding(15)
     .width(Length::FillPortion(1))
     .style(theme::card_bg);
     
@@ -179,14 +179,14 @@ pub fn render<'a>(
             text(tr(lang, "upload")).color(text_muted).size(13),
             text(format_speed(current_speed.up))
                 .color(theme::ACCENT_PURPLE)
-                .size(32),
+                .size(28),
             text(format!("{} {}", tr(lang, "total_label"), format_size(total_uploaded)))
                 .color(text_muted)
-                .size(12),
+                .size(11),
         ]
         .spacing(5)
     )
-    .padding(20)
+    .padding(15)
     .width(Length::FillPortion(1))
     .style(theme::card_bg);
     
@@ -194,7 +194,7 @@ pub fn render<'a>(
         download_card,
         upload_card
     ]
-    .spacing(20);
+    .spacing(15);
     
     // Render dynamic SVG chart of speed history
     let max_speed = speed_history.iter()
@@ -209,7 +209,6 @@ pub fn render<'a>(
     let mut up_path = String::new();
     
     if points_count > 1 {
-        // Build download speed area path with f32 precision (no integer coordinates)
         down_path.push_str("M 0 100");
         for (i, &(_, down)) in speed_history.iter().enumerate() {
             let x = i as f32 * (300.0 / (points_count - 1) as f32);
@@ -218,7 +217,6 @@ pub fn render<'a>(
         }
         down_path.push_str(" L 300 100 Z");
         
-        // Build upload speed line path
         for (i, &(up, _)) in speed_history.iter().enumerate() {
             let x = i as f32 * (300.0 / (points_count - 1) as f32);
             let y = 100.0 - (up as f32 / max_speed as f32 * 80.0);
@@ -243,7 +241,7 @@ pub fn render<'a>(
     let up_color_hex = format!("rgba({}, {}, {}, {})", (theme::ACCENT_PURPLE.r * 255.0) as u8, (theme::ACCENT_PURPLE.g * 255.0) as u8, (theme::ACCENT_PURPLE.b * 255.0) as u8, 1.0);
 
     let svg_xml = format!(
-        r##"<svg viewBox="0 0 300 100" xmlns="http://www.w3.org/2000/svg">
+        r##"<svg viewBox="0 0 300 100" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
              <defs>
                <linearGradient id="downGrad" x1="0" y1="0" x2="0" y2="1">
                  <stop offset="0%" stop-color="{}" stop-opacity="0.3"/>
@@ -254,8 +252,8 @@ pub fn render<'a>(
              <line x1="0" y1="40" x2="300" y2="40" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
              <line x1="0" y1="60" x2="300" y2="60" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
              <line x1="0" y1="80" x2="300" y2="80" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
-             <path d="{}" fill="url(#downGrad)" stroke="{}" stroke-width="2.0"/>
-             <path d="{}" fill="none" stroke="{}" stroke-width="2.0"/>
+             <path d="{}" fill="url(#downGrad)" stroke="{}" stroke-width="1.5"/>
+             <path d="{}" fill="none" stroke="{}" stroke-width="1.5"/>
            </svg>"##,
           down_color_hex, down_color_hex, grid_color, grid_color, grid_color, grid_color, down_path, down_color_hex, up_path, up_color_hex
     );
@@ -263,28 +261,47 @@ pub fn render<'a>(
     let chart_handle = svg::Handle::from_memory(svg_xml.into_bytes());
     let chart_svg = svg(chart_handle)
         .width(Length::Fill)
-        .height(Length::Fixed(180.0));
+        .height(Length::Fill);
         
     let chart_card = container(
         column![
-            text(tr(lang, "speed_history_chart")).color(text_muted).size(14),
-            chart_svg
+            text(tr(lang, "speed_history_chart")).color(text_muted).size(13),
+            container(chart_svg)
+                .width(Length::Fill)
+                .height(Length::Fill)
         ]
         .spacing(10)
+        .height(Length::Fill)
     )
     .padding(20)
+    .width(Length::Fill)
+    .height(Length::Fill)
     .style(theme::card_bg);
     
-    // Overall view layout
-    let main_content = column![
+    // Balanced 2-Column Responsive Dashboard Layout
+    let left_col = column![
         system_control_card,
-        mode_card,
-        speed_row,
-        chart_card
+        mode_card
     ]
     .spacing(20)
-    .width(Length::Fill)
-    .max_width(800.0);
+    .width(Length::FillPortion(5));
+    
+    let right_col = column![
+        speed_row,
+        container(chart_card).height(Length::Fixed(220.0))
+    ]
+    .spacing(20)
+    .width(Length::FillPortion(7));
+    
+    let main_content = container(
+        row![
+            left_col,
+            right_col
+        ]
+        .spacing(20)
+        .width(Length::Fill)
+    )
+    .max_width(1200.0);
 
     let header_row = container(
         row![
@@ -293,7 +310,7 @@ pub fn render<'a>(
         .align_y(Alignment::Center)
         .width(Length::Fill)
     )
-    .max_width(800.0)
+    .max_width(1200.0)
     .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 10.0, left: 0.0 });
 
     let content_col = column![

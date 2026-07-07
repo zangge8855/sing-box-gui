@@ -89,53 +89,54 @@ pub fn render<'a>(
         None
     };
     
-    // List existing profiles
-    let mut profiles_col = Column::new().spacing(15);
-    
-    if gui_config.subscriptions.is_empty() {
-        profiles_col = profiles_col.push(
-            container(
-                text(tr(lang, "no_profiles"))
-                    .color(text_muted)
-                    .size(14)
-            )
-            .padding(25)
-            .width(Length::Fill)
-            .style(theme::card_bg)
-        );
+    // Grid system for profiles list (2 columns layout for modern look and space optimization)
+    let right_grid: Element<'a, Message> = if gui_config.subscriptions.is_empty() {
+        container(
+            text(tr(lang, "no_profiles"))
+                .color(text_muted)
+                .size(14)
+        )
+        .padding(25)
+        .width(Length::Fill)
+        .style(theme::card_bg)
+        .into()
     } else {
-        for profile in &gui_config.subscriptions {
+        let mut grid_rows = Column::new().spacing(15);
+        let mut current_row = iced::widget::Row::new().spacing(15);
+        let total_cards = gui_config.subscriptions.len();
+        
+        for (i, profile) in gui_config.subscriptions.iter().enumerate() {
             let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
             
-            let update_btn = button(text(tr(lang, "btn_update")).size(12))
-                .padding([6, 12])
+            let update_btn = button(text(tr(lang, "btn_update")).size(11))
+                .padding([5, 10])
                 .style(theme::button_primary)
                 .on_press(Message::UpdateSubscription(profile.id.clone()));
   
             let delete_btn = if confirm_delete_id == Some(&profile.id) {
-                button(text(tr(lang, "confirm_delete_profile")).size(12))
-                    .padding([6, 12])
+                button(text(tr(lang, "confirm_delete_profile")).size(11))
+                    .padding([5, 10])
                     .style(theme::button_danger)
                     .on_press(Message::DeleteProfile(profile.id.clone()))
             } else {
-                button(text(tr(lang, "btn_delete")).size(12))
-                    .padding([6, 12])
+                button(text(tr(lang, "btn_delete")).size(11))
+                    .padding([5, 10])
                     .style(theme::button_secondary)
                     .on_press(Message::DeleteProfile(format!("confirm:{}", profile.id)))
             };
                 
-            let edit_btn = button(text(tr(lang, "btn_edit")).size(12))
-                .padding([6, 12])
+            let edit_btn = button(text(tr(lang, "btn_edit")).size(11))
+                .padding([5, 10])
                 .style(theme::button_secondary)
                 .on_press(Message::EditProfile(profile.id.clone()));
                 
             let badge_or_spacer: Element<'a, Message> = if is_active {
-                container(text(tr(lang, "active_profile")).color(Color::WHITE).size(12))
-                    .padding([6, 12])
+                container(text(tr(lang, "active_profile")).color(Color::WHITE).size(11))
+                    .padding([5, 10])
                     .style(|_theme: &iced::Theme| container::Style {
                         background: Some(iced::Background::Color(theme::SUCCESS)),
                         border: iced::Border {
-                            radius: 6.0.into(),
+                            radius: 4.0.into(),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -145,10 +146,10 @@ pub fn render<'a>(
                 iced::widget::Space::new().width(Length::Shrink).into()
             };
             
-            let mut actions_row = row![].spacing(10).align_y(Alignment::Center);
+            let mut actions_row = row![].spacing(8).align_y(Alignment::Center);
             if !is_active {
-                let select_btn = button(text(tr(lang, "btn_select")).size(12))
-                    .padding([6, 12])
+                let select_btn = button(text(tr(lang, "btn_select")).size(11))
+                    .padding([5, 10])
                     .style(theme::button_secondary)
                     .on_press(Message::SelectProfile(profile.id.clone()));
                 actions_row = actions_row.push(select_btn);
@@ -158,8 +159,8 @@ pub fn render<'a>(
                 .push(edit_btn)
                 .push(delete_btn);
                 
-            let display_url = if profile.url.chars().count() > 60 {
-                let truncated: String = profile.url.chars().take(60).collect();
+            let display_url = if profile.url.chars().count() > 40 {
+                let truncated: String = profile.url.chars().take(40).collect();
                 format!("{}...", truncated)
             } else {
                 profile.url.clone()
@@ -169,7 +170,7 @@ pub fn render<'a>(
                 column![
                     text(&profile.name)
                         .color(text_primary)
-                        .size(16)
+                        .size(15)
                         .font(iced::Font {
                             weight: iced::font::Weight::Bold,
                             ..Default::default()
@@ -189,8 +190,8 @@ pub fn render<'a>(
             ]
             .spacing(12);
             
-            let profile_row = container(card_layout)
-                .padding(25)
+            let profile_card = container(card_layout)
+                .padding(20)
                 .width(Length::Fill)
                 .style(move |theme| {
                     if is_active {
@@ -200,12 +201,22 @@ pub fn render<'a>(
                     }
                 });
             
-            profiles_col = profiles_col.push(profile_row);
+            current_row = current_row.push(container(profile_card).width(Length::FillPortion(1)));
+            if (i + 1) % 2 == 0 {
+                grid_rows = grid_rows.push(current_row);
+                current_row = iced::widget::Row::new().spacing(15);
+            }
         }
-    }
-    
-    let scroll_list = scrollable(profiles_col)
-        .height(Length::Fill);
+        
+        let remaining_elements = total_cards % 2;
+        if remaining_elements > 0 {
+            for _ in remaining_elements..2 {
+                current_row = current_row.push(container(text("")).width(Length::FillPortion(1)));
+            }
+            grid_rows = grid_rows.push(current_row);
+        }
+        scrollable(grid_rows).height(Length::Fill).into()
+    };
         
     let mut main_layout_col = column![
         title,
@@ -218,12 +229,12 @@ pub fn render<'a>(
     }
     
     main_layout_col = main_layout_col.push(text(tr(lang, "imported_profiles")).color(text_muted).size(14));
-    main_layout_col = main_layout_col.push(scroll_list);
+    main_layout_col = main_layout_col.push(right_grid);
     
     container(
         container(main_layout_col)
             .width(Length::Fill)
-            .max_width(800.0)
+            .max_width(1200.0)
             .center_x(Length::Fill)
             .padding(30)
     )

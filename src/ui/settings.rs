@@ -366,20 +366,39 @@ pub fn render<'a>(
     .padding([20, 30])
     .width(Length::Fill);
     
+    // Modern 2-Column Settings layout
+    let left_col = column![
+        routing_card,
+        settings_card,
+    ]
+    .spacing(20)
+    .width(Length::FillPortion(1));
+
+    let right_col = column![
+        dns_card,
+        core_card,
+        lang_card,
+        theme_card,
+    ]
+    .spacing(20)
+    .width(Length::FillPortion(1));
+
+    let two_cols = row![
+        left_col,
+        right_col
+    ]
+    .spacing(20)
+    .width(Length::Fill);
+
     let main_content = container(
         column![
-            routing_card,
-            settings_card,
-            dns_card,
-            core_card,
-            lang_card,
-            theme_card,
+            two_cols,
             preview_card
         ]
         .spacing(20)
     )
     .width(Length::Fill)
-    .max_width(800.0)
+    .max_width(1200.0)
     .center_x(Length::Fill);
     
     // Header row with Title and Save button
@@ -392,7 +411,7 @@ pub fn render<'a>(
         .align_y(Alignment::Center)
         .width(Length::Fill)
     )
-    .max_width(800.0)
+    .max_width(1200.0)
     .center_x(Length::Fill)
     .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 10.0, left: 0.0 });
 

@@ -140,7 +140,7 @@ pub fn render<'a>(
     
     container(
         container(main_col)
-            .max_width(800.0)
+            .max_width(1200.0)
             .center_x(Length::Fill)
             .padding([30, 20])
     )
