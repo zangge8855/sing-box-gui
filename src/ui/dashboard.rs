@@ -321,20 +321,17 @@ pub fn render<'a>(
     // Balanced 2-Column Responsive Dashboard Layout
     let left_col = column![
         system_control_card,
-        mode_card,
-        Space::new().height(Length::Fill)
+        mode_card
     ]
     .spacing(20)
-    .width(Length::FillPortion(5))
-    .height(Length::Fill);
+    .width(Length::FillPortion(5));
     
     let right_col = column![
         speed_row,
-        chart_card
+        container(chart_card).height(Length::Fixed(220.0))
     ]
     .spacing(20)
-    .width(Length::FillPortion(7))
-    .height(Length::Fill);
+    .width(Length::FillPortion(7));
     
     let main_content = container(
         row![
@@ -343,10 +340,8 @@ pub fn render<'a>(
         ]
         .spacing(20)
         .width(Length::Fill)
-        .height(Length::Fill)
     )
-    .max_width(1200.0)
-    .height(Length::Fill);
+    .max_width(1200.0);
 
     let header_row = container(
         row![
@@ -364,14 +359,12 @@ pub fn render<'a>(
     ]
     .spacing(10)
     .width(Length::Fill)
-    .height(Length::Fill)
     .align_x(Alignment::Center);
 
     container(
         scrollable(
             container(content_col)
                 .width(Length::Fill)
-                .height(Length::Fill)
                 .center_x(Length::Fill)
                 .padding(iced::Padding { top: 10.0, right: 20.0, bottom: 30.0, left: 20.0 })
         )
