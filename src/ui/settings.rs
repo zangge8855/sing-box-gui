@@ -1,7 +1,7 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
-use crate::state::{GuiConfig, RoutingMode};
+use crate::state::{GuiConfig, RoutingMode, Language, AppTheme};
 use crate::ui::theme;
 
 pub fn render<'a>(
@@ -18,17 +18,17 @@ pub fn render<'a>(
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
     
-    let make_toggle_row = move |label_key: &'static str, is_on: bool, msg: &'static str| {
+    let make_toggle_row = move |label_key: &'static str, is_on: bool, msg: Message| {
         let label_el: Element<'a, Message> = text(tr(lang, label_key)).color(theme::text_primary(theme)).size(13).width(Length::Fill).into();
         let btn_el: Element<'a, Message> = button(
-            text(if is_on { "ON" } else { "OFF" })
+            text(tr(lang, if is_on { "ON" } else { "OFF" }))
                 .size(12)
                 .width(Length::Fixed(50.0))
                 .align_x(Alignment::Center)
         )
         .padding([6, 12])
         .style(if is_on { theme::button_primary } else { theme::button_secondary })
-        .on_press(Message::PortInputChanged(msg.to_string()))
+        .on_press(msg)
         .into();
         
         let r: Element<'a, Message> = row![label_el, btn_el]
@@ -61,7 +61,7 @@ pub fn render<'a>(
         .padding([8, 16])
         .width(Length::Fixed(150.0))
         .style(theme::button_primary)
-        .on_press(Message::NewLogLine("TRIGGER_CORE_DOWNLOAD".to_string()));
+        .on_press(Message::TriggerCoreDownload);
             
         row![
             text(tr(lang, "core_not_found")).color(theme::DANGER).size(14).width(Length::Fill),
@@ -87,7 +87,7 @@ pub fn render<'a>(
     .padding([8, 16])
     .width(Length::Fill)
     .style(theme::button_secondary)
-    .on_press(Message::PortInputChanged("open_data_dir".to_string()));
+    .on_press(Message::OpenDataDir);
 
     let core_card = container(
         column![
@@ -151,14 +151,14 @@ pub fn render<'a>(
     
     // Inbound & Port Settings Card
     let mixed_port_input = text_input("2080", mixed_port_str)
-        .on_input(|s| Message::PortInputChanged(format!("mixed:{}", s)))
+        .on_input(Message::MixedPortChanged)
         .on_submit(Message::SaveSettings)
         .padding(10)
         .style(theme::input_field)
         .width(100);
         
     let api_port_input = text_input("9090", api_port_str)
-        .on_input(|s| Message::PortInputChanged(format!("api:{}", s)))
+        .on_input(Message::ApiPortChanged)
         .on_submit(Message::SaveSettings)
         .padding(10)
         .style(theme::input_field)
@@ -180,11 +180,11 @@ pub fn render<'a>(
         column![
             text(tr(lang, "ports_config")).color(text_muted).size(13),
             ports_row,
-            make_toggle_row("tun_mode_label", gui_config.tun_mode, "toggle_tun"),
-            make_toggle_row("autostart_label", gui_config.start_on_boot, "toggle_autostart"),
-            make_toggle_row("close_core_on_exit_label", gui_config.close_core_on_exit, "toggle_close_core"),
-            make_toggle_row("tcp_fast_open_label", gui_config.tcp_fast_open, "toggle_tfo"),
-            make_toggle_row("tcp_multipath_label", gui_config.tcp_multipath, "toggle_mptcp"),
+            make_toggle_row("tun_mode_label", gui_config.tun_mode, Message::ToggleTun),
+            make_toggle_row("autostart_label", gui_config.start_on_boot, Message::ToggleAutostart),
+            make_toggle_row("close_core_on_exit_label", gui_config.close_core_on_exit, Message::ToggleCloseCoreOnExit),
+            make_toggle_row("tcp_fast_open_label", gui_config.tcp_fast_open, Message::ToggleTcpFastOpen),
+            make_toggle_row("tcp_multipath_label", gui_config.tcp_multipath, Message::ToggleTcpMultipath),
         ]
         .spacing(20)
     )
@@ -194,14 +194,14 @@ pub fn render<'a>(
     
     // DNS settings card
     let dns_local_input = text_input("223.5.5.5", dns_local_str)
-        .on_input(|s| Message::PortInputChanged(format!("dns_local:{}", s)))
+        .on_input(Message::DnsLocalChanged)
         .on_submit(Message::SaveSettings)
         .padding(10)
         .style(theme::input_field)
         .width(220);
         
     let dns_remote_input = text_input("8.8.8.8", dns_remote_str)
-        .on_input(|s| Message::PortInputChanged(format!("dns_remote:{}", s)))
+        .on_input(Message::DnsRemoteChanged)
         .on_submit(Message::SaveSettings)
         .padding(10)
         .style(theme::input_field)
@@ -223,7 +223,7 @@ pub fn render<'a>(
         column![
             text(tr(lang, "dns_servers")).color(text_muted).size(13),
             dns_row,
-            make_toggle_row("fake_ip_label", gui_config.fake_ip, "toggle_fakeip"),
+            make_toggle_row("fake_ip_label", gui_config.fake_ip, Message::ToggleFakeIp),
         ]
         .spacing(20)
     )
@@ -234,7 +234,7 @@ pub fn render<'a>(
     // Language card
     let lang_label = text(tr(lang, "app_language")).color(text_muted).size(13);
     
-    let make_lang_btn = |target_lang: crate::state::Language, label: &'static str| {
+    let make_lang_btn = |target_lang: Language, label: &'static str| {
         let active = gui_config.language == target_lang;
         let btn = button(
             text(label)
@@ -255,18 +255,14 @@ pub fn render<'a>(
         let btn_el: Element<'a, Message> = if active {
             btn.into()
         } else {
-            let msg_str = match target_lang {
-                crate::state::Language::En => "lang:en",
-                crate::state::Language::Zh => "lang:zh",
-            };
-            btn.on_press(Message::PortInputChanged(msg_str.to_string())).into()
+            btn.on_press(Message::SetLanguage(target_lang)).into()
         };
         btn_el
     };
     
     let lang_row = row![
-        make_lang_btn(crate::state::Language::En, "English"),
-        make_lang_btn(crate::state::Language::Zh, "简体中文")
+        make_lang_btn(Language::En, "English"),
+        make_lang_btn(Language::Zh, "简体中文")
     ]
     .spacing(15);
     
@@ -284,7 +280,7 @@ pub fn render<'a>(
     // Theme card
     let theme_label = text(tr(lang, "app_theme")).color(text_muted).size(13);
     
-    let make_theme_btn = |target_theme: crate::state::AppTheme, label_key: &'static str| {
+    let make_theme_btn = |target_theme: AppTheme, label_key: &'static str| {
         let active = gui_config.theme == target_theme;
         let btn = button(
             text(tr(lang, label_key))
@@ -305,20 +301,15 @@ pub fn render<'a>(
         let btn_el: Element<'a, Message> = if active {
             btn.into()
         } else {
-            let msg_str = match target_theme {
-                crate::state::AppTheme::Auto => "theme:auto",
-                crate::state::AppTheme::Dark => "theme:dark",
-                crate::state::AppTheme::Light => "theme:light",
-            };
-            btn.on_press(Message::PortInputChanged(msg_str.to_string())).into()
+            btn.on_press(Message::SetTheme(target_theme)).into()
         };
         btn_el
     };
     
     let theme_row = row![
-        make_theme_btn(crate::state::AppTheme::Auto, "theme_auto"),
-        make_theme_btn(crate::state::AppTheme::Dark, "theme_dark"),
-        make_theme_btn(crate::state::AppTheme::Light, "theme_light")
+        make_theme_btn(AppTheme::Auto, "theme_auto"),
+        make_theme_btn(AppTheme::Dark, "theme_dark"),
+        make_theme_btn(AppTheme::Light, "theme_light")
     ]
     .spacing(15);
     
@@ -344,7 +335,7 @@ pub fn render<'a>(
     
     let preview_card = container(
         column![
-            text(if lang == crate::state::Language::Zh { "内核配置预览 (只读)" } else { "Configuration Preview (Read-only)" })
+            text(if lang == Language::Zh { "内核配置预览 (只读)" } else { "Configuration Preview (Read-only)" })
                 .color(text_muted)
                 .size(13),
             container(
@@ -373,9 +364,7 @@ pub fn render<'a>(
         .spacing(20)
     )
     .padding([20, 30])
-    .width(Length::Fill)
-    .max_width(800.0)
-    .center_x(Length::Fill);
+    .width(Length::Fill);
     
     let main_content = container(
         column![
@@ -390,7 +379,7 @@ pub fn render<'a>(
         .spacing(20)
     )
     .width(Length::Fill)
-    .max_width(600.0)
+    .max_width(800.0)
     .center_x(Length::Fill);
     
     // Header row with Title and Save button
@@ -403,7 +392,7 @@ pub fn render<'a>(
         .align_y(Alignment::Center)
         .width(Length::Fill)
     )
-    .max_width(600.0)
+    .max_width(800.0)
     .center_x(Length::Fill)
     .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 10.0, left: 0.0 });
 

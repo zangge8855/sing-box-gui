@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Row};
-use iced::{Alignment, Element, Length};
+use iced::{Alignment, Element, Length, Color};
 use crate::message::Message;
 use crate::state::ProxyNode;
 use crate::ui::theme;
@@ -35,7 +35,7 @@ pub fn render<'a>(
     let search_input = text_input(tr(lang, "search_nodes_placeholder"), search_query)
         .on_input(Message::NodeSearchChanged)
         .padding(8)
-        .width(220)
+        .width(280) // Consistent width of 280 with connections.rs
         .style(theme::input_field);
         
     let header = row![
@@ -509,6 +509,3 @@ pub fn render<'a>(
         .into()
     }
 }
-
-// Add a dummy Color type wrapper since we used iced Color
-use iced::Color;

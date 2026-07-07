@@ -1,7 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
+use std::sync::OnceLock;
 
+fn get_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default()
+    })
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TrafficInfo {
@@ -63,17 +73,17 @@ pub struct Connection {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectionsResponse {
-    pub connections: Vec<Connection>,
+    #[serde(default)]
+    pub connections: Option<Vec<Connection>>,
     #[serde(rename = "downloadTotal")]
     pub download_total: u64,
     #[serde(rename = "uploadTotal")]
     pub upload_total: u64,
 }
 
-
 pub async fn fetch_proxies(api_port: u16) -> Result<ProxiesResponse, String> {
     let url = format!("http://127.0.0.1:{}/proxies", api_port);
-    let client = reqwest::Client::new();
+    let client = get_client();
     let res = client.get(&url)
         .send()
         .await
@@ -88,7 +98,7 @@ pub async fn fetch_proxies(api_port: u16) -> Result<ProxiesResponse, String> {
 
 pub async fn select_proxy(api_port: u16, selector: &str, node_tag: &str) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{}/proxies/{}", api_port, urlencoding::encode(selector));
-    let client = reqwest::Client::new();
+    let client = get_client();
     
     let body = serde_json::json!({
         "name": node_tag
@@ -113,7 +123,7 @@ pub async fn test_node_latency(api_port: u16, node_tag: &str) -> Result<u64, Str
         api_port,
         urlencoding::encode(node_tag)
     );
-    let client = reqwest::Client::new();
+    let client = get_client();
     let res = client.get(&url)
         .send()
         .await
@@ -131,7 +141,7 @@ pub async fn test_node_latency(api_port: u16, node_tag: &str) -> Result<u64, Str
 
 pub async fn fetch_connections(api_port: u16) -> Result<ConnectionsResponse, String> {
     let url = format!("http://127.0.0.1:{}/connections", api_port);
-    let client = reqwest::Client::new();
+    let client = get_client();
     let res = client.get(&url)
         .send()
         .await
@@ -146,7 +156,7 @@ pub async fn fetch_connections(api_port: u16) -> Result<ConnectionsResponse, Str
 
 pub async fn close_connection(api_port: u16, id: &str) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{}/connections/{}", api_port, id);
-    let client = reqwest::Client::new();
+    let client = get_client();
     let res = client.delete(&url)
         .send()
         .await
@@ -159,26 +169,58 @@ pub async fn close_connection(api_port: u16, id: &str) -> Result<(), String> {
     }
 }
 
-pub fn spawn_traffic_monitor(api_port: u16, sender: UnboundedSender<TrafficInfo>) {
+pub fn spawn_traffic_monitor(
+    api_port: u16,
+    sender: UnboundedSender<TrafficInfo>,
+    mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
+) {
     tokio::spawn(async move {
         let url = format!("http://127.0.0.1:{}/traffic", api_port);
-        let client = reqwest::Client::new();
+        let client = get_client();
         
         loop {
-            // Re-attempt connection to traffic stream if disconnected
-            if let Ok(mut res) = client.get(&url).send().await {
-                while let Ok(Some(chunk)) = res.chunk().await {
-                    // The stream returns JSON lines
-                    let chunk_str = String::from_utf8_lossy(&chunk);
-                    for line in chunk_str.lines() {
-                        if let Ok(info) = serde_json::from_str::<TrafficInfo>(line) {
-                            let _ = sender.send(info);
+            tokio::select! {
+                _ = &mut cancel_rx => {
+                    break;
+                }
+                res_future = client.get(&url).send() => {
+                    if let Ok(mut res) = res_future {
+                        let mut line_buffer = String::new();
+                        loop {
+                            tokio::select! {
+                                _ = &mut cancel_rx => {
+                                    return;
+                                }
+                                chunk_res = res.chunk() => {
+                                    match chunk_res {
+                                        Ok(Some(chunk)) => {
+                                            let chunk_str = String::from_utf8_lossy(&chunk);
+                                            line_buffer.push_str(&chunk_str);
+                                            
+                                            while let Some(pos) = line_buffer.find('\n') {
+                                                let line = line_buffer[..pos].trim();
+                                                if !line.is_empty() {
+                                                    if let Ok(info) = serde_json::from_str::<TrafficInfo>(line) {
+                                                        let _ = sender.send(info);
+                                                    }
+                                                }
+                                                line_buffer = line_buffer[pos + 1..].to_string();
+                                            }
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
-            // Sleep and retry if the connection falls
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            tokio::select! {
+                _ = &mut cancel_rx => {
+                    break;
+                }
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {}
+            }
         }
     });
 }

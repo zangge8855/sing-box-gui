@@ -13,6 +13,10 @@ use std::os::windows::process::CommandExt;
 
 static CURRENT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 
+fn get_process_lock() -> std::sync::MutexGuard<'static, Option<Child>> {
+    CURRENT_PROCESS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn get_core_filename() -> &'static str {
     #[cfg(target_os = "windows")]
     { "sing-box.exe" }
@@ -34,9 +38,11 @@ pub fn is_core_installed(gui_config: &GuiConfig) -> bool {
     get_core_path(gui_config).exists()
 }
 
-pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), String> {
+pub async fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), String> {
     let app_dir = get_app_dir();
     let bin_dir = app_dir.join("bin");
+    fs::create_dir_all(&bin_dir)
+        .map_err(|e| format!("Failed to create bin directory: {}", e))?;
     let dest_path = bin_dir.join(get_core_filename());
     
     if dest_path.exists() {
@@ -87,92 +93,94 @@ pub fn download_core(progress_sender: UnboundedSender<String>) -> Result<(), Str
     
     let temp_archive_path = app_dir.join(archive_name);
     
-    // Download using reqwest
-    let mut response = reqwest::blocking::get(&url)
-        .map_err(|e| format!("Failed to download core: {}", e))?;
-        
-    if !response.status().is_success() {
-        return Err(format!("Server returned error: {}", response.status()));
-    }
-    
-    let mut file = File::create(&temp_archive_path)
-        .map_err(|e| format!("Failed to create temp archive file: {}", e))?;
-        
-    io::copy(&mut response, &mut file)
-        .map_err(|e| format!("Failed to write archive file: {}", e))?;
-        
-    let _ = progress_sender.send("Extracting core...".to_string());
-    
-    #[cfg(target_os = "windows")]
-    {
-        // Extract using zip crate for Windows
-        let zip_file = File::open(&temp_archive_path)
-            .map_err(|e| format!("Failed to open temp zip: {}", e))?;
+    let res = async {
+        let response = reqwest::get(&url).await
+            .map_err(|e| format!("Failed to download core: {}", e))?;
             
-        let mut archive = zip::ZipArchive::new(zip_file)
-            .map_err(|e| format!("Invalid zip archive: {}", e))?;
+        if !response.status().is_success() {
+            return Err(format!("Server returned error: {}", response.status()));
+        }
+        
+        let mut file = File::create(&temp_archive_path)
+            .map_err(|e| format!("Failed to create temp archive file: {}", e))?;
             
-        let mut extracted = false;
-        let core_name = get_core_filename();
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)
-                .map_err(|e| format!("Failed to read zip index: {}", e))?;
+        let bytes = response.bytes().await
+            .map_err(|e| format!("Failed to read response bytes: {}", e))?;
+            
+        io::copy(&mut &bytes[..], &mut file)
+            .map_err(|e| format!("Failed to write archive file: {}", e))?;
+            
+        let _ = progress_sender.send("Extracting core...".to_string());
+        
+        #[cfg(target_os = "windows")]
+        {
+            let zip_file = File::open(&temp_archive_path)
+                .map_err(|e| format!("Failed to open temp zip: {}", e))?;
                 
-            let name = file.name().to_string();
-            if name.ends_with(core_name) {
-                let mut outfile = File::create(&dest_path)
-                    .map_err(|e| format!("Failed to create target: {}", e))?;
-                io::copy(&mut file, &mut outfile)
-                    .map_err(|e| format!("Failed to extract: {}", e))?;
-                extracted = true;
-                break;
+            let mut archive = zip::ZipArchive::new(zip_file)
+                .map_err(|e| format!("Invalid zip archive: {}", e))?;
+                
+            let mut extracted = false;
+            let core_name = get_core_filename();
+            for i in 0..archive.len() {
+                let mut file = archive.by_index(i)
+                    .map_err(|e| format!("Failed to read zip index: {}", e))?;
+                    
+                let name = file.name().to_string();
+                if name.ends_with(core_name) {
+                    let mut outfile = File::create(&dest_path)
+                        .map_err(|e| format!("Failed to create target: {}", e))?;
+                    io::copy(&mut file, &mut outfile)
+                        .map_err(|e| format!("Failed to extract: {}", e))?;
+                    extracted = true;
+                    break;
+                }
+            }
+            if extracted {
+                Ok(())
+            } else {
+                Err(format!("Could not find {} inside downloaded zip package", core_name))
             }
         }
         
-        let _ = fs::remove_file(temp_archive_path);
-        
-        if extracted {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let status = Command::new("tar")
+                .arg("-xzf")
+                .arg(&temp_archive_path)
+                .arg("-C")
+                .arg(&app_dir)
+                .status()
+                .map_err(|e| format!("Failed to run tar command: {}", e))?;
+                
+            if !status.success() {
+                return Err("Failed to extract tar.gz archive using system tar command".to_string());
+            }
+            
+            let extracted_dir = app_dir.join(format!("sing-box-{}-{}", version, arch));
+            let src_binary = extracted_dir.join("sing-box");
+            if src_binary.exists() {
+                fs::copy(&src_binary, &dest_path)
+                    .map_err(|e| format!("Failed to copy sing-box binary: {}", e))?;
+                let _ = fs::remove_dir_all(extracted_dir);
+                
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(0o755));
+                Ok(())
+            } else {
+                Err("Could not find sing-box inside extracted tar folder".to_string())
+            }
+        }
+    }.await;
+
+    let _ = fs::remove_file(&temp_archive_path);
+
+    match res {
+        Ok(_) => {
             let _ = progress_sender.send("Core installed successfully!".to_string());
             Ok(())
-        } else {
-            Err(format!("Could not find {} inside downloaded zip package", core_name))
         }
-    }
-    
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        // Extract using system `tar` command for Linux and macOS
-        let status = Command::new("tar")
-            .arg("-xzf")
-            .arg(&temp_archive_path)
-            .arg("-C")
-            .arg(&app_dir)
-            .status()
-            .map_err(|e| format!("Failed to run tar command: {}", e))?;
-            
-        let _ = fs::remove_file(temp_archive_path);
-        
-        if !status.success() {
-            return Err("Failed to extract tar.gz archive using system tar command".to_string());
-        }
-        
-        // Find extracted binary
-        let extracted_dir = app_dir.join(format!("sing-box-{}-{}", version, arch));
-        let src_binary = extracted_dir.join("sing-box");
-        if src_binary.exists() {
-            fs::copy(&src_binary, &dest_path)
-                .map_err(|e| format!("Failed to copy sing-box binary: {}", e))?;
-            let _ = fs::remove_dir_all(extracted_dir);
-            
-            // Set permissions
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(0o755));
-            
-            let _ = progress_sender.send("Core installed successfully!".to_string());
-            Ok(())
-        } else {
-            Err("Could not find sing-box inside extracted tar folder".to_string())
-        }
+        Err(e) => Err(e),
     }
 }
 
@@ -180,7 +188,7 @@ pub fn start_core(
     gui_config: &GuiConfig,
     log_sender: UnboundedSender<String>,
 ) -> Result<(), String> {
-    let mut lock = CURRENT_PROCESS.lock().unwrap();
+    let mut lock = get_process_lock();
     if lock.is_some() {
         return Ok(());
     }
@@ -198,7 +206,6 @@ pub fn start_core(
         return Err("Active profile config file not found!".to_string());
     }
     
-    // Generate config JSON before running
     let profile_content = fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read profile file: {}", e))?;
         
@@ -222,7 +229,6 @@ pub fn start_core(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     
-    // Hide CMD window on Windows
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     
@@ -234,7 +240,6 @@ pub fn start_core(
     
     *lock = Some(child);
     
-    // Stream stdout logs
     let sender_stdout = log_sender.clone();
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
@@ -245,7 +250,6 @@ pub fn start_core(
         }
     });
     
-    // Stream stderr logs
     let sender_stderr = log_sender;
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
@@ -260,7 +264,7 @@ pub fn start_core(
 }
 
 pub fn stop_core() {
-    let mut lock = CURRENT_PROCESS.lock().unwrap();
+    let mut lock = get_process_lock();
     if let Some(mut child) = lock.take() {
         let _ = child.kill();
         let _ = child.wait();
@@ -268,7 +272,7 @@ pub fn stop_core() {
 }
 
 pub fn is_core_running() -> bool {
-    let mut lock = CURRENT_PROCESS.lock().unwrap();
+    let mut lock = get_process_lock();
     if let Some(ref mut child) = *lock {
         match child.try_wait() {
             Ok(None) => true,

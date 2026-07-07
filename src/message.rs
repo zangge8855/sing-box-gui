@@ -1,4 +1,4 @@
-use crate::state::{Tab, RoutingMode};
+use crate::state::{Tab, RoutingMode, Language, AppTheme};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -17,7 +17,6 @@ pub enum Message {
     NewLogLine(String),
     TrafficUpdated { up: u64, down: u64 },
     ToggleSystemProxy,
-    #[allow(dead_code)]
     SystemProxyStatusChanged(bool),
     SubscriptionInputChanged(String),
     DownloadSubscription,
@@ -32,7 +31,6 @@ pub enum Message {
     Tick,
     ErrorOccurred(String),
     RoutingModeChanged(RoutingMode),
-    PortInputChanged(String),
     SaveSettings,
     FetchConnections,
     ConnectionsFetched(Result<crate::api::ConnectionsResponse, String>),
@@ -42,4 +40,26 @@ pub enum Message {
     TrayMenuClicked(String),
     WindowOpened(iced::window::Id),
     WindowCloseRequested(iced::window::Id),
+    
+    // Magic string and type-safe replacements
+    ClearLogs,
+    TriggerCoreDownload,
+    CoreDownloaded(Result<(), String>),
+    LatencyTestComplete,
+    
+    MixedPortChanged(String),
+    ApiPortChanged(String),
+    DnsLocalChanged(String),
+    DnsRemoteChanged(String),
+    ToggleTun,
+    ToggleAutostart,
+    SetLanguage(Language),
+    SetTheme(AppTheme),
+    OpenDataDir,
+    OpenProfilesFolder,
+    EditProfile(String),
+    ToggleCloseCoreOnExit,
+    ToggleFakeIp,
+    ToggleTcpFastOpen,
+    ToggleTcpMultipath,
 }

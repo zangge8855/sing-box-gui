@@ -91,6 +91,15 @@ struct App {
     tray_menu_direct_mode: tray_icon::menu::CheckMenuItem,
     tray_menu_system_proxy: tray_icon::menu::CheckMenuItem,
     window_id: Option<iced::window::Id>,
+    
+    // Performance and UX optimizations
+    traffic_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    confirm_delete_profile_id: Option<String>,
+    
+    // Redundant updates prevention
+    last_core_running: bool,
+    last_sys_proxy_enabled: bool,
+    last_routing_mode: state::RoutingMode,
 }
 
 impl App {
@@ -196,6 +205,13 @@ impl App {
             tray_menu_direct_mode: direct_mode_item,
             tray_menu_system_proxy: system_proxy_item,
             window_id: None,
+            
+            traffic_cancel_tx: None,
+            confirm_delete_profile_id: None,
+            
+            last_core_running: false,
+            last_sys_proxy_enabled: false,
+            last_routing_mode: state::RoutingMode::Rule,
         };
         
         // Force initialization of log and traffic streams on startup
@@ -205,8 +221,8 @@ impl App {
         // Load active profile nodes if profile exists
         app.reload_active_nodes();
         
-        // Sync system proxy checkbox status with Windows registry state
-        let sys_proxy = sysproxy::check_system_proxy().unwrap_or(false);
+        // Sync system proxy checkbox status with system state
+        let sys_proxy = sysproxy::check_system_proxy(app.gui_config.mixed_port).unwrap_or(false);
         app.sys_proxy_enabled = sys_proxy;
         
         // Check if core is running on start
@@ -233,11 +249,6 @@ impl App {
                 }
             }
         }
-        
-        // Retrieve active proxy node tag from Clash API if core running
-        if self.core_running {
-            // Will update selected node tag inside Tick
-        }
     }
     
     fn sync_input_buffers(&mut self) {
@@ -259,9 +270,28 @@ impl App {
         self.tray_menu_system_proxy.set_checked(self.gui_config.system_proxy_enabled);
     }
     
+    fn restart_core(&mut self) -> Task<Message> {
+        if self.core_running {
+            core::stop_core();
+            self.core_running = false;
+            self.log_lines.push("[GUI] Restarting core to apply new settings...".to_string());
+            Task::done(Message::ToggleCore)
+        } else {
+            Task::none()
+        }
+    }
+    
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle_update(message);
-        self.update_tray_menu();
+        if self.core_running != self.last_core_running
+            || self.sys_proxy_enabled != self.last_sys_proxy_enabled
+            || self.gui_config.routing_mode != self.last_routing_mode
+        {
+            self.update_tray_menu();
+            self.last_core_running = self.core_running;
+            self.last_sys_proxy_enabled = self.sys_proxy_enabled;
+            self.last_routing_mode = self.gui_config.routing_mode;
+        }
         task
     }
 
@@ -396,11 +426,7 @@ impl App {
                     val.clear();
                     let _ = config::save_gui_config(&self.gui_config);
                     self.log_lines.push(format!("[GUI] Added custom rule to {}: {}", field, trimmed));
-                    if self.core_running {
-                        core::stop_core();
-                        self.core_running = false;
-                        return Task::done(Message::ToggleCore);
-                    }
+                    return self.restart_core();
                 }
                 Task::none()
             }
@@ -416,11 +442,7 @@ impl App {
                     let removed = list.remove(index);
                     let _ = config::save_gui_config(&self.gui_config);
                     self.log_lines.push(format!("[GUI] Removed custom rule from {}: {}", field, removed));
-                    if self.core_running {
-                        core::stop_core();
-                        self.core_running = false;
-                        return Task::done(Message::ToggleCore);
-                    }
+                    return self.restart_core();
                 }
                 Task::none()
             }
@@ -437,7 +459,7 @@ impl App {
                         }
                     }
                     Err(_e) => {
-                        // Suppress background polling HTTP errors to avoid cluttering log terminal
+                        // Suppress background polling HTTP errors
                     }
                 }
                 Task::none()
@@ -446,6 +468,11 @@ impl App {
                 if self.core_running {
                     core::stop_core();
                     self.core_running = false;
+                    
+                    // Stop traffic monitor stream
+                    if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
+                        let _ = cancel_tx.send(());
+                    }
                     
                     // Turn off system proxy automatically
                     if self.sys_proxy_enabled {
@@ -464,9 +491,17 @@ impl App {
                             self.core_running = true;
                             self.log_lines.push("[GUI] sing-box core started successfully.".to_string());
                             
+                            // Stop existing traffic monitor if any
+                            if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
+                                let _ = cancel_tx.send(());
+                            }
+                            
+                            let (tx, rx) = tokio::sync::oneshot::channel();
+                            self.traffic_cancel_tx = Some(tx);
+                            
                             // Start traffic monitor stream
                             let traffic_tx = get_traffic_tx();
-                            api::spawn_traffic_monitor(self.gui_config.api_port, traffic_tx);
+                            api::spawn_traffic_monitor(self.gui_config.api_port, traffic_tx, rx);
                             
                             // Trigger latency load
                             Task::perform(async move {
@@ -485,30 +520,45 @@ impl App {
                 Task::none()
             }
             Message::NewLogLine(line) => {
-                // Check internal triggers
-                if line == "TRIGGER_CORE_DOWNLOAD" {
-                    let log_tx = get_log_tx();
-                    return Task::perform(async move {
-                        core::download_core(log_tx)
-                    }, |res| match res {
-                        Ok(_) => Message::CoreStatusChanged(true), // triggers core install refresh
-                        Err(e) => Message::ErrorOccurred(e),
-                    });
-                } else if line == "CLEAR_LOG_BUFFER" {
-                    self.log_lines.clear();
-                    return Task::none();
-                }
-                
                 self.log_lines.push(line);
                 if self.log_lines.len() > 1000 {
-                    self.log_lines.remove(0);
+                    self.log_lines.drain(0..100); // Amortized shifting cost optimization
+                }
+                
+                // Automatically scroll logs scrollable to bottom on new logs
+                iced::widget::operation::snap_to(
+                    ui::logs::get_logs_scrollable_id().clone(),
+                    iced::widget::scrollable::RelativeOffset::END
+                )
+            }
+            Message::ClearLogs => {
+                self.log_lines.clear();
+                Task::none()
+            }
+            Message::TriggerCoreDownload => {
+                let log_tx = get_log_tx();
+                self.log_lines.push("[GUI] Starting sing-box core download...".to_string());
+                self.core_install_msg = Some("Downloading...".to_string());
+                Task::perform(async move {
+                    core::download_core(log_tx).await
+                }, Message::CoreDownloaded)
+            }
+            Message::CoreDownloaded(res) => {
+                match res {
+                    Ok(_) => {
+                        self.core_installed = true;
+                        self.core_install_msg = None;
+                        self.log_lines.push("[GUI] sing-box core downloaded and installed successfully.".to_string());
+                    }
+                    Err(e) => {
+                        self.core_install_msg = Some(e.clone());
+                        self.log_lines.push(format!("[GUI ERROR] Failed to download core: {}", e));
+                    }
                 }
                 Task::none()
             }
             Message::TrafficUpdated { up, down } => {
                 self.current_speed = Bandwidth { up, down };
-                self.total_uploaded += up;
-                self.total_downloaded += down;
                 self.speed_history.push((up, down));
                 if self.speed_history.len() > 30 {
                     self.speed_history.remove(0);
@@ -562,17 +612,10 @@ impl App {
                 } else {
                     self.profile_error = None;
                     self.url_input.clear();
-                    // Update the updated_at timestamp for the subscription
-                    for sub in &mut self.gui_config.subscriptions {
-                        if sub.id == id {
-                            sub.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-                        }
-                    }
-                    self.log_lines.push("[GUI] Subscription downloaded successfully.".to_string());
                     
-                    // Reload profiles list
+                    // Reload profiles list safely without overwriting other in-memory settings
                     let loaded = config::load_gui_config();
-                    self.gui_config = loaded;
+                    self.gui_config.subscriptions = loaded.subscriptions;
                     self.sync_input_buffers();
                     
                     // If no active profile, select this one
@@ -581,6 +624,7 @@ impl App {
                         let _ = config::save_gui_config(&self.gui_config);
                         self.reload_active_nodes();
                     }
+                    self.log_lines.push("[GUI] Subscription downloaded successfully.".to_string());
                 }
                 Task::none()
             }
@@ -589,29 +633,27 @@ impl App {
                 let _ = config::save_gui_config(&self.gui_config);
                 self.reload_active_nodes();
                 self.log_lines.push("[GUI] Active profile updated.".to_string());
-                
-                // If core is running, restart core to apply config
-                if self.core_running {
-                    core::stop_core();
-                    self.core_running = false;
-                    return Task::done(Message::ToggleCore);
-                }
-                Task::none()
+                return self.restart_core();
             }
             Message::DeleteProfile(id) => {
-                // Delete cached file
-                let path = config::get_profile_path(&id);
-                let _ = std::fs::remove_file(path);
-                
-                // Remove from list
-                self.gui_config.subscriptions.retain(|p| p.id != id);
-                if self.gui_config.active_profile_id.as_ref() == Some(&id) {
-                    self.gui_config.active_profile_id = None;
-                    self.active_profile_nodes.clear();
+                if id.starts_with("confirm:") {
+                    let real_id = id.trim_start_matches("confirm:").to_string();
+                    self.confirm_delete_profile_id = Some(real_id);
+                    Task::none()
+                } else {
+                    self.confirm_delete_profile_id = None;
+                    let path = config::get_profile_path(&id);
+                    let _ = std::fs::remove_file(path);
+                    
+                    self.gui_config.subscriptions.retain(|p| p.id != id);
+                    if self.gui_config.active_profile_id.as_ref() == Some(&id) {
+                        self.gui_config.active_profile_id = None;
+                        self.active_profile_nodes.clear();
+                    }
+                    let _ = config::save_gui_config(&self.gui_config);
+                    self.log_lines.push("[GUI] Profile deleted.".to_string());
+                    Task::none()
                 }
-                let _ = config::save_gui_config(&self.gui_config);
-                self.log_lines.push("[GUI] Profile deleted.".to_string());
-                Task::none()
             }
             Message::SelectNode(tag) => {
                 if !self.core_running {
@@ -663,18 +705,18 @@ impl App {
                     })
                 }).collect::<Vec<_>>();
                 
-                Task::batch(tasks).chain(Task::perform(async {}, |_| Message::NodeLatencyTested { tag: "TEST_FINISHED".to_string(), latency: None }))
+                Task::batch(tasks).chain(Task::done(Message::LatencyTestComplete))
             }
             Message::NodeLatencyTested { tag, latency } => {
-                if tag == "TEST_FINISHED" {
-                    self.latency_testing = false;
-                } else {
-                    for node in &mut self.active_profile_nodes {
-                        if node.name == tag {
-                            node.latency = latency;
-                        }
+                for node in &mut self.active_profile_nodes {
+                    if node.name == tag {
+                        node.latency = latency;
                     }
                 }
+                Task::none()
+            }
+            Message::LatencyTestComplete => {
+                self.latency_testing = false;
                 Task::none()
             }
             Message::UpdateSubscription(id) => {
@@ -698,7 +740,7 @@ impl App {
                         }
                         let content = res.text().await
                             .map_err(|e| format!("Read failed: {}", e))?;
-                        let _ = crate::config::verify_profile_content(&content)
+                        let _ = crate::config::validate_profile_content(&content)
                             .map_err(|e| format!("Invalid config: {}", e))?;
                         let path = crate::config::get_profile_path(&id_clone);
                         std::fs::write(&path, &content)
@@ -716,10 +758,11 @@ impl App {
             Message::Tick => {
                 self.core_running = core::is_core_running();
                 self.core_installed = core::is_core_installed(&self.gui_config);
+                self.confirm_delete_profile_id = None; // Reset delete confirmation timeout
                 
                 let mut tasks = Vec::new();
                 
-                // Periodically fetch active node from Clash API if core running
+                // Periodically fetch active node and connection totals from Clash API if core is running
                 if self.core_running {
                     let api_port = self.gui_config.api_port;
                     tasks.push(Task::perform(async move {
@@ -728,9 +771,7 @@ impl App {
                         Message::ProxiesFetched(res.map(|r| r.proxies).map_err(|e| e))
                     }));
                     
-                    if self.current_tab == Tab::Connections {
-                        tasks.push(Task::done(Message::FetchConnections));
-                    }
+                    tasks.push(Task::done(Message::FetchConnections));
                 }
                 Task::batch(tasks)
             }
@@ -744,11 +785,13 @@ impl App {
                 Task::none()
             }
             Message::ConnectionsFetched(Ok(res)) => {
-                self.active_connections = res.connections;
+                self.active_connections = res.connections.unwrap_or_default();
+                self.total_downloaded = res.download_total;
+                self.total_uploaded = res.upload_total;
                 Task::none()
             }
             Message::ConnectionsFetched(Err(_e)) => {
-                // Suppress background polling HTTP errors to avoid cluttering log terminal
+                // Suppress background polling HTTP errors
                 Task::none()
             }
             Message::CloseConnection(id) => {
@@ -781,113 +824,91 @@ impl App {
             Message::RoutingModeChanged(mode) => {
                 self.gui_config.routing_mode = mode;
                 let _ = config::save_gui_config(&self.gui_config);
-                // Restart core if running to apply changes
-                if self.core_running {
-                    core::stop_core();
-                    self.core_running = false;
-                    return Task::done(Message::ToggleCore);
+                return self.restart_core();
+            }
+            
+            // New type-safe configuration messages
+            Message::MixedPortChanged(val) => {
+                self.mixed_port_input_str = val.clone();
+                if let Ok(p) = val.parse::<u16>() {
+                    if p > 0 {
+                        self.gui_config.mixed_port = p;
+                    }
                 }
                 Task::none()
             }
-            Message::PortInputChanged(input) => {
-                if input.starts_with("mixed:") {
-                    let val = &input[6..];
-                    self.mixed_port_input_str = val.to_string();
-                    if let Ok(p) = val.parse::<u16>() {
-                        self.gui_config.mixed_port = p;
-                    }
-                } else if input.starts_with("api:") {
-                    let val = &input[4..];
-                    self.api_port_input_str = val.to_string();
-                    if let Ok(p) = val.parse::<u16>() {
+            Message::ApiPortChanged(val) => {
+                self.api_port_input_str = val.clone();
+                if let Ok(p) = val.parse::<u16>() {
+                    if p > 0 {
                         self.gui_config.api_port = p;
                     }
-                } else if input.starts_with("dns_local:") {
-                    let val = &input[10..];
-                    self.dns_server_local_input_str = val.to_string();
-                    self.gui_config.dns_server_local = val.to_string();
-                } else if input.starts_with("dns_remote:") {
-                    let val = &input[11..];
-                    self.dns_server_remote_input_str = val.to_string();
-                    self.gui_config.dns_server_remote = val.to_string();
-                } else if input == "toggle_tun" {
-                    self.gui_config.tun_mode = !self.gui_config.tun_mode;
-                    let _ = config::save_gui_config(&self.gui_config);
-                } else if input == "toggle_autostart" {
-                    self.gui_config.start_on_boot = !self.gui_config.start_on_boot;
-                    let _ = config::save_gui_config(&self.gui_config);
-                    // Apply Windows startup boot register changes
-                    let _ = set_windows_autostart(self.gui_config.start_on_boot);
-                } else if input == "lang:en" {
-                    self.gui_config.language = state::Language::En;
-                    let _ = config::save_gui_config(&self.gui_config);
-                } else if input == "lang:zh" {
-                    self.gui_config.language = state::Language::Zh;
-                    let _ = config::save_gui_config(&self.gui_config);
-                } else if input == "toggle_fakeip" {
-                    self.gui_config.fake_ip = !self.gui_config.fake_ip;
-                    let _ = config::save_gui_config(&self.gui_config);
-                } else if input == "toggle_tfo" {
-                    self.gui_config.tcp_fast_open = !self.gui_config.tcp_fast_open;
-                    let _ = config::save_gui_config(&self.gui_config);
-                } else if input == "toggle_mptcp" {
-                    self.gui_config.tcp_multipath = !self.gui_config.tcp_multipath;
-                    let _ = config::save_gui_config(&self.gui_config);
-                } else if input == "toggle_close_core" {
-                    self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
-                    let _ = config::save_gui_config(&self.gui_config);
-                } else if input == "theme:auto" {
-                    self.gui_config.theme = state::AppTheme::Auto;
-                    let _ = config::save_gui_config(&self.gui_config);
-                } else if input == "theme:dark" {
-                    self.gui_config.theme = state::AppTheme::Dark;
-                    let _ = config::save_gui_config(&self.gui_config);
-                } else if input == "theme:light" {
-                    self.gui_config.theme = state::AppTheme::Light;
-                    let _ = config::save_gui_config(&self.gui_config);
-                } else if input == "open_data_dir" {
-                    #[cfg(target_os = "windows")]
-                    let _ = std::process::Command::new("explorer")
-                        .arg(config::get_app_dir())
-                        .spawn();
-                    #[cfg(target_os = "macos")]
-                    let _ = std::process::Command::new("open")
-                        .arg(config::get_app_dir())
-                        .spawn();
-                    #[cfg(target_os = "linux")]
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(config::get_app_dir())
-                        .spawn();
-                } else if input == "open_profiles_folder" {
-                    #[cfg(target_os = "windows")]
-                    let _ = std::process::Command::new("explorer")
-                        .arg(config::get_app_dir().join("profiles"))
-                        .spawn();
-                    #[cfg(target_os = "macos")]
-                    let _ = std::process::Command::new("open")
-                        .arg(config::get_app_dir().join("profiles"))
-                        .spawn();
-                    #[cfg(target_os = "linux")]
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(config::get_app_dir().join("profiles"))
-                        .spawn();
-                } else if input.starts_with("edit_profile:") {
-                    let id = &input[13..];
-                    let path = config::get_profile_path(id);
-                    #[cfg(target_os = "windows")]
-                    let _ = std::process::Command::new("cmd")
-                        .args(&["/c", "start", "", &path.to_string_lossy()])
-                        .spawn();
-                    #[cfg(target_os = "macos")]
-                    let _ = std::process::Command::new("open")
-                        .arg(&path)
-                        .spawn();
-                    #[cfg(target_os = "linux")]
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(&path)
-                        .spawn();
                 }
                 Task::none()
+            }
+            Message::DnsLocalChanged(val) => {
+                self.dns_server_local_input_str = val.clone();
+                self.gui_config.dns_server_local = val;
+                Task::none()
+            }
+            Message::DnsRemoteChanged(val) => {
+                self.dns_server_remote_input_str = val.clone();
+                self.gui_config.dns_server_remote = val;
+                Task::none()
+            }
+            Message::ToggleTun => {
+                self.gui_config.tun_mode = !self.gui_config.tun_mode;
+                let _ = config::save_gui_config(&self.gui_config);
+                self.restart_core()
+            }
+            Message::ToggleAutostart => {
+                self.gui_config.start_on_boot = !self.gui_config.start_on_boot;
+                let _ = config::save_gui_config(&self.gui_config);
+                let _ = set_windows_autostart(self.gui_config.start_on_boot);
+                Task::none()
+            }
+            Message::SetLanguage(lang) => {
+                self.gui_config.language = lang;
+                let _ = config::save_gui_config(&self.gui_config);
+                Task::none()
+            }
+            Message::SetTheme(theme) => {
+                self.gui_config.theme = theme;
+                let _ = config::save_gui_config(&self.gui_config);
+                Task::none()
+            }
+            Message::OpenDataDir => {
+                open_path_in_system(&config::get_app_dir());
+                Task::none()
+            }
+            Message::OpenProfilesFolder => {
+                open_path_in_system(&config::get_app_dir().join("profiles"));
+                Task::none()
+            }
+            Message::EditProfile(id) => {
+                let path = config::get_profile_path(&id);
+                open_path_in_system(&path);
+                Task::none()
+            }
+            Message::ToggleCloseCoreOnExit => {
+                self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
+                let _ = config::save_gui_config(&self.gui_config);
+                Task::none()
+            }
+            Message::ToggleFakeIp => {
+                self.gui_config.fake_ip = !self.gui_config.fake_ip;
+                let _ = config::save_gui_config(&self.gui_config);
+                self.restart_core()
+            }
+            Message::ToggleTcpFastOpen => {
+                self.gui_config.tcp_fast_open = !self.gui_config.tcp_fast_open;
+                let _ = config::save_gui_config(&self.gui_config);
+                self.restart_core()
+            }
+            Message::ToggleTcpMultipath => {
+                self.gui_config.tcp_multipath = !self.gui_config.tcp_multipath;
+                let _ = config::save_gui_config(&self.gui_config);
+                self.restart_core()
             }
             Message::SaveSettings => {
                 if self.mixed_port_input_str.trim().is_empty() || self.api_port_input_str.trim().is_empty() {
@@ -916,17 +937,9 @@ impl App {
                 }
                 
                 self.core_install_msg = None;
-                
                 let _ = config::save_gui_config(&self.gui_config);
                 self.log_lines.push("[GUI] Settings saved and applied successfully.".to_string());
-                
-                if self.core_running {
-                    core::stop_core();
-                    self.core_running = false;
-                    self.log_lines.push("[GUI] Restarting core to apply new settings...".to_string());
-                    return Task::done(Message::ToggleCore);
-                }
-                Task::none()
+                self.restart_core()
             }
         }
     }
@@ -1047,6 +1060,7 @@ impl App {
                 &self.url_input,
                 self.downloading,
                 self.profile_error.as_deref(),
+                self.confirm_delete_profile_id.as_deref(),
                 &active_theme,
             ),
             Tab::Rules => ui::rules::render(
@@ -1094,7 +1108,13 @@ impl App {
         let mut subs = vec![
             iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick),
             iced::window::close_requests().map(Message::WindowCloseRequested),
-            iced::window::events().map(|(id, _)| Message::WindowOpened(id)),
+            iced::window::events().filter_map(|(id, event)| {
+                if let iced::window::Event::Opened { .. } = event {
+                    Some(Message::WindowOpened(id))
+                } else {
+                    None
+                }
+            }),
         ];
         
         // Live streams for logs, traffic stats, and tray events
@@ -1112,7 +1132,7 @@ fn log_subscription() -> impl iced::futures::Stream<Item = Message> {
         let rx = {
             let lock_opt = LOG_RX.get();
             if let Some(lock) = lock_opt {
-                lock.lock().unwrap().take()
+                lock.lock().unwrap_or_else(|e| e.into_inner()).take()
             } else {
                 None
             }
@@ -1131,7 +1151,7 @@ fn traffic_subscription() -> impl iced::futures::Stream<Item = Message> {
         let rx = {
             let lock_opt = TRAFFIC_RX.get();
             if let Some(lock) = lock_opt {
-                lock.lock().unwrap().take()
+                lock.lock().unwrap_or_else(|e| e.into_inner()).take()
             } else {
                 None
             }
@@ -1237,7 +1257,7 @@ async fn download_profile(url: String) -> Result<(String, String), String> {
     };
         
     // Verify profile content is valid (either Sing-Box JSON or Clash YAML)
-    config::verify_profile_content(&content)?;
+    config::validate_profile_content(&content)?;
         
     // Generate an ID and Name
     let id = chrono::Utc::now().timestamp_millis().to_string();
@@ -1251,7 +1271,7 @@ async fn download_profile(url: String) -> Result<(String, String), String> {
         format!("Sub_{}", &id[id.len()-6..])
     };
     
-    // Save raw YAML to profile directory
+    // Save raw YAML/JSON to profile directory
     let path = config::get_profile_path(&id);
     std::fs::write(&path, &content)
         .map_err(|e| format!("Failed to save profile: {}", e))?;
@@ -1268,7 +1288,6 @@ async fn download_profile(url: String) -> Result<(String, String), String> {
     });
     
     let _ = config::save_gui_config(&config);
-    
     Ok((id, name))
 }
 
@@ -1307,7 +1326,38 @@ fn detect_system_theme() -> bool {
             }
         }
     }
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("defaults").args(&["read", "-g", "AppleInterfaceStyle"]).output() {
+            let style = String::from_utf8_lossy(&output.stdout);
+            return !style.trim().contains("Dark");
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("gsettings").args(&["get", "org.gnome.desktop.interface", "color-scheme"]).output() {
+            let scheme = String::from_utf8_lossy(&output.stdout);
+            return !scheme.trim().contains("dark");
+        }
+    }
     false // Default to dark mode (0)
+}
+
+fn open_path_in_system(path: &std::path::Path) {
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd")
+        .args(&["/c", "start", "", &path.to_string_lossy()])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open")
+        .arg(path)
+        .spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open")
+        .arg(path)
+        .spawn();
 }
 
 fn main() -> iced::Result {
@@ -1322,8 +1372,16 @@ fn main() -> iced::Result {
         ..Default::default()
     };
 
+    let font_family = if cfg!(target_os = "windows") {
+        iced::font::Family::Name("Microsoft YaHei UI")
+    } else if cfg!(target_os = "macos") {
+        iced::font::Family::Name("PingFang SC")
+    } else {
+        iced::font::Family::Name("Noto Sans CJK SC")
+    };
+    
     let default_font = iced::Font {
-        family: iced::font::Family::Name("Microsoft YaHei UI"),
+        family: font_family,
         ..Default::default()
     };
 

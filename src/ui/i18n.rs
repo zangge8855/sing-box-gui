@@ -10,6 +10,15 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tab_logs" => "Logs",
             "tab_settings" => "Settings",
             
+            // Missing keys
+            "settings" => "Settings",
+            "ON" => "ON",
+            "OFF" => "OFF",
+            "total_label" => "Total:",
+            "direct_chain" => "Direct",
+            "placeholder_connections_search" => "Search host, IP, rule, proxy chain...",
+            "confirm_delete_profile" => "Are you sure you want to delete this profile?",
+            
             // Dashboard
             "core_status" => "Core Status",
             "status_running" => "Running",
@@ -135,6 +144,15 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tab_logs" => "实时日志",
             "tab_settings" => "系统设置",
             
+            // Missing keys
+            "settings" => "系统设置",
+            "ON" => "开启",
+            "OFF" => "关闭",
+            "total_label" => "累计总量:",
+            "direct_chain" => "直连",
+            "placeholder_connections_search" => "搜索域名、IP、分流规则或代理链...",
+            "confirm_delete_profile" => "确定要删除此配置文件吗？",
+            
             // Dashboard
             "core_status" => "内核状态",
             "status_running" => "正在运行",
@@ -230,7 +248,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "mode_direct" => "直接连接",
             "placeholder_domain" => "例如 google.com",
             "placeholder_ip" => "例如 192.168.1.0/24",
-
+            
             "active_mode" => "当前模式",
             "listen_port" => "监听端口",
             "btn_update" => "更新",
@@ -238,7 +256,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_open_folder" => "打开目录",
             "btn_edit" => "编辑配置",
             "btn_open_data_dir" => "打开数据目录",
-
+            
             // Connections
             "tab_connections" => "连接管理",
             "host" => "目标主机 / IP",

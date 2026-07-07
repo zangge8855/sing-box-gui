@@ -9,6 +9,7 @@ pub fn render<'a>(
     url_input: &'a str,
     downloading: bool,
     profile_error: Option<&'a str>,
+    confirm_delete_id: Option<&'a str>,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     
@@ -49,7 +50,7 @@ pub fn render<'a>(
                 button(text(tr(lang, "btn_open_folder")).size(14))
                     .padding([12, 24])
                     .style(theme::button_secondary)
-                    .on_press(Message::PortInputChanged("open_profiles_folder".to_string()))
+                    .on_press(Message::OpenProfilesFolder)
             ]
             .spacing(15)
             .align_y(Alignment::Center)
@@ -110,16 +111,23 @@ pub fn render<'a>(
                 .padding([6, 12])
                 .style(theme::button_primary)
                 .on_press(Message::UpdateSubscription(profile.id.clone()));
- 
-            let delete_btn = button(text(tr(lang, "btn_delete")).size(12))
-                .padding([6, 12])
-                .style(theme::button_danger)
-                .on_press(Message::DeleteProfile(profile.id.clone()));
+  
+            let delete_btn = if confirm_delete_id == Some(&profile.id) {
+                button(text(tr(lang, "confirm_delete_profile")).size(12))
+                    .padding([6, 12])
+                    .style(theme::button_danger)
+                    .on_press(Message::DeleteProfile(profile.id.clone()))
+            } else {
+                button(text(tr(lang, "btn_delete")).size(12))
+                    .padding([6, 12])
+                    .style(theme::button_secondary)
+                    .on_press(Message::DeleteProfile(format!("confirm:{}", profile.id)))
+            };
                 
             let edit_btn = button(text(tr(lang, "btn_edit")).size(12))
                 .padding([6, 12])
                 .style(theme::button_secondary)
-                .on_press(Message::PortInputChanged(format!("edit_profile:{}", profile.id)));
+                .on_press(Message::EditProfile(profile.id.clone()));
                 
             let badge_or_spacer: Element<'a, Message> = if is_active {
                 container(text(tr(lang, "active_profile")).color(Color::WHITE).size(12))
@@ -215,7 +223,7 @@ pub fn render<'a>(
     container(
         container(main_layout_col)
             .width(Length::Fill)
-            .max_width(700.0)
+            .max_width(800.0)
             .center_x(Length::Fill)
             .padding(30)
     )

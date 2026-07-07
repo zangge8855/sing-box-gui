@@ -2,6 +2,12 @@ use iced::widget::{button, column, container, row, scrollable, text, Column};
 use iced::{Alignment, Element, Font, Length};
 use crate::message::Message;
 use crate::ui::theme;
+use std::sync::OnceLock;
+
+pub fn get_logs_scrollable_id() -> &'static iced::widget::Id {
+    static ID: OnceLock<iced::widget::Id> = OnceLock::new();
+    ID.get_or_init(iced::widget::Id::unique)
+}
 
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
@@ -19,7 +25,7 @@ pub fn render<'a>(
         button(text(tr(lang, "clear_logs")).size(14))
             .padding([8, 16])
             .style(theme::button_secondary)
-            .on_press(Message::NewLogLine("CLEAR_LOG_BUFFER".to_string())) // Clear logs message trigger
+            .on_press(Message::ClearLogs)
     ]
     .spacing(20)
     .align_y(Alignment::Center);
@@ -30,17 +36,17 @@ pub fn render<'a>(
         logs_col = logs_col.push(
             text(tr(lang, "no_logs"))
                 .color(text_muted)
-                .font(Font::DEFAULT)
+                .font(Font::MONOSPACE)
                 .size(13)
         );
     } else {
         for line in log_lines {
-            // Determine log line color based on levels
-            let line_color = if line.contains("ERROR") || line.contains("FATAL") || line.contains("failed") {
+            let line_upper = line.to_uppercase();
+            let line_color = if line_upper.contains("ERROR") || line_upper.contains("FATAL") || line_upper.contains("FAILED") {
                 theme::DANGER
-            } else if line.contains("WARN") || line.contains("warning") {
+            } else if line_upper.contains("WARN") || line_upper.contains("WARNING") {
                 theme::WARNING
-            } else if line.contains("INFO") {
+            } else if line_upper.contains("INFO") {
                 theme::SUCCESS
             } else {
                 text_muted
@@ -49,7 +55,7 @@ pub fn render<'a>(
             logs_col = logs_col.push(
                 text(line)
                     .color(line_color)
-                    .font(Font::DEFAULT)
+                    .font(Font::MONOSPACE)
                     .size(12)
             );
         }
@@ -57,6 +63,7 @@ pub fn render<'a>(
     
     let log_terminal = container(
         scrollable(logs_col)
+            .id(get_logs_scrollable_id().clone())
             .height(Length::Fill)
             .width(Length::Fill)
     )

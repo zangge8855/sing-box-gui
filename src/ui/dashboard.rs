@@ -88,7 +88,7 @@ pub fn render<'a>(
     let system_control_card = container(
         column![
             row![
-                text(tr(lang, "singbox_core")).color(text_muted).size(13).width(Length::Fixed(120.0)),
+                text(tr(lang, "singbox_core")).color(text_muted).size(13).width(Length::Fixed(140.0)),
                 status_indicator,
                 core_control_btn
             ]
@@ -97,7 +97,7 @@ pub fn render<'a>(
             .spacing(15),
             
             row![
-                text(tr(lang, "system_proxy")).color(text_muted).size(13).width(Length::Fixed(120.0)),
+                text(tr(lang, "system_proxy")).color(text_muted).size(13).width(Length::Fixed(140.0)),
                 sys_proxy_indicator,
                 sys_proxy_btn
             ]
@@ -109,9 +109,9 @@ pub fn render<'a>(
     )
     .padding(25)
     .width(Length::Fill)
-    .style(theme::status_card);
-
-    // Connection info summary row
+    .style(theme::card_bg);
+    
+    // Routing Mode selection card
     let make_mode_btn = |mode: RoutingMode, key: &'static str| {
         let active = gui_config.routing_mode == mode;
         let btn = button(
@@ -120,31 +120,32 @@ pub fn render<'a>(
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
         )
-        .padding([8, 12])
+        .padding([8, 16])
         .width(Length::Fill)
-        .style(move |theme, status| {
+        .style(move |t, s| {
             if active {
-                theme::button_primary(theme, status)
+                theme::button_primary(t, s)
             } else {
-                theme::button_secondary(theme, status)
+                theme::button_secondary(t, s)
             }
         });
             
-        if active {
-            btn
+        let btn_el: Element<'a, Message> = if active {
+            btn.into()
         } else {
-            btn.on_press(Message::RoutingModeChanged(mode))
-        }
+            btn.on_press(Message::RoutingModeChanged(mode)).into()
+        };
+        btn_el
     };
     
     let mode_buttons = row![
-        make_mode_btn(RoutingMode::Rule, "mode_rules"),
-        make_mode_btn(RoutingMode::Global, "mode_global"),
-        make_mode_btn(RoutingMode::Direct, "mode_direct")
+        make_mode_btn(RoutingMode::Rule, "routing_rules_desc"),
+        make_mode_btn(RoutingMode::Global, "routing_global_desc"),
+        make_mode_btn(RoutingMode::Direct, "routing_direct_desc")
     ]
-    .spacing(10)
+    .spacing(15)
     .width(Length::Fill);
-
+    
     let mode_card = container(
         column![
             text(tr(lang, "active_mode")).color(text_muted).size(13),
@@ -163,7 +164,7 @@ pub fn render<'a>(
             text(format_speed(current_speed.down))
                 .color(theme::ACCENT_BLUE)
                 .size(32),
-            text(format!("Total: {}", format_size(total_downloaded)))
+            text(format!("{} {}", tr(lang, "total_label"), format_size(total_downloaded)))
                 .color(text_muted)
                 .size(12),
         ]
@@ -179,7 +180,7 @@ pub fn render<'a>(
             text(format_speed(current_speed.up))
                 .color(theme::ACCENT_PURPLE)
                 .size(32),
-            text(format!("Total: {}", format_size(total_uploaded)))
+            text(format!("{} {}", tr(lang, "total_label"), format_size(total_uploaded)))
                 .color(text_muted)
                 .size(12),
         ]
@@ -200,7 +201,7 @@ pub fn render<'a>(
         .map(|&(u, d)| u.max(d))
         .max()
         .unwrap_or(0)
-        .max(1024 * 100); // 100 KB/s min scale
+        .max(1024 * 10); // 10 KB/s dynamic min scale
         
     let points_count = speed_history.len();
     
@@ -208,23 +209,23 @@ pub fn render<'a>(
     let mut up_path = String::new();
     
     if points_count > 1 {
-        // Build download speed area path
+        // Build download speed area path with f32 precision (no integer coordinates)
         down_path.push_str("M 0 100");
         for (i, &(_, down)) in speed_history.iter().enumerate() {
-            let x = (i as f32 * (300.0 / (points_count - 1) as f32)) as i32;
-            let y = (100.0 - (down as f32 / max_speed as f32 * 80.0)) as i32;
-            down_path.push_str(&format!(" L {} {}", x, y));
+            let x = i as f32 * (300.0 / (points_count - 1) as f32);
+            let y = 100.0 - (down as f32 / max_speed as f32 * 80.0);
+            down_path.push_str(&format!(" L {:.2} {:.2}", x, y));
         }
         down_path.push_str(" L 300 100 Z");
         
         // Build upload speed line path
         for (i, &(up, _)) in speed_history.iter().enumerate() {
-            let x = (i as f32 * (300.0 / (points_count - 1) as f32)) as i32;
-            let y = (100.0 - (up as f32 / max_speed as f32 * 80.0)) as i32;
+            let x = i as f32 * (300.0 / (points_count - 1) as f32);
+            let y = 100.0 - (up as f32 / max_speed as f32 * 80.0);
             if i == 0 {
-                up_path.push_str(&format!("M {} {}", x, y));
+                up_path.push_str(&format!("M {:.2} {:.2}", x, y));
             } else {
-                up_path.push_str(&format!(" L {} {}", x, y));
+                up_path.push_str(&format!(" L {:.2} {:.2}", x, y));
             }
         }
     } else {
@@ -238,22 +239,25 @@ pub fn render<'a>(
         "rgba(0, 0, 0, 0.04)"
     };
 
+    let down_color_hex = format!("rgba({}, {}, {}, {})", (theme::ACCENT_BLUE.r * 255.0) as u8, (theme::ACCENT_BLUE.g * 255.0) as u8, (theme::ACCENT_BLUE.b * 255.0) as u8, 1.0);
+    let up_color_hex = format!("rgba({}, {}, {}, {})", (theme::ACCENT_PURPLE.r * 255.0) as u8, (theme::ACCENT_PURPLE.g * 255.0) as u8, (theme::ACCENT_PURPLE.b * 255.0) as u8, 1.0);
+
     let svg_xml = format!(
         r##"<svg viewBox="0 0 300 100" xmlns="http://www.w3.org/2000/svg">
              <defs>
                <linearGradient id="downGrad" x1="0" y1="0" x2="0" y2="1">
-                 <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.3"/>
-                 <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
+                 <stop offset="0%" stop-color="{}" stop-opacity="0.3"/>
+                 <stop offset="100%" stop-color="{}" stop-opacity="0"/>
                </linearGradient>
              </defs>
              <line x1="0" y1="20" x2="300" y2="20" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
              <line x1="0" y1="40" x2="300" y2="40" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
              <line x1="0" y1="60" x2="300" y2="60" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
              <line x1="0" y1="80" x2="300" y2="80" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>
-             <path d="{}" fill="url(#downGrad)" stroke="#3b82f6" stroke-width="2.0"/>
-             <path d="{}" fill="none" stroke="#8b5cf6" stroke-width="2.0"/>
+             <path d="{}" fill="url(#downGrad)" stroke="{}" stroke-width="2.0"/>
+             <path d="{}" fill="none" stroke="{}" stroke-width="2.0"/>
            </svg>"##,
-         grid_color, grid_color, grid_color, grid_color, down_path, up_path
+          down_color_hex, down_color_hex, grid_color, grid_color, grid_color, grid_color, down_path, down_color_hex, up_path, up_color_hex
     );
     
     let chart_handle = svg::Handle::from_memory(svg_xml.into_bytes());
@@ -280,15 +284,16 @@ pub fn render<'a>(
     ]
     .spacing(20)
     .width(Length::Fill)
-    .max_width(600.0);
+    .max_width(800.0);
 
     let header_row = container(
         row![
-            text(tr(lang, "tab_dashboard")).size(24).color(text_primary)
+            text(tr(lang, "tab_dashboard")).size(24).color(text_primary),
         ]
+        .align_y(Alignment::Center)
         .width(Length::Fill)
     )
-    .max_width(600.0)
+    .max_width(800.0)
     .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 10.0, left: 0.0 });
 
     let content_col = column![

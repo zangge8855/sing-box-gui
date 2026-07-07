@@ -4,9 +4,21 @@ use crate::message::Message;
 use crate::ui::theme;
 use crate::api::Connection;
 
+fn format_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
-    active_connections: &'a Vec<Connection>,
+    active_connections: &'a [Connection],
     search_query: &'a str,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
@@ -65,7 +77,8 @@ pub fn render<'a>(
                 .padding(40)
         );
     } else {
-        for conn in filtered_connections {
+        let len = filtered_connections.len();
+        for (idx, conn) in filtered_connections.into_iter().enumerate() {
             let host_text = if !conn.metadata.host.is_empty() {
                 conn.metadata.host.clone()
             } else {
@@ -73,13 +86,13 @@ pub fn render<'a>(
             };
             
             let chains_text = if conn.chains.is_empty() {
-                "Direct".to_string()
+                tr(lang, "direct_chain").to_string()
             } else {
                 conn.chains.join(" ➔ ")
             };
             
-            let dl_text = format!("{:.1} KB", conn.download as f64 / 1024.0);
-            let ul_text = format!("{:.1} KB", conn.upload as f64 / 1024.0);
+            let dl_text = format_size(conn.download);
+            let ul_text = format_size(conn.upload);
             
             let close_btn = button(
                 text(tr(lang, "close_conn")).size(12)
@@ -103,19 +116,21 @@ pub fn render<'a>(
             
             list = list.push(container(row_content));
             
-            // Add subtle divider
-            let separator = container(Space::new())
-                .height(1)
-                .width(Length::Fill)
-                .style(|theme| container::Style {
-                    background: Some(iced::Background::Color(if theme::is_dark(theme) {
-                        theme::BORDER_DARK
-                    } else {
-                        theme::BORDER_LIGHT
-                    })),
-                    ..Default::default()
-                });
-            list = list.push(separator);
+            // Add subtle divider except for the last item
+            if idx + 1 < len {
+                let separator = container(Space::new())
+                    .height(1)
+                    .width(Length::Fill)
+                    .style(|theme| container::Style {
+                        background: Some(iced::Background::Color(if theme::is_dark(theme) {
+                            theme::BORDER_DARK
+                        } else {
+                            theme::BORDER_LIGHT
+                        })),
+                        ..Default::default()
+                    });
+                list = list.push(separator);
+            }
         }
     }
     
@@ -130,7 +145,7 @@ pub fn render<'a>(
             })),
             border: iced::Border {
                 color: if theme::is_dark(theme) { theme::BORDER_DARK } else { theme::BORDER_LIGHT },
-                width: 0.0,
+                width: 1.0,
                 radius: 0.0.into(),
             },
             ..Default::default()
@@ -146,13 +161,7 @@ pub fn render<'a>(
     .height(Length::Fill)
     .width(Length::Fill);
 
-    let search_placeholder = if lang == crate::state::Language::Zh {
-        "搜索域名、IP、分流规则或代理链..."
-    } else {
-        "Search host, IP, rule, proxy chain..."
-    };
-
-    let search_input = text_input(search_placeholder, search_query)
+    let search_input = text_input(tr(lang, "placeholder_connections_search"), search_query)
         .on_input(Message::ConnectionsSearchChanged)
         .padding(8)
         .width(280)
