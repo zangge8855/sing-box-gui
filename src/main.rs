@@ -950,12 +950,12 @@ impl App {
         
         let make_tab_btn = |tab: Tab, icon: &str, key: &'static str| {
             let active = self.current_tab == tab;
-            let label = format!("{} {}", icon, ui::i18n::tr(lang, key));
+            let label = format!("{}  {}", icon, ui::i18n::tr(lang, key)); // Extra space after icon
             
             // Indicator bar
             let indicator = container(iced::widget::Space::new())
-                .width(3)
-                .height(16)
+                .width(4)
+                .height(20)
                 .style(move |_theme| container::Style {
                     background: if active {
                         Some(iced::Background::Color(ui::theme::ACCENT_PURPLE))
@@ -963,7 +963,7 @@ impl App {
                         None
                     },
                     border: iced::Border {
-                        radius: 1.5.into(),
+                        radius: 2.0.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -973,16 +973,16 @@ impl App {
                 row![
                     indicator,
                     text(label)
-                        .size(14)
+                        .size(15) // Slightly larger font
                         .font(Font {
-                            weight: iced::font::Weight::Bold,
+                            weight: if active { iced::font::Weight::Bold } else { iced::font::Weight::Medium },
                             ..Default::default()
                         })
                 ]
-                .spacing(10)
+                .spacing(12) // More spacing between indicator and text
                 .align_y(Alignment::Center)
             )
-            .padding([12, 12])
+            .padding([14, 16]) // Taller and wider padding
             .width(Length::Fill)
             .style(ui::theme::button_tab(active))
             .on_press(Message::TabChanged(tab))
@@ -1019,18 +1019,18 @@ impl App {
                         make_tab_btn(Tab::Logs, "📝", "tab_logs"),
                         make_tab_btn(Tab::Settings, "⚙️", "tab_settings"),
                     ]
-                    .spacing(8)
+                    .spacing(10)
                 ]
-                .spacing(30),
+                .spacing(36),
                 iced::widget::Space::new().height(Length::Fill),
                 text(format!("v{}", env!("CARGO_PKG_VERSION")))
                     .size(12)
                     .color(ui::theme::text_muted(&active_theme))
             ]
         )
-        .width(Length::Fixed(200.0))
+        .width(Length::Fixed(240.0)) // Wider sidebar for breathing room
         .height(Length::Fill)
-        .padding(20)
+        .padding(24) // More padding
         .style(ui::theme::sidebar_bg);
         
         // Main Tab Content View

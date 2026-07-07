@@ -105,9 +105,9 @@ pub fn render<'a>(
             .align_y(Alignment::Center)
             .spacing(15)
         ]
-        .spacing(20)
+        .spacing(24) // Increased spacing
     )
-    .padding(20)
+    .padding(24) // Increased padding
     .width(Length::Fill)
     .style(theme::card_bg);
     
@@ -151,9 +151,9 @@ pub fn render<'a>(
             text(tr(lang, "active_mode")).color(text_muted).size(13),
             mode_buttons
         ]
-        .spacing(15)
+        .spacing(20) // Increased spacing
     )
-    .padding(20)
+    .padding(24) // Increased padding
     .width(Length::Fill)
     .style(theme::card_bg);
 
@@ -168,9 +168,9 @@ pub fn render<'a>(
                 .color(text_muted)
                 .size(11),
         ]
-        .spacing(5)
+        .spacing(8)
     )
-    .padding(15)
+    .padding(20)
     .width(Length::FillPortion(1))
     .style(theme::card_bg);
     
@@ -184,9 +184,9 @@ pub fn render<'a>(
                 .color(text_muted)
                 .size(11),
         ]
-        .spacing(5)
+        .spacing(8)
     )
-    .padding(15)
+    .padding(20)
     .width(Length::FillPortion(1))
     .style(theme::card_bg);
     
@@ -194,7 +194,7 @@ pub fn render<'a>(
         download_card,
         upload_card
     ]
-    .spacing(15);
+    .spacing(24); // Increased spacing between cards
     
     // Render dynamic SVG chart of speed history
     let max_speed = speed_history.iter()

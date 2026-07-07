@@ -2,24 +2,24 @@ use iced::{Background, Border, Color, Shadow};
 use iced::widget::{container, button, text_input};
 
 // Dark mode palette
-pub const BG_DARK: Color = Color::from_rgb(0.04, 0.06, 0.10);      // #0b0f19
-pub const SIDEBAR_BG: Color = Color::from_rgb(0.05, 0.06, 0.10);   // #0d0f1a
-pub const CARD_DARK: Color = Color::from_rgb(0.09, 0.11, 0.14);    // #161b24
-pub const CARD_LIGHT: Color = Color::from_rgb(0.12, 0.15, 0.19);   // #1f2630
+pub const BG_DARK: Color = Color::from_rgb(0.06, 0.06, 0.07);      // Deep gray/black, cleaner
+pub const SIDEBAR_BG: Color = Color::from_rgb(0.04, 0.04, 0.05);   // Slightly darker than main BG for depth
+pub const CARD_DARK: Color = Color::from_rgb(0.10, 0.10, 0.12);    // Softer card background
+pub const CARD_LIGHT: Color = Color::from_rgb(0.13, 0.13, 0.16);
 #[allow(dead_code)]
-pub const CARD_HOVER: Color = Color::from_rgb(0.14, 0.17, 0.22);   // #242b38
-pub const BORDER_DARK: Color = Color::from_rgb(0.18, 0.22, 0.28);   // #2d3748
-pub const TEXT_PRIMARY: Color = Color::from_rgb(0.95, 0.96, 0.98);  // #f3f4f9
-pub const TEXT_MUTED: Color = Color::from_rgb(0.65, 0.68, 0.73);    // Slightly brighter for readability
+pub const CARD_HOVER: Color = Color::from_rgb(0.15, 0.15, 0.18);
+pub const BORDER_DARK: Color = Color::from_rgba(0.25, 0.25, 0.30, 0.3); // Semi-transparent subtle border
+pub const TEXT_PRIMARY: Color = Color::from_rgb(0.95, 0.96, 0.98);
+pub const TEXT_MUTED: Color = Color::from_rgb(0.55, 0.58, 0.63);
 
 // Light mode palette
-pub const BG_LIGHT: Color = Color::from_rgb(0.95, 0.96, 0.98);      // #f3f4f8
-pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb(0.91, 0.92, 0.95); // #e8ebf2
-pub const CARD_LIGHT_BG: Color = Color::from_rgb(1.0, 1.0, 1.0);    // #ffffff
-pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb(0.93, 0.95, 0.99); // #edf2fc
-pub const BORDER_LIGHT: Color = Color::from_rgb(0.85, 0.88, 0.92);   // Slightly darker border for definition
-pub const TEXT_PRIMARY_LIGHT: Color = Color::from_rgb(0.09, 0.11, 0.14); // #161b24
-pub const TEXT_MUTED_LIGHT: Color = Color::from_rgb(0.40, 0.44, 0.48);   // Darker for readability
+pub const BG_LIGHT: Color = Color::from_rgb(0.97, 0.97, 0.98);      // Very light gray/off-white
+pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb(0.93, 0.93, 0.95);
+pub const CARD_LIGHT_BG: Color = Color::from_rgb(1.0, 1.0, 1.0);    // Pure white for crispness
+pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb(0.95, 0.96, 1.0);
+pub const BORDER_LIGHT: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.06); // Extremely subtle border
+pub const TEXT_PRIMARY_LIGHT: Color = Color::from_rgb(0.10, 0.11, 0.14);
+pub const TEXT_MUTED_LIGHT: Color = Color::from_rgb(0.45, 0.48, 0.52);
 
 // Accent colors (work well in both light & dark)
 pub const ACCENT_PURPLE: Color = Color::from_rgb(0.55, 0.36, 0.96); // #8b5cf6
@@ -50,12 +50,11 @@ pub fn main_bg(theme: &iced::Theme) -> container::Style {
 // Sidebar background styling
 pub fn sidebar_bg(theme: &iced::Theme) -> container::Style {
     let bg = if is_dark(theme) { SIDEBAR_BG } else { SIDEBAR_BG_LIGHT };
-    let border = if is_dark(theme) { BORDER_DARK } else { BORDER_LIGHT };
     container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
-            color: border,
-            width: 1.0,
+            color: Color::TRANSPARENT,
+            width: 0.0, // Remove right border for seamless look
             radius: 0.0.into(),
         },
         ..Default::default()
@@ -67,21 +66,21 @@ pub fn card_bg(theme: &iced::Theme) -> container::Style {
     let bg = if is_dark(theme) { CARD_DARK } else { CARD_LIGHT_BG };
     let border = if is_dark(theme) { BORDER_DARK } else { BORDER_LIGHT };
     let shadow_color = if is_dark(theme) {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.25)
+        Color::from_rgba(0.0, 0.0, 0.0, 0.40)
     } else {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.08)
+        Color::from_rgba(0.0, 0.0, 0.0, 0.05)
     };
     container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
             color: border,
             width: 1.0,
-            radius: 12.0.into(),
+            radius: 16.0.into(), // Larger radius for high-end look
         },
         shadow: Shadow {
             color: shadow_color,
-            offset: iced::Vector::new(0.0, 4.0),
-            blur_radius: 12.0,
+            offset: iced::Vector::new(0.0, 6.0),
+            blur_radius: 16.0, // Wider, softer shadow
         },
         ..Default::default()
     }
@@ -91,21 +90,21 @@ pub fn card_bg(theme: &iced::Theme) -> container::Style {
 pub fn card_selected(theme: &iced::Theme) -> container::Style {
     let bg = if is_dark(theme) { CARD_LIGHT } else { CARD_SELECTED_LIGHT };
     let shadow_color = if is_dark(theme) {
-        Color::from_rgba(0.55, 0.36, 0.96, 0.30)
-    } else {
         Color::from_rgba(0.55, 0.36, 0.96, 0.20)
+    } else {
+        Color::from_rgba(0.55, 0.36, 0.96, 0.15)
     };
     container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
             color: ACCENT_PURPLE,
             width: 1.5,
-            radius: 12.0.into(),
+            radius: 16.0.into(),
         },
         shadow: Shadow {
             color: shadow_color,
-            offset: iced::Vector::new(0.0, 0.0),
-            blur_radius: 15.0,
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 16.0,
         },
         ..Default::default()
     }
@@ -114,27 +113,27 @@ pub fn card_selected(theme: &iced::Theme) -> container::Style {
 // Active connection or speed card
 pub fn status_card(theme: &iced::Theme) -> container::Style {
     let bg = if is_dark(theme) {
-        Color::from_rgb(0.06, 0.08, 0.12)
+        Color::from_rgb(0.08, 0.08, 0.10)
     } else {
-        Color::from_rgb(0.97, 0.98, 0.99)
+        Color::from_rgb(0.98, 0.98, 0.99)
     };
     let border = if is_dark(theme) { BORDER_DARK } else { BORDER_LIGHT };
     let shadow_color = if is_dark(theme) {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.20)
+        Color::from_rgba(0.0, 0.0, 0.0, 0.25)
     } else {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.08)
+        Color::from_rgba(0.0, 0.0, 0.0, 0.04)
     };
     container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
             color: border,
             width: 1.0,
-            radius: 12.0.into(),
+            radius: 16.0.into(),
         },
         shadow: Shadow {
             color: shadow_color,
-            offset: iced::Vector::new(0.0, 2.0),
-            blur_radius: 8.0,
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
         },
         ..Default::default()
     }
