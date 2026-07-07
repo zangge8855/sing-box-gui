@@ -44,6 +44,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "no_nodes" => "No nodes found in the active profile. Please select or update a profile.",
             "search_nodes_placeholder" => "Search nodes by name or server...",
             "no_matching_nodes" => "No nodes match your search query.",
+            "latency_timeout" => "Timeout",
             
             // Profiles
             "profile_manager" => "Profile Manager",
@@ -122,6 +123,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_open_folder" => "Open Folder",
             "btn_edit" => "Edit",
             "btn_open_data_dir" => "Open Data Folder",
+            "core_config_preview" => "Configuration Preview (Read-only)",
             
             // Connections
             "tab_connections" => "Connections",
@@ -178,6 +180,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "no_nodes" => "活动配置文件中没有节点，请选择或更新配置文件。",
             "search_nodes_placeholder" => "通过名称或服务器搜索节点...",
             "no_matching_nodes" => "未找到匹配搜索条件的节点。",
+            "latency_timeout" => "超时",
             
             // Profiles
             "profile_manager" => "订阅列表",
@@ -256,6 +259,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_open_folder" => "打开目录",
             "btn_edit" => "编辑配置",
             "btn_open_data_dir" => "打开数据目录",
+            "core_config_preview" => "内核配置预览 (只读)",
             
             // Connections
             "tab_connections" => "连接管理",

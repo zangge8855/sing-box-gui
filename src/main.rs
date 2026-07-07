@@ -629,6 +629,7 @@ impl App {
                 Task::none()
             }
             Message::SelectProfile(id) => {
+                self.confirm_delete_profile_id = None;
                 self.gui_config.active_profile_id = Some(id);
                 let _ = config::save_gui_config(&self.gui_config);
                 self.reload_active_nodes();
@@ -720,6 +721,7 @@ impl App {
                 Task::none()
             }
             Message::UpdateSubscription(id) => {
+                self.confirm_delete_profile_id = None;
                 let sub = self.gui_config.subscriptions.iter().find(|p| p.id == id);
                 if let Some(profile) = sub {
                     let url = profile.url.clone();
@@ -948,9 +950,8 @@ impl App {
         let lang = self.gui_config.language;
         let active_theme = self.theme();
         
-        let make_tab_btn = |tab: Tab, icon: &str, key: &'static str| {
+        let make_tab_btn = |tab: Tab, icon_char: char, key: &'static str| {
             let active = self.current_tab == tab;
-            let label = format!("{}  {}", icon, ui::i18n::tr(lang, key)); // Extra space after icon
             
             // Indicator bar
             let indicator = container(iced::widget::Space::new())
@@ -972,14 +973,17 @@ impl App {
             button(
                 row![
                     indicator,
-                    text(label)
+                    text(icon_char.to_string())
+                        .font(Font::with_name("Icons"))
+                        .size(16),
+                    text(ui::i18n::tr(lang, key))
                         .size(15) // Slightly larger font
                         .font(Font {
                             weight: if active { iced::font::Weight::Bold } else { iced::font::Weight::Medium },
                             ..Default::default()
                         })
                 ]
-                .spacing(12) // More spacing between indicator and text
+                .spacing(12) // More spacing between components
                 .align_y(Alignment::Center)
             )
             .padding([14, 16]) // Taller and wider padding
@@ -1011,13 +1015,13 @@ impl App {
                     .spacing(6)
                     .align_y(Alignment::End),
                     column![
-                        make_tab_btn(Tab::Dashboard, "📊", "tab_dashboard"),
-                        make_tab_btn(Tab::Proxies, "⚡", "tab_proxies"),
-                        make_tab_btn(Tab::Profiles, "📂", "tab_profiles"),
-                        make_tab_btn(Tab::Rules, "🛣️", "tab_rules"),
-                        make_tab_btn(Tab::Connections, "🌐", "tab_connections"),
-                        make_tab_btn(Tab::Logs, "📝", "tab_logs"),
-                        make_tab_btn(Tab::Settings, "⚙️", "tab_settings"),
+                        make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
+                        make_tab_btn(Tab::Proxies, '\u{EA0B}', "tab_proxies"),
+                        make_tab_btn(Tab::Profiles, '\u{E2C7}', "tab_profiles"),
+                        make_tab_btn(Tab::Rules, '\u{E41E}', "tab_rules"),
+                        make_tab_btn(Tab::Connections, '\u{E894}', "tab_connections"),
+                        make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
+                        make_tab_btn(Tab::Settings, '\u{E8B8}', "tab_settings"),
                     ]
                     .spacing(10)
                 ]

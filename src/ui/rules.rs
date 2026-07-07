@@ -3,6 +3,7 @@ use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::GuiConfig;
 use crate::ui::theme;
+use crate::ui::{page_header, page_shell};
 
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
@@ -17,9 +18,7 @@ pub fn render<'a>(
     
     let text_primary = theme::text_primary(theme);
     let text_muted = theme::text_muted(theme);
-    
-    let title = text(tr(lang, "tab_rules")).size(24).color(text_primary);
-    
+
     let make_rule_section = |
         title_key: &'static str,
         input_value: &'a str,
@@ -132,19 +131,7 @@ pub fn render<'a>(
     
     let rules_row = row![left_column, right_column].spacing(20);
     
-    let main_col = column![
-        title,
-        scrollable(rules_row).height(Length::Fill)
-    ]
-    .spacing(20);
-    
-    container(
-        container(main_col)
-            .max_width(1200.0)
-            .center_x(Length::Fill)
-            .padding([30, 20])
-    )
-    .height(Length::Fill)
-    .width(Length::Fill)
-    .into()
+    let content: Element<'a, Message> = rules_row.into();
+    let header = page_header("tab_rules", lang, None, theme);
+    page_shell(header, content)
 }

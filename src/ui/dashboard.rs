@@ -1,8 +1,9 @@
-use iced::widget::{button, column, container, row, scrollable, svg, text, Space};
+use iced::widget::{button, column, container, row, svg, text, Space, responsive};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
 use crate::ui::theme;
+use crate::ui::{page_header, page_shell};
 
 fn icon(unicode: char) -> text::Text<'static> {
     text(unicode.to_string()).font(iced::Font::with_name("Icons")).size(16)
@@ -37,11 +38,21 @@ pub fn render<'a>(
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
     
-    let text_primary = theme::text_primary(theme);
-    let text_muted = theme::text_muted(theme);
+    // Clone properties to move them into the responsive Fn closure
+    let theme_cloned = theme.clone();
+    let speed_cloned = current_speed.clone();
+    let history_cloned = speed_history.to_vec();
     
-    // Core Status Section
-    let status_indicator = if core_running {
+    let main_content = responsive(move |size| {
+        let is_compact = size.width < 800.0;
+        let theme = &theme_cloned;
+        let current_speed = &speed_cloned;
+        let speed_history = &history_cloned;
+        
+        let text_muted = theme::text_muted(theme);
+        
+        // Core Status Section
+        let status_indicator = if core_running {
         text(tr(lang, "status_running")).color(theme::SUCCESS).size(16)
     } else {
         text(tr(lang, "status_stopped")).color(theme::DANGER).size(16)
@@ -279,8 +290,8 @@ pub fn render<'a>(
         grid_lines.push_str(&format!(r#"<line x1="{}" y1="-5" x2="{}" y2="105" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, x, x, grid_color));
     }
 
-    let down_color_hex = format!("rgba({}, {}, {}, {})", (theme::ACCENT_BLUE.r * 255.0) as u8, (theme::ACCENT_BLUE.g * 255.0) as u8, (theme::ACCENT_BLUE.b * 255.0) as u8, 1.0);
-    let up_color_hex = format!("rgba({}, {}, {}, {})", (theme::ACCENT_PURPLE.r * 255.0) as u8, (theme::ACCENT_PURPLE.g * 255.0) as u8, (theme::ACCENT_PURPLE.b * 255.0) as u8, 1.0);
+    let down_color_hex = format!("rgba({},{},{},1)", (theme::ACCENT_BLUE.r * 255.0).round() as u8, (theme::ACCENT_BLUE.g * 255.0).round() as u8, (theme::ACCENT_BLUE.b * 255.0).round() as u8);
+    let up_color_hex = format!("rgba({},{},{},1)", (theme::ACCENT_PURPLE.r * 255.0).round() as u8, (theme::ACCENT_PURPLE.g * 255.0).round() as u8, (theme::ACCENT_PURPLE.b * 255.0).round() as u8);
 
     let svg_xml = format!(
         r##"<svg viewBox="-5 -5 310 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
@@ -318,58 +329,42 @@ pub fn render<'a>(
     .height(Length::Fill)
     .style(theme::card_bg);
     
-    // Balanced 2-Column Responsive Dashboard Layout
+    // Balanced 2-Column Responsive Dashboard Layout (Responsive Stack)
     let left_col = column![
         system_control_card,
         mode_card
     ]
     .spacing(20)
-    .width(Length::FillPortion(5));
+    .width(if is_compact { Length::Fill } else { Length::FillPortion(5) });
     
     let right_col = column![
         speed_row,
         container(chart_card).height(Length::Fixed(220.0))
     ]
     .spacing(20)
-    .width(Length::FillPortion(7));
+    .width(if is_compact { Length::Fill } else { Length::FillPortion(7) });
     
-    let main_content = container(
+    let result_content: Element<'_, Message> = if is_compact {
+        column![
+            left_col,
+            right_col
+        ]
+        .spacing(20)
+        .width(Length::Fill)
+        .into()
+    } else {
         row![
             left_col,
             right_col
         ]
         .spacing(20)
         .width(Length::Fill)
-    )
-    .max_width(1200.0);
+        .into()
+    };
+    
+    result_content
+});
 
-    let header_row = container(
-        row![
-            text(tr(lang, "tab_dashboard")).size(24).color(text_primary),
-        ]
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-    )
-    .max_width(1200.0)
-    .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 10.0, left: 0.0 });
-
-    let content_col = column![
-        header_row,
-        main_content
-    ]
-    .spacing(10)
-    .width(Length::Fill)
-    .align_x(Alignment::Center);
-
-    container(
-        scrollable(
-            container(content_col)
-                .width(Length::Fill)
-                .center_x(Length::Fill)
-                .padding(iced::Padding { top: 10.0, right: 20.0, bottom: 30.0, left: 20.0 })
-        )
-        .height(Length::Fill)
-    )
-    .padding(0)
-    .into()
+let header = page_header("tab_dashboard", lang, None, theme);
+page_shell(header, main_content.into())
 }

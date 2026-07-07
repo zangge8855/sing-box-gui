@@ -3,6 +3,7 @@ use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{GuiConfig, RoutingMode, Language, AppTheme};
 use crate::ui::theme;
+use crate::ui::{page_header, page_shell};
 
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
@@ -335,7 +336,7 @@ pub fn render<'a>(
     
     let preview_card = container(
         column![
-            text(if lang == Language::Zh { "内核配置预览 (只读)" } else { "Configuration Preview (Read-only)" })
+            text(tr(lang, "core_config_preview"))
                 .color(text_muted)
                 .size(13),
             container(
@@ -390,49 +391,13 @@ pub fn render<'a>(
     .spacing(20)
     .width(Length::Fill);
 
-    let main_content = container(
-        column![
-            two_cols,
-            preview_card
-        ]
-        .spacing(20)
-    )
-    .width(Length::Fill)
-    .max_width(1200.0)
-    .center_x(Length::Fill);
-    
-    // Header row with Title and Save button
-    let header_row = container(
-        row![
-            text(tr(lang, "settings")).size(24).color(text_primary),
-            iced::widget::Space::new().width(Length::Fill),
-            save_btn
-        ]
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-    )
-    .max_width(1200.0)
-    .center_x(Length::Fill)
-    .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 10.0, left: 0.0 });
-
-    let content_col = column![
-        header_row,
-        main_content
+    let main_content = column![
+        two_cols,
+        preview_card
     ]
     .spacing(20)
-    .width(Length::Fill)
-    .align_x(Alignment::Center);
+    .width(Length::Fill);
 
-    let scroll_content = scrollable(
-        container(content_col)
-            .padding([30, 20])
-            .width(Length::Fill)
-            .center_x(Length::Fill)
-    )
-    .height(Length::Fill);
-
-    container(scroll_content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    let header = page_header("settings", lang, Some(save_btn.into()), theme);
+    page_shell(header, main_content.into())
 }

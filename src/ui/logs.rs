@@ -1,7 +1,8 @@
-use iced::widget::{button, column, container, row, scrollable, text, Column};
-use iced::{Alignment, Element, Font, Length};
+use iced::widget::{button, container, scrollable, text, Column};
+use iced::{Element, Font, Length};
 use crate::message::Message;
 use crate::ui::theme;
+use crate::ui::{page_header, page_shell_fixed};
 use std::sync::OnceLock;
 
 pub fn get_logs_scrollable_id() -> &'static iced::widget::Id {
@@ -17,18 +18,12 @@ pub fn render<'a>(
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
     
-    let text_primary = theme::text_primary(theme);
     let text_muted = theme::text_muted(theme);
     
-    let header = row![
-        text(tr(lang, "console_logs")).size(24).color(text_primary).width(Length::Fill),
-        button(text(tr(lang, "clear_logs")).size(14))
-            .padding([8, 16])
-            .style(theme::button_secondary)
-            .on_press(Message::ClearLogs)
-    ]
-    .spacing(20)
-    .align_y(Alignment::Center);
+    let clear_logs_btn = button(text(tr(lang, "clear_logs")).size(14))
+        .padding([8, 16])
+        .style(theme::button_secondary)
+        .on_press(Message::ClearLogs);
     
     let mut logs_col = Column::new().spacing(4);
     
@@ -72,15 +67,6 @@ pub fn render<'a>(
     .height(Length::Fill)
     .style(theme::console_bg);
     
-    container(
-        column![
-            header,
-            log_terminal
-        ]
-        .spacing(20)
-        .height(Length::Fill)
-    )
-    .padding(20)
-    .height(Length::Fill)
-    .into()
+    let header = page_header("tab_logs", lang, Some(clear_logs_btn.into()), theme);
+    page_shell_fixed(header, log_terminal.into())
 }

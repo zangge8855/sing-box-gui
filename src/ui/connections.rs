@@ -3,6 +3,7 @@ use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::ui::theme;
 use crate::api::Connection;
+use crate::ui::{page_header, page_shell_fixed};
 
 fn format_size(bytes: u64) -> String {
     if bytes < 1024 {
@@ -79,10 +80,16 @@ pub fn render<'a>(
     } else {
         let len = filtered_connections.len();
         for (idx, conn) in filtered_connections.into_iter().enumerate() {
-            let host_text = if !conn.metadata.host.is_empty() {
+            let host_full = if !conn.metadata.host.is_empty() {
                 conn.metadata.host.clone()
             } else {
                 conn.metadata.destination_ip.clone()
+            };
+            let host_text = if host_full.chars().count() > 48 {
+                let head: String = host_full.chars().take(45).collect();
+                format!("{}...", head)
+            } else {
+                host_full
             };
             
             let chains_text = if conn.chains.is_empty() {
@@ -167,18 +174,6 @@ pub fn render<'a>(
         .width(280)
         .style(theme::input_field);
 
-    let title_row = row![
-        text(tr(lang, "tab_connections")).size(24).color(text_primary).width(Length::Fill),
-        search_input
-    ]
-    .align_y(Alignment::Center)
-    .spacing(20);
-
-    let content = column![
-        title_row,
-        table_container
-    ]
-    .spacing(20);
-    
-    container(content).padding(20).into()
+    let header = page_header("tab_connections", lang, Some(search_input.into()), theme);
+    page_shell_fixed(header, table_container.into())
 }
