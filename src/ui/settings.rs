@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, responsive, pick_list};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, responsive, pick_list, toggler};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{GuiConfig, Language, AppTheme, UpdateStatus};
@@ -27,19 +27,18 @@ pub fn render<'a>(
         let theme = &theme_cloned;
         
         let make_toggle_row = move |label_key: &'static str, is_on: bool, msg: Message| {
-            let label_el: Element<'_, Message> = text(tr(lang, label_key)).color(theme::text_primary(theme)).size(13).width(Length::Fill).into();
-            let btn_el: Element<'_, Message> = button(
-                text(tr(lang, if is_on { "ON" } else { "OFF" }))
-                    .size(12)
-                    .width(Length::Fixed(50.0))
-                    .align_x(Alignment::Center)
-            )
-            .padding([6, 12])
-            .style(if is_on { theme::button_primary } else { theme::button_secondary })
-            .on_press(msg)
-            .into();
-            
-            let r: Element<'_, Message> = row![label_el, btn_el]
+            let label_el: Element<'_, Message> = text(tr(lang, label_key))
+                .color(theme::text_primary(theme))
+                .size(13)
+                .width(Length::Fill)
+                .into();
+                
+            let switch_el: Element<'_, Message> = toggler(is_on)
+                .on_toggle(move |_| msg.clone())
+                .size(20)
+                .into();
+                
+            let r: Element<'_, Message> = row![label_el, switch_el]
                 .align_y(Alignment::Center)
                 .spacing(20)
                 .width(Length::Fill)

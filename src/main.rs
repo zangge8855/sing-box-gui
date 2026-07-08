@@ -570,10 +570,6 @@ impl App {
                     }
                 }
             }
-            Message::CoreStatusChanged(status) => {
-                self.core_running = status;
-                Task::none()
-            }
             Message::NewLogLine(line) => {
                 self.log_lines.push(line);
                 if self.log_lines.len() > 1000 {
@@ -633,10 +629,6 @@ impl App {
                         self.log_lines.push(format!("[GUI] System proxy error: {}", e));
                     }
                 }
-                Task::none()
-            }
-            Message::SystemProxyStatusChanged(status) => {
-                self.sys_proxy_enabled = status;
                 Task::none()
             }
             Message::SubscriptionInputChanged(url) => {
@@ -871,11 +863,6 @@ impl App {
             }
             Message::ConnectionClosed(Err(e)) => {
                 self.log_lines.push(format!("[GUI] Failed to close connection: {}", e));
-                Task::none()
-            }
-            Message::ErrorOccurred(err) => {
-                self.log_lines.push(format!("[GUI ERROR] {}", err));
-                self.core_install_msg = Some(err);
                 Task::none()
             }
             Message::RoutingModeChanged(mode) => {
@@ -1198,11 +1185,14 @@ impl App {
                 let btn_content = if is_compact {
                     row![
                         indicator,
-                        text(icon_char.to_string())
-                            .font(Font::with_name("Material Icons"))
-                            .size(18),
+                        container(
+                            text(icon_char.to_string())
+                                .font(Font::with_name("Material Icons"))
+                                .size(18)
+                        )
+                        .width(Length::Fill)
+                        .align_x(Alignment::Center)
                     ]
-                    .spacing(8)
                     .align_y(Alignment::Center)
                 } else {
                     row![

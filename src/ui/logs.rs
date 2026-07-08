@@ -49,6 +49,7 @@ pub fn render<'a>(
                 text(line.clone())
                     .color(line_color)
                     .size(12)
+                    .width(Length::Fill)
             );
         }
         
