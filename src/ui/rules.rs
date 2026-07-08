@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::GuiConfig;
 use crate::ui::theme;
-use crate::ui::{page_header, page_shell};
+use crate::ui::page_header;
 
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
@@ -149,10 +149,23 @@ pub fn render<'a>(
             row![left_column, right_column].spacing(20).width(Length::Fill).into()
         };
         
-        rules_layout
+        let header = page_header("tab_rules", lang, None, theme, is_compact);
+        
+        let col = column![header, rules_layout].spacing(20).width(Length::Fill);
+
+        let inner = container(col)
+            .width(Length::Fill)
+            .max_width(1200.0)
+            .center_x(Length::Fill)
+            .padding(crate::ui::page_padding());
+
+        container(
+            scrollable(inner).height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     });
     
-    let content: Element<'a, Message> = main_content.into();
-    let header = page_header("tab_rules", lang, None, theme);
-    page_shell(header, content)
+    main_content.into()
 }

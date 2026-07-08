@@ -25,7 +25,7 @@ mod ui;
 use std::sync::{Mutex, OnceLock};
 use tokio::sync::mpsc;
 use iced::{Alignment, Element, Length, Subscription, Task, Font};
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{button, column, container, row, text, responsive};
 use state::{Bandwidth, GuiConfig, Profile, ProxyNode, Tab};
 use message::Message;
 use futures::SinkExt;
@@ -112,6 +112,22 @@ impl App {
                     iced::Theme::Light
                 } else {
                     iced::Theme::Dark
+                }
+            }
+        }
+    }
+
+    fn theme_ref(&self) -> &'static iced::Theme {
+        static DARK: iced::Theme = iced::Theme::Dark;
+        static LIGHT: iced::Theme = iced::Theme::Light;
+        match self.gui_config.theme {
+            state::AppTheme::Dark => &DARK,
+            state::AppTheme::Light => &LIGHT,
+            state::AppTheme::Auto => {
+                if detect_system_theme() {
+                    &LIGHT
+                } else {
+                    &DARK
                 }
             }
         }
@@ -948,164 +964,254 @@ impl App {
     
     fn view(&self) -> Element<'_, Message> {
         let lang = self.gui_config.language;
-        let active_theme = self.theme();
+        let theme_ref = self.theme_ref();
         
-        let make_tab_btn = |tab: Tab, icon_char: char, key: &'static str| {
-            let active = self.current_tab == tab;
+        let current_tab = self.current_tab;
+        let core_running = self.core_running;
+        let sys_proxy_enabled = self.sys_proxy_enabled;
+        let total_uploaded = self.total_uploaded;
+        let total_downloaded = self.total_downloaded;
+        let latency_testing = self.latency_testing;
+        let downloading = self.downloading;
+        let core_installed = self.core_installed;
+
+        // References with lifetime 'a
+        let gui_config_ref = &self.gui_config;
+        let current_speed_ref = &self.current_speed;
+        let speed_history_ref = &self.speed_history;
+        let active_profile_nodes_ref = &self.active_profile_nodes;
+        let selected_node_tag_ref = self.selected_node_tag.as_deref();
+        let node_search_ref = &self.node_search;
+        let proxy_groups_ref = &self.proxy_groups;
+        let selected_group_ref = &self.selected_group;
+        let url_input_ref = &self.url_input;
+        let profile_error_ref = self.profile_error.as_deref();
+        let confirm_delete_profile_id_ref = self.confirm_delete_profile_id.as_deref();
+        let bypass_domain_input_ref = &self.bypass_domain_input;
+        let proxy_domain_input_ref = &self.proxy_domain_input;
+        let bypass_ip_input_ref = &self.bypass_ip_input;
+        let proxy_ip_input_ref = &self.proxy_ip_input;
+        let active_connections_ref = &self.active_connections;
+        let connections_search_ref = &self.connections_search;
+        let log_lines_ref = &self.log_lines;
+        let mixed_port_input_str_ref = &self.mixed_port_input_str;
+        let api_port_input_str_ref = &self.api_port_input_str;
+        let dns_server_local_input_str_ref = &self.dns_server_local_input_str;
+        let dns_server_remote_input_str_ref = &self.dns_server_remote_input_str;
+        let core_install_msg_ref = self.core_install_msg.as_deref();
+
+        let main_content = responsive(move |size| {
+            let theme = theme_ref;
+            let is_compact = size.width < 750.0;
+            let text_muted = ui::theme::text_muted(theme);
             
-            // Indicator bar
-            let indicator = container(iced::widget::Space::new())
-                .width(4)
-                .height(20)
-                .style(move |_theme| container::Style {
-                    background: if active {
-                        Some(iced::Background::Color(ui::theme::ACCENT_PURPLE))
-                    } else {
-                        None
-                    },
-                    border: iced::Border {
-                        radius: 2.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                });
+            // Render active tab view
+            let content = match current_tab {
+                Tab::Dashboard => ui::dashboard::render(
+                    gui_config_ref,
+                    core_running,
+                    sys_proxy_enabled,
+                    current_speed_ref,
+                    speed_history_ref,
+                    total_uploaded,
+                    total_downloaded,
+                    theme,
+                ),
+                Tab::Proxies => ui::proxies::render(
+                    gui_config_ref,
+                    active_profile_nodes_ref,
+                    selected_node_tag_ref,
+                    latency_testing,
+                    node_search_ref,
+                    proxy_groups_ref,
+                    selected_group_ref,
+                    theme,
+                ),
+                Tab::Profiles => ui::profiles::render(
+                    gui_config_ref,
+                    url_input_ref,
+                    downloading,
+                    profile_error_ref,
+                    confirm_delete_profile_id_ref,
+                    theme,
+                ),
+                Tab::Rules => ui::rules::render(
+                    gui_config_ref,
+                    bypass_domain_input_ref,
+                    proxy_domain_input_ref,
+                    bypass_ip_input_ref,
+                    proxy_ip_input_ref,
+                    theme,
+                ),
+                Tab::Connections => ui::connections::render(
+                    gui_config_ref,
+                    active_connections_ref,
+                    connections_search_ref,
+                    theme,
+                ),
+                Tab::Logs => ui::logs::render(gui_config_ref, log_lines_ref, theme),
+                Tab::Settings => ui::settings::render(
+                    gui_config_ref,
+                    mixed_port_input_str_ref,
+                    api_port_input_str_ref,
+                    dns_server_local_input_str_ref,
+                    dns_server_remote_input_str_ref,
+                    core_installed,
+                    core_install_msg_ref,
+                    theme,
+                ),
+            };
+
+            let make_tab_btn = |tab: Tab, icon_char: char, key: &'static str| {
+                let active = current_tab == tab;
                 
-            button(
-                row![
-                    indicator,
-                    text(icon_char.to_string())
-                        .font(Font::with_name("Material Icons"))
-                        .size(16),
-                    text(ui::i18n::tr(lang, key))
-                        .size(15) // Slightly larger font
-                        .font(Font {
-                            weight: if active { iced::font::Weight::Bold } else { iced::font::Weight::Medium },
+                let indicator = container(iced::widget::Space::new())
+                    .width(4)
+                    .height(20)
+                    .style(move |_theme| container::Style {
+                        background: if active {
+                            Some(iced::Background::Color(ui::theme::ACCENT_PURPLE))
+                        } else {
+                            None
+                        },
+                        border: iced::Border {
+                            radius: 2.0.into(),
                             ..Default::default()
-                        })
-                ]
-                .spacing(12) // More spacing between components
-                .align_y(Alignment::Center)
-            )
-            .padding([14, 16]) // Taller and wider padding
-            .width(Length::Fill)
-            .style(ui::theme::button_tab(active))
-            .on_press(Message::TabChanged(tab))
-        };
-        
-        // Sidebar View
-        let sidebar = container(
-            column![
-                column![
+                        },
+                        ..Default::default()
+                    });
+                
+                let btn_content = if is_compact {
                     row![
-                        text("sing-box")
-                            .size(24)
-                            .font(Font {
-                                weight: iced::font::Weight::Bold,
-                                ..Default::default()
-                            })
-                            .color(ui::theme::ACCENT_PURPLE),
-                        text("GUI")
-                            .size(12)
-                            .font(Font {
-                                weight: iced::font::Weight::Light,
-                                ..Default::default()
-                            })
-                            .color(ui::theme::ACCENT_BLUE),
+                        indicator,
+                        text(icon_char.to_string())
+                            .font(Font::with_name("Material Icons"))
+                            .size(18),
                     ]
-                    .spacing(6)
-                    .align_y(Alignment::End),
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                } else {
+                    row![
+                        indicator,
+                        text(icon_char.to_string())
+                            .font(Font::with_name("Material Icons"))
+                            .size(16),
+                        text(ui::i18n::tr(lang, key))
+                            .size(15)
+                            .font(Font {
+                                weight: if active { iced::font::Weight::Bold } else { iced::font::Weight::Medium },
+                                ..Default::default()
+                            })
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                };
+                
+                button(btn_content)
+                    .padding(if is_compact { [14, 0] } else { [14, 16] })
+                    .width(Length::Fill)
+                    .style(ui::theme::button_tab(active))
+                    .on_press(Message::TabChanged(tab))
+            };
+
+            let sidebar = if is_compact {
+                container(
                     column![
-                        make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
-                        make_tab_btn(Tab::Proxies, '\u{EA0B}', "tab_proxies"),
-                        make_tab_btn(Tab::Profiles, '\u{E2C7}', "tab_profiles"),
-                        make_tab_btn(Tab::Rules, '\u{E41E}', "tab_rules"),
-                        make_tab_btn(Tab::Connections, '\u{E894}', "tab_connections"),
-                        make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
-                        make_tab_btn(Tab::Settings, '\u{E8B8}', "tab_settings"),
+                        column![
+                            text("S")
+                                .size(24)
+                                .font(Font {
+                                    weight: iced::font::Weight::Bold,
+                                    ..Default::default()
+                                })
+                                .color(ui::theme::ACCENT_PURPLE)
+                                .width(Length::Fill)
+                                .align_x(Alignment::Center),
+                            column![
+                                make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
+                                make_tab_btn(Tab::Proxies, '\u{EA0B}', "tab_proxies"),
+                                make_tab_btn(Tab::Profiles, '\u{E2C7}', "tab_profiles"),
+                                make_tab_btn(Tab::Rules, '\u{E41E}', "tab_rules"),
+                                make_tab_btn(Tab::Connections, '\u{E894}', "tab_connections"),
+                                make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
+                                make_tab_btn(Tab::Settings, '\u{E8B8}', "tab_settings"),
+                            ]
+                            .spacing(10)
+                            .width(Length::Fill)
+                        ]
+                        .spacing(24)
+                        .width(Length::Fill),
+                        iced::widget::Space::new().height(Length::Fill),
                     ]
-                    .spacing(10)
-                ]
-                .spacing(36),
-                iced::widget::Space::new().height(Length::Fill),
-                text(format!("v{}", env!("CARGO_PKG_VERSION")))
-                    .size(12)
-                    .color(ui::theme::text_muted(&active_theme))
+                    .width(Length::Fill)
+                )
+                .width(Length::Fixed(64.0))
+                .height(Length::Fill)
+                .padding([24, 0])
+                .style(ui::theme::sidebar_bg)
+            } else {
+                container(
+                    column![
+                        column![
+                            row![
+                                text("sing-box")
+                                    .size(24)
+                                    .font(Font {
+                                        weight: iced::font::Weight::Bold,
+                                        ..Default::default()
+                                    })
+                                    .color(ui::theme::ACCENT_PURPLE),
+                                text("GUI")
+                                    .size(12)
+                                    .font(Font {
+                                        weight: iced::font::Weight::Light,
+                                        ..Default::default()
+                                    })
+                                    .color(ui::theme::ACCENT_BLUE),
+                            ]
+                            .spacing(6)
+                            .align_y(Alignment::End),
+                            column![
+                                make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
+                                make_tab_btn(Tab::Proxies, '\u{EA0B}', "tab_proxies"),
+                                make_tab_btn(Tab::Profiles, '\u{E2C7}', "tab_profiles"),
+                                make_tab_btn(Tab::Rules, '\u{E41E}', "tab_rules"),
+                                make_tab_btn(Tab::Connections, '\u{E894}', "tab_connections"),
+                                make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
+                                make_tab_btn(Tab::Settings, '\u{E8B8}', "tab_settings"),
+                            ]
+                            .spacing(10)
+                            .width(Length::Fill)
+                        ]
+                        .spacing(36)
+                        .width(Length::Fill),
+                        iced::widget::Space::new().height(Length::Fill),
+                        text(format!("v{}", env!("CARGO_PKG_VERSION")))
+                            .size(12)
+                            .color(text_muted)
+                    ]
+                )
+                .width(Length::Fixed(240.0))
+                .height(Length::Fill)
+                .padding(24)
+                .style(ui::theme::sidebar_bg)
+            };
+
+            let main_layout = container(content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(ui::theme::main_bg);
+                
+            row![
+                sidebar,
+                main_layout
             ]
-        )
-        .width(Length::Fixed(240.0)) // Wider sidebar for breathing room
-        .height(Length::Fill)
-        .padding(24) // More padding
-        .style(ui::theme::sidebar_bg);
-        
-        // Main Tab Content View
-        let content = match self.current_tab {
-            Tab::Dashboard => ui::dashboard::render(
-                &self.gui_config,
-                self.core_running,
-                self.sys_proxy_enabled,
-                &self.current_speed,
-                &self.speed_history,
-                self.total_uploaded,
-                self.total_downloaded,
-                &active_theme,
-            ),
-            Tab::Proxies => ui::proxies::render(
-                &self.gui_config,
-                &self.active_profile_nodes,
-                self.selected_node_tag.as_deref(),
-                self.latency_testing,
-                &self.node_search,
-                &self.proxy_groups,
-                &self.selected_group,
-                &active_theme,
-            ),
-            Tab::Profiles => ui::profiles::render(
-                &self.gui_config,
-                &self.url_input,
-                self.downloading,
-                self.profile_error.as_deref(),
-                self.confirm_delete_profile_id.as_deref(),
-                &active_theme,
-            ),
-            Tab::Rules => ui::rules::render(
-                &self.gui_config,
-                &self.bypass_domain_input,
-                &self.proxy_domain_input,
-                &self.bypass_ip_input,
-                &self.proxy_ip_input,
-                &active_theme,
-            ),
-            Tab::Connections => ui::connections::render(
-                &self.gui_config,
-                &self.active_connections,
-                &self.connections_search,
-                &active_theme,
-            ),
-            Tab::Logs => ui::logs::render(&self.gui_config, &self.log_lines, &active_theme),
-            Tab::Settings => ui::settings::render(
-                &self.gui_config,
-                &self.mixed_port_input_str,
-                &self.api_port_input_str,
-                &self.dns_server_local_input_str,
-                &self.dns_server_remote_input_str,
-                self.core_installed,
-                self.core_install_msg.as_deref(),
-                &active_theme,
-            ),
-        };
-        
-        let main_layout = container(content)
-            .width(Length::Fill)
             .height(Length::Fill)
-            .style(ui::theme::main_bg);
-            
-        row![
-            sidebar,
-            main_layout
-        ]
-        .height(Length::Fill)
-        .width(Length::Fill)
-        .into()
+            .width(Length::Fill)
+            .into()
+        });
+
+        main_content.into()
     }
     
     fn subscription(&self) -> Subscription<Message> {

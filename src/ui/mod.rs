@@ -8,7 +8,7 @@ pub mod i18n;
 pub mod connections;
 pub mod rules;
 
-use iced::widget::{column, container, row, scrollable, text, Space};
+use iced::widget::{column, container, row, text, Space};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::ui::theme as ui_theme;
@@ -30,20 +30,36 @@ pub fn page_header<'a>(
     lang: crate::state::Language,
     actions: Option<Element<'a, Message>>,
     theme: &iced::Theme,
+    is_compact: bool,
 ) -> Element<'a, Message> {
     let text_primary = ui_theme::text_primary(theme);
     let title = text(crate::ui::i18n::tr(lang, title_key))
         .size(24)
         .color(text_primary);
 
-    let mut header_row = row![title].align_y(Alignment::Center).width(Length::Fill);
+    let content: Element<'a, Message> = if is_compact {
+        if let Some(actions_el) = actions {
+            column![
+                title,
+                actions_el
+            ]
+            .spacing(10)
+            .width(Length::Fill)
+            .into()
+        } else {
+            row![title].into()
+        }
+    } else {
+        let mut header_row = row![title].align_y(Alignment::Center).width(Length::Fill);
 
-    if let Some(actions_el) = actions {
-        header_row = header_row.push(Space::new().width(Length::Fill));
-        header_row = header_row.push(actions_el);
-    }
+        if let Some(actions_el) = actions {
+            header_row = header_row.push(Space::new().width(Length::Fill));
+            header_row = header_row.push(actions_el);
+        }
+        header_row.into()
+    };
 
-    container(header_row)
+    container(content)
         .width(Length::Fill)
         .padding(iced::Padding {
             top: 0.0,
@@ -55,25 +71,6 @@ pub fn page_header<'a>(
 }
 
 // Unified page shell with scrollable outer container. Most tabs use this.
-pub fn page_shell<'a>(
-    header: Element<'a, Message>,
-    content: Element<'a, Message>,
-) -> Element<'a, Message> {
-    let col = column![header, content].spacing(20).width(Length::Fill);
-
-    let inner = container(col)
-        .width(Length::Fill)
-        .max_width(1200.0)
-        .center_x(Length::Fill)
-        .padding(page_padding());
-
-    container(
-        scrollable(inner).height(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
-}
 
 // Non-scrolling variant for pages that manage their own inner scroll area
 // (e.g. Logs terminal that needs the full height for log scrolling).

@@ -13,7 +13,7 @@ pub fn render<'a>(
     search_query: &'a str,
     proxy_groups: &'a std::collections::HashMap<String, crate::api::ProxyInfo>,
     selected_group: &'a str,
-    theme: &iced::Theme,
+    theme: &'a iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
@@ -21,31 +21,32 @@ pub fn render<'a>(
     let text_primary = theme::text_primary(theme);
     let text_muted = theme::text_muted(theme);
     
-    // Header controls
-    let speed_test_btn = if latency_testing {
-        button(text(tr(lang, "testing_latency")).size(14))
-            .padding([8, 16])
-            .style(theme::button_secondary)
-    } else {
-        button(text(tr(lang, "test_latency")).size(14))
-            .padding([8, 16])
-            .style(theme::button_primary)
-            .on_press(Message::StartLatencyTest)
-    };
-    
-    let search_input = text_input(tr(lang, "search_nodes_placeholder"), search_query)
-        .on_input(Message::NodeSearchChanged)
-        .padding(8)
-        .width(280) // Consistent width of 280 with connections.rs
-        .style(theme::input_field);
+    let make_header_actions = move |search_query: &str, is_compact: bool| -> Element<'a, Message> {
+        let speed_test_btn = if latency_testing {
+            button(text(tr(lang, "testing_latency")).size(14))
+                .padding([8, 16])
+                .style(theme::button_secondary)
+        } else {
+            button(text(tr(lang, "test_latency")).size(14))
+                .padding([8, 16])
+                .style(theme::button_primary)
+                .on_press(Message::StartLatencyTest)
+        };
         
-    let header_actions: Element<'a, Message> = row![
-        search_input,
-        speed_test_btn
-    ]
-    .spacing(12)
-    .align_y(Alignment::Center)
-    .into();
+        let search_input = text_input(tr(lang, "search_nodes_placeholder"), search_query)
+            .on_input(Message::NodeSearchChanged)
+            .padding(8)
+            .width(if is_compact { Length::Fill } else { Length::Fixed(280.0) })
+            .style(theme::input_field);
+            
+        row![
+            search_input,
+            speed_test_btn
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .into()
+    };
     
     // Check if we have active groups from Clash API
     let mut groups: Vec<&crate::api::ProxyInfo> = proxy_groups.values()
@@ -87,6 +88,7 @@ pub fn render<'a>(
             let text_muted = theme::text_muted(theme);
             let is_compact = size.width < 750.0;
             
+            let header_actions = make_header_actions(&search_query_cloned, is_compact);
             let group_selector = if is_compact {
                 let mut groups_row = Row::new().spacing(8);
                 for g in &groups_cloned {
@@ -380,8 +382,11 @@ pub fn render<'a>(
                 .into()
             };
             
+            let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
+            
             if is_compact {
                 column![
+                    header,
                     group_selector,
                     right_pane_content
                 ]
@@ -402,20 +407,27 @@ pub fn render<'a>(
                         ..Default::default()
                     });
                     
-                row![
+                let col_content = row![
                     group_selector,
                     divider,
                     column![right_pane_content].spacing(20).width(Length::Fill).height(Length::Fill)
                 ]
                 .spacing(20)
                 .height(Length::Fill)
-                .width(Length::Fill)
-                .into()
+                .width(Length::Fill);
+
+                let col = column![header, col_content].spacing(20).width(Length::Fill).height(Length::Fill);
+
+                container(col)
+                    .width(Length::Fill)
+                    .max_width(1200.0)
+                    .center_x(Length::Fill)
+                    .padding(crate::ui::page_padding())
+                    .into()
             }
         });
         
-        let header = page_header("proxy_nodes", lang, Some(header_actions), theme);
-        page_shell_fixed(header, main_content.into())
+        main_content.into()
         
     } else {
         // Fallback: simple flat node list when core is not running
@@ -429,7 +441,7 @@ pub fn render<'a>(
             .width(Length::Fill)
             .style(theme::card_bg)
             .into();
-            let header = page_header("proxy_nodes", lang, Some(header_actions), theme);
+            let header = page_header("proxy_nodes", lang, Some(make_header_actions(search_query, false)), theme, false);
             return page_shell_fixed(header, content);
         }
         
@@ -452,11 +464,15 @@ pub fn render<'a>(
             .width(Length::Fill)
             .style(theme::card_bg)
             .into();
-            let header = page_header("proxy_nodes", lang, Some(header_actions), theme);
+            let header = page_header("proxy_nodes", lang, Some(make_header_actions(search_query, false)), theme, false);
             return page_shell_fixed(header, content);
         }
         
         let content = responsive(move |size| {
+            let is_compact = size.width < 750.0;
+            
+            let header_actions = make_header_actions(search_query, is_compact);
+            
             let mut card_elements: Vec<Element<'_, Message>> = Vec::new();
             
             for node in &filtered_nodes {
@@ -569,10 +585,21 @@ pub fn render<'a>(
                 grid_rows = grid_rows.push(current_row);
             }
             
-            scrollable(grid_rows).height(Length::Fill).into()
+            let grid_content: Element<'_, Message> = scrollable(grid_rows).height(Length::Fill).into();
+            
+            let is_compact = size.width < 750.0;
+            let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
+            
+            let col = column![header, grid_content].spacing(20).width(Length::Fill).height(Length::Fill);
+
+            container(col)
+                .width(Length::Fill)
+                .max_width(1200.0)
+                .center_x(Length::Fill)
+                .padding(crate::ui::page_padding())
+                .into()
         });
             
-        let header = page_header("proxy_nodes", lang, Some(header_actions), theme);
-        page_shell_fixed(header, content.into())
+        content.into()
     }
 }

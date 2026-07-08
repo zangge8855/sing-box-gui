@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Length, Color};
 use crate::message::Message;
 use crate::state::GuiConfig;
 use crate::ui::theme;
-use crate::ui::{page_header, page_shell_fixed};
+use crate::ui::page_header;
 
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
@@ -282,10 +282,17 @@ pub fn render<'a>(
         main_layout_col = main_layout_col.push(text(tr(lang, "imported_profiles")).color(text_muted).size(14));
         main_layout_col = main_layout_col.push(grid_content);
         
-        main_layout_col.into()
+        let header = page_header("tab_profiles", lang, None, theme, is_compact);
+        
+        let col = column![header, main_layout_col].spacing(20).width(Length::Fill).height(Length::Fill);
+
+        container(col)
+            .width(Length::Fill)
+            .max_width(1200.0)
+            .center_x(Length::Fill)
+            .padding(crate::ui::page_padding())
+            .into()
     });
     
-    let content: Element<'a, Message> = main_content.into();
-    let header = page_header("tab_profiles", lang, None, theme);
-    page_shell_fixed(header, content)
+    main_content.into()
 }

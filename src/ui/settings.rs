@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{GuiConfig, Language, AppTheme};
 use crate::ui::theme;
-use crate::ui::{page_header, page_shell};
+use crate::ui::page_header;
 
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
@@ -367,21 +367,35 @@ pub fn render<'a>(
         .padding([20, 30])
         .width(Length::Fill);
 
-        column![
+        let content_col = column![
             main_row_layout,
             preview_card
         ]
         .spacing(20)
+        .width(Length::Fill);
+        
+        let save_btn = button(text(tr(lang, "btn_save_apply")).size(14))
+            .padding([10, 20])
+            .style(theme::button_primary)
+            .on_press(Message::SaveSettings);
+
+        let header = page_header("settings", lang, Some(save_btn.into()), theme, is_compact);
+        
+        let col = column![header, content_col].spacing(20).width(Length::Fill);
+
+        let inner = container(col)
+            .width(Length::Fill)
+            .max_width(1200.0)
+            .center_x(Length::Fill)
+            .padding(crate::ui::page_padding());
+
+        container(
+            scrollable(inner).height(Length::Fill),
+        )
         .width(Length::Fill)
+        .height(Length::Fill)
         .into()
     });
     
-    // Save button
-    let save_btn = button(text(tr(lang, "btn_save_apply")).size(14))
-        .padding([10, 20])
-        .style(theme::button_primary)
-        .on_press(Message::SaveSettings);
-
-    let header = page_header("settings", lang, Some(save_btn.into()), theme);
-    page_shell(header, main_content.into())
+    main_content.into()
 }

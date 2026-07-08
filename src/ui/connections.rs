@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::ui::theme;
 use crate::api::Connection;
-use crate::ui::{page_header, page_shell_fixed};
+use crate::ui::page_header;
 
 fn format_size(bytes: u64) -> String {
     if bytes < 1024 {
@@ -274,7 +274,7 @@ pub fn render<'a>(
                     ..Default::default()
                 });
 
-            container(
+            let list_content: Element<'_, Message> = container(
                 column![
                     header_styled,
                     scrollable(list).height(Length::Fill)
@@ -283,16 +283,26 @@ pub fn render<'a>(
             .style(theme::card_bg)
             .height(Length::Fill)
             .width(Length::Fill)
-            .into()
+            .into();
+            
+            let search_input = text_input(tr(lang, "placeholder_connections_search"), search_query)
+                .on_input(Message::ConnectionsSearchChanged)
+                .padding(8)
+                .width(if is_compact { Length::Fill } else { Length::Fixed(280.0) })
+                .style(theme::input_field);
+
+            let header = page_header("tab_connections", lang, Some(search_input.into()), theme, is_compact);
+            
+            let col = column![header, list_content].spacing(20).width(Length::Fill).height(Length::Fill);
+
+            container(col)
+                .width(Length::Fill)
+                .max_width(1200.0)
+                .center_x(Length::Fill)
+                .padding(crate::ui::page_padding())
+                .into()
         }
     });
 
-    let search_input = text_input(tr(lang, "placeholder_connections_search"), search_query)
-        .on_input(Message::ConnectionsSearchChanged)
-        .padding(8)
-        .width(280)
-        .style(theme::input_field);
-
-    let header = page_header("tab_connections", lang, Some(search_input.into()), theme);
-    page_shell_fixed(header, main_content.into())
+    main_content.into()
 }

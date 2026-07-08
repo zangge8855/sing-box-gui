@@ -1,10 +1,9 @@
-use iced::widget::{button, column, container, row, svg, text, Space, responsive};
+use iced::widget::{button, column, container, row, svg, text, Space, responsive, scrollable};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
 use crate::ui::theme;
-use crate::ui::{page_header, page_shell};
-
+use crate::ui::page_header;
 fn icon(unicode: char) -> text::Text<'static> {
     text(unicode.to_string()).font(iced::Font::with_name("Material Icons")).size(16)
 }
@@ -452,15 +451,30 @@ pub fn render<'a>(
             .into()
         };
         
-        column![
+        let content_col = column![
             top_row,
             bottom_row
         ]
         .spacing(20)
+        .width(Length::Fill);
+        
+        let header = page_header("tab_dashboard", lang, None, theme, is_compact);
+        
+        let col = column![header, content_col].spacing(20).width(Length::Fill);
+
+        let inner = container(col)
+            .width(Length::Fill)
+            .max_width(1200.0)
+            .center_x(Length::Fill)
+            .padding(crate::ui::page_padding());
+
+        container(
+            scrollable(inner).height(Length::Fill),
+        )
         .width(Length::Fill)
+        .height(Length::Fill)
         .into()
     });
     
-    let header = page_header("tab_dashboard", lang, None, theme);
-    page_shell(header, main_content.into())
+    main_content.into()
 }
