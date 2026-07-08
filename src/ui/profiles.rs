@@ -148,10 +148,16 @@ pub fn render<'a>(
             for profile in &gui_config.subscriptions {
                 let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
                 
-                let update_btn = button(text(tr(lang, "btn_update")).size(12))
-                    .padding([5, 10])
-                    .style(theme::button_primary)
-                    .on_press(Message::UpdateSubscription(profile.id.clone()));
+                let update_btn = if downloading {
+                    button(text(tr(lang, "btn_downloading")).size(12))
+                        .padding([5, 10])
+                        .style(theme::button_secondary)
+                } else {
+                    button(text(tr(lang, "btn_update")).size(12))
+                        .padding([5, 10])
+                        .style(theme::button_primary)
+                        .on_press(Message::UpdateSubscription(profile.id.clone()))
+                };
           
                 let delete_btn = if confirm_delete_id == Some(profile.id.as_str()) {
                     button(text(tr(lang, "confirm_delete_profile")).size(12))
@@ -205,11 +211,12 @@ pub fn render<'a>(
                     .push(edit_btn)
                     .push(delete_btn);
                     
-                let display_url = if profile.url.chars().count() > 40 {
-                    let truncated: String = profile.url.chars().take(40).collect();
+                let masked_url = mask_sensitive_url(&profile.url);
+                let display_url = if masked_url.chars().count() > 40 {
+                    let truncated: String = masked_url.chars().take(40).collect();
                     format!("{}...", truncated)
                 } else {
-                    profile.url.clone()
+                    masked_url
                 };
 
                 let is_editing = editing_id.as_deref() == Some(profile.id.as_str());
@@ -361,4 +368,67 @@ pub fn render<'a>(
     });
     
     main_content.into()
+}
+
+pub fn mask_sensitive_url(url: &str) -> String {
+    if let Ok(mut parsed) = url::Url::parse(url) {
+        let mut query_pairs = Vec::new();
+        let mut modified = false;
+        
+        for (k, v) in parsed.query_pairs() {
+            let k_lower = k.to_lowercase();
+            if k_lower.contains("token") 
+                || k_lower.contains("uuid") 
+                || k_lower.contains("key") 
+                || k_lower.contains("pwd") 
+                || k_lower.contains("password")
+                || k_lower.contains("secret")
+            {
+                query_pairs.push((k.into_owned(), "******".to_string()));
+                modified = true;
+            } else {
+                query_pairs.push((k.into_owned(), v.into_owned()));
+            }
+        }
+        
+        if modified {
+            parsed.set_query(None);
+            let mut new_url = parsed.to_string();
+            if !query_pairs.is_empty() {
+                let query_str = query_pairs.iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect::<Vec<_>>()
+                    .join("&");
+                new_url.push('?');
+                new_url.push_str(&query_str);
+            }
+            return new_url;
+        }
+    }
+    url.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mask_sensitive_url() {
+        assert_eq!(
+            mask_sensitive_url("https://example.com/sub?token=123456&flag=clash"),
+            "https://example.com/sub?token=******&flag=clash"
+        );
+        assert_eq!(
+            mask_sensitive_url("https://example.com/sub?uuid=some-uuid-value&flag=clash"),
+            "https://example.com/sub?uuid=******&flag=clash"
+        );
+        assert_eq!(
+            mask_sensitive_url("https://example.com/sub?normal_param=value"),
+            "https://example.com/sub?normal_param=value"
+        );
+        assert_eq!(
+            mask_sensitive_url("invalid_url_string"),
+            "invalid_url_string"
+        );
+    }
 }

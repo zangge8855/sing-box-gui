@@ -300,14 +300,23 @@ pub fn render<'a>(
         .padding(8)
         .style(theme::pick_list);
 
+        let port_text = if core_running {
+            format!("{}: {}", tr(lang, "listen_port"), gui_config.mixed_port)
+        } else {
+            format!("{}: -", tr(lang, "listen_port"))
+        };
+
         let routing_mode_card = container(
             column![
                 row![
                     icon('\u{E8B8}').color(theme::ACCENT_BLUE),
-                    text(tr(lang, "active_mode")).color(text_muted).size(13)
+                    text(tr(lang, "active_mode")).color(text_muted).size(13),
+                    Space::new().width(Length::Fill),
+                    text(port_text).color(text_muted).size(12)
                 ]
                 .spacing(8)
-                .align_y(Alignment::Center),
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
                 
                 row![
                     mode_selector
