@@ -67,6 +67,10 @@ pub struct GuiConfig {
     pub close_core_on_exit: bool,
     pub theme: AppTheme,
     #[serde(default)]
+    pub auto_start_core: bool,
+    #[serde(default)]
+    pub auto_sys_proxy: bool,
+    #[serde(default)]
     pub custom_bypass_domains: Vec<String>,
     #[serde(default)]
     pub custom_proxy_domains: Vec<String>,
@@ -118,6 +122,8 @@ impl Default for GuiConfig {
             tcp_multipath: false,
             close_core_on_exit: true,
             theme: AppTheme::Auto,
+            auto_start_core: false,
+            auto_sys_proxy: false,
             custom_bypass_domains: Vec::new(),
             custom_proxy_domains: Vec::new(),
             custom_bypass_ips: Vec::new(),

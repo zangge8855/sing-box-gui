@@ -255,13 +255,15 @@ impl App {
         let sys_proxy = sysproxy::check_system_proxy(app.gui_config.mixed_port).unwrap_or(false);
         app.sys_proxy_enabled = sys_proxy;
         
-        // Check if core is running on start
-        app.core_running = core::is_core_running();
-        
         // Initial tray menu synchronization
         app.update_tray_menu();
         
-        (app, Task::none())
+        let mut startup_task = Task::none();
+        if app.gui_config.auto_start_core && app.gui_config.active_profile_id.is_some() && app.core_installed {
+            startup_task = Task::done(Message::ToggleCore);
+        }
+        
+        (app, startup_task)
     }
     
     fn reload_active_nodes(&mut self) {
@@ -545,6 +547,21 @@ impl App {
                         Ok(_) => {
                             self.core_running = true;
                             self.log_lines.push("[GUI] sing-box core started successfully.".to_string());
+                            
+                            // Auto-enable system proxy if configured
+                            if self.gui_config.auto_sys_proxy && !self.sys_proxy_enabled {
+                                match sysproxy::set_system_proxy(true, self.gui_config.mixed_port) {
+                                    Ok(_) => {
+                                        self.sys_proxy_enabled = true;
+                                        self.gui_config.system_proxy_enabled = true;
+                                        let _ = config::save_gui_config(&self.gui_config);
+                                        self.log_lines.push("[GUI] System proxy auto-enabled on core start.".to_string());
+                                    }
+                                    Err(e) => {
+                                        self.log_lines.push(format!("[GUI] Failed to auto-enable system proxy: {}", e));
+                                    }
+                                }
+                            }
                             
                             // Stop existing traffic monitor if any
                             if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
@@ -909,6 +926,16 @@ impl App {
                 self.gui_config.start_on_boot = !self.gui_config.start_on_boot;
                 let _ = config::save_gui_config(&self.gui_config);
                 let _ = set_windows_autostart(self.gui_config.start_on_boot);
+                Task::none()
+            }
+            Message::ToggleAutoStartCore => {
+                self.gui_config.auto_start_core = !self.gui_config.auto_start_core;
+                let _ = config::save_gui_config(&self.gui_config);
+                Task::none()
+            }
+            Message::ToggleAutoSysProxy => {
+                self.gui_config.auto_sys_proxy = !self.gui_config.auto_sys_proxy;
+                let _ = config::save_gui_config(&self.gui_config);
                 Task::none()
             }
             Message::SetLanguage(lang) => {

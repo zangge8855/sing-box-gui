@@ -56,6 +56,8 @@ pub fn render<'a>(
                 make_toggle_row("tun_mode_label", gui_config.tun_mode, Message::ToggleTun),
                 make_toggle_row("autostart_label", gui_config.start_on_boot, Message::ToggleAutostart),
                 make_toggle_row("close_core_on_exit_label", gui_config.close_core_on_exit, Message::ToggleCloseCoreOnExit),
+                make_toggle_row("auto_start_core_label", gui_config.auto_start_core, Message::ToggleAutoStartCore),
+                make_toggle_row("auto_sys_proxy_label", gui_config.auto_sys_proxy, Message::ToggleAutoSysProxy),
                 make_toggle_row("tcp_fast_open_label", gui_config.tcp_fast_open, Message::ToggleTcpFastOpen),
                 make_toggle_row("tcp_multipath_label", gui_config.tcp_multipath, Message::ToggleTcpMultipath),
             ]

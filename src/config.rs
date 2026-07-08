@@ -1044,6 +1044,23 @@ pub fn convert_clash_to_singbox(
         json!({ "clash_mode": "Direct", "server": "dns_local" }),
     ];
     
+    // Resolve custom bypass domains via local DNS (prevents leaks and improves CDN speed)
+    if !gui_config.custom_bypass_domains.is_empty() {
+        dns_rules.push(json!({
+            "domain_suffix": gui_config.custom_bypass_domains,
+            "server": "dns_local"
+        }));
+    }
+
+    // Resolve custom proxy domains via remote DNS or Fake-IP
+    if !gui_config.custom_proxy_domains.is_empty() {
+        let target_server = if gui_config.fake_ip { "dns_fakeip" } else { "dns_remote" };
+        dns_rules.push(json!({
+            "domain_suffix": gui_config.custom_proxy_domains,
+            "server": target_server
+        }));
+    }
+    
     if gui_config.fake_ip {
         dns_servers.push(json!({
             "tag": "dns_fakeip",
@@ -1356,5 +1373,44 @@ proxies:
         assert_eq!(nodes_ss[0].node_type, "ss");
         assert_eq!(nodes_ss[0].server, "2.2.2.2");
         assert_eq!(nodes_ss[0].port, 443);
+    }
+
+    #[test]
+    fn test_custom_domains_dns_injection() {
+        let mut gui_config = GuiConfig::default();
+        gui_config.custom_bypass_domains = vec!["bypass.me".to_string()];
+        gui_config.custom_proxy_domains = vec!["proxy.me".to_string()];
+        
+        let clash_yaml = r#"
+proxies:
+  - name: "test-node"
+    type: ss
+    server: 127.0.0.1
+    port: 443
+    cipher: aes-256-gcm
+    password: "pass"
+"#;
+        let res = convert_clash_to_singbox(clash_yaml, &gui_config).unwrap();
+        
+        // Extract dns.rules
+        let dns_rules = res.get("dns").unwrap().get("rules").unwrap().as_array().unwrap();
+        
+        // Find custom bypass domains rule
+        let bypass_rule = dns_rules.iter().find(|r| {
+            r.get("domain_suffix")
+                .and_then(|ds| ds.as_array())
+                .map(|arr| arr.iter().any(|v| v.as_str() == Some("bypass.me")))
+                .unwrap_or(false)
+        }).unwrap();
+        assert_eq!(bypass_rule.get("server").unwrap().as_str(), Some("dns_local"));
+        
+        // Find custom proxy domains rule
+        let proxy_rule = dns_rules.iter().find(|r| {
+            r.get("domain_suffix")
+                .and_then(|ds| ds.as_array())
+                .map(|arr| arr.iter().any(|v| v.as_str() == Some("proxy.me")))
+                .unwrap_or(false)
+        }).unwrap();
+        assert_eq!(proxy_rule.get("server").unwrap().as_str(), Some("dns_remote"));
     }
 }

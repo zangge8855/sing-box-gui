@@ -59,6 +59,8 @@ pub enum Message {
     ToggleFakeIp,
     ToggleTcpFastOpen,
     ToggleTcpMultipath,
+    ToggleAutoStartCore,
+    ToggleAutoSysProxy,
     CheckUpdate,
     UpdateChecked(Result<String, String>),
     OpenUrl(String),
