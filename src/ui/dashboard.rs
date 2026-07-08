@@ -297,7 +297,8 @@ pub fn render<'a>(
             move |opt| Message::RoutingModeChanged(opt.mode)
         )
         .width(Length::Fill)
-        .padding(8);
+        .padding(8)
+        .style(theme::pick_list);
 
         let routing_mode_card = container(
             column![

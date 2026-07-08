@@ -157,7 +157,8 @@ pub fn render<'a>(
             move |opt| Message::SetLanguage(opt.lang)
         )
         .width(Length::Fill)
-        .padding(8);
+        .padding(8)
+        .style(theme::pick_list);
         
         let theme_label = text(tr(lang, "app_theme")).color(text_muted).size(13);
         
@@ -177,7 +178,8 @@ pub fn render<'a>(
             move |opt| Message::SetTheme(opt.theme)
         )
         .width(Length::Fill)
-        .padding(8);
+        .padding(8)
+        .style(theme::pick_list);
         
         let app_prefs_content: Element<'_, Message> = if is_compact {
             column![

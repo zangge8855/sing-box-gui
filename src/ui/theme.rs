@@ -1,5 +1,5 @@
 use iced::{Background, Border, Color, Shadow};
-use iced::widget::{container, button, text_input};
+use iced::widget::{container, button, text_input, pick_list as iced_pick_list};
 
 // Dark mode palette
 pub const BG_DARK: Color = Color::from_rgb(0.06, 0.06, 0.07);      // Deep gray/black, cleaner
@@ -365,4 +365,37 @@ pub fn text_muted(theme: &iced::Theme) -> Color {
 
 pub fn text_tertiary(theme: &iced::Theme) -> Color {
     if is_dark(theme) { TEXT_TERTIARY } else { TEXT_TERTIARY_LIGHT }
+}
+
+pub fn pick_list(theme: &iced::Theme, status: iced_pick_list::Status) -> iced_pick_list::Style {
+    let dark = is_dark(theme);
+    let border_default = if dark { Color::from_rgb(0.22, 0.26, 0.32) } else { BORDER_LIGHT };
+    let border_color = match status {
+        iced_pick_list::Status::Opened { .. } => ACCENT_PURPLE,
+        iced_pick_list::Status::Hovered => {
+            if dark {
+                Color::from_rgb(0.35, 0.40, 0.48)
+            } else {
+                Color::from_rgb(0.60, 0.65, 0.72)
+            }
+        }
+        _ => border_default,
+    };
+    
+    let bg = if dark { BG_DARK } else { BG_LIGHT };
+    let text_color = if dark { TEXT_PRIMARY } else { TEXT_PRIMARY_LIGHT };
+    let placeholder = if dark { TEXT_MUTED } else { TEXT_MUTED_LIGHT };
+    let handle = if dark { TEXT_MUTED } else { TEXT_MUTED_LIGHT };
+    
+    iced_pick_list::Style {
+        background: Background::Color(bg),
+        border: Border {
+            radius: 8.0.into(),
+            width: 1.0,
+            color: border_color,
+        },
+        text_color,
+        placeholder_color: placeholder,
+        handle_color: handle,
+    }
 }

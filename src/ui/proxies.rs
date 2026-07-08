@@ -123,7 +123,7 @@ pub fn render<'a>(
                 )
                 .width(Length::Fill)
             } else {
-                let mut groups_col = Column::new().spacing(10);
+                let mut groups_col = Column::new().spacing(10).padding(iced::Padding { top: 0.0, right: 10.0, bottom: 0.0, left: 0.0 });
                 for g in &groups_cloned {
                     let is_active = g.name == selected_group_cloned;
                     let active_node = g.now.as_deref().unwrap_or("-");

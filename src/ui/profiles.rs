@@ -240,7 +240,7 @@ pub fn render<'a>(
                         .into();
                         
                     let form_col = column![
-                        text(tr(lang, "btn_edit_url")).color(text_primary).size(14).font(iced::Font {
+                        text(tr(lang, "edit_link_title")).color(text_primary).size(14).font(iced::Font {
                             weight: iced::font::Weight::Bold,
                             ..Default::default()
                         }),
