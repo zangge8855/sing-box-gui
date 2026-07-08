@@ -59,13 +59,13 @@ pub fn render<'a>(
                         .align_x(Alignment::Center)
                 )
                 .width(Length::Fill)
-                .height(180.0)
+                .height(120.0)
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center)
                 .into()
             } else {
                 scrollable(list_col)
-                    .height(180.0)
+                    .height(120.0)
                     .into()
             };
             

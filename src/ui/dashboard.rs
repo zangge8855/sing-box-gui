@@ -1,9 +1,21 @@
-use iced::widget::{button, column, container, row, svg, text, Space, responsive, scrollable};
+use iced::widget::{button, column, container, row, svg, text, Space, responsive, scrollable, pick_list};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
 use crate::ui::theme;
 use crate::ui::page_header;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoutingModeOption {
+    pub mode: RoutingMode,
+    pub label: &'static str,
+}
+
+impl std::fmt::Display for RoutingModeOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
 fn icon(unicode: char) -> text::Text<'static> {
     text(unicode.to_string()).font(iced::Font::with_name("Material Icons")).size(16)
 }
@@ -268,11 +280,52 @@ pub fn render<'a>(
         .width(Length::FillPortion(1))
         .style(theme::card_bg);
 
-        // Layout the top row metrics responsively
-        let top_row: Element<'_, Message> = if size.width < 1050.0 {
+        // 5. Routing Mode Card
+        let mode_options = vec![
+            RoutingModeOption { mode: RoutingMode::Rule, label: tr(lang, "mode_rules") },
+            RoutingModeOption { mode: RoutingMode::Global, label: tr(lang, "mode_global") },
+            RoutingModeOption { mode: RoutingMode::Direct, label: tr(lang, "mode_direct") },
+        ];
+        
+        let selected_mode_opt = mode_options.iter()
+            .find(|o| o.mode == gui_config.routing_mode)
+            .cloned();
+            
+        let mode_selector = pick_list(
+            mode_options,
+            selected_mode_opt,
+            move |opt| Message::RoutingModeChanged(opt.mode)
+        )
+        .width(Length::Fill)
+        .padding(8);
+
+        let routing_mode_card = container(
             column![
-                row![core_status_card, proxy_status_card].spacing(16).width(Length::Fill),
-                row![download_card, upload_card].spacing(16).width(Length::Fill)
+                row![
+                    icon('\u{E8B8}').color(theme::ACCENT_BLUE),
+                    text(tr(lang, "active_mode")).color(text_muted).size(13)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                
+                row![
+                    mode_selector
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+            ]
+            .spacing(16)
+        )
+        .padding(20)
+        .width(Length::FillPortion(1))
+        .style(theme::card_bg);
+
+        // Layout the control status cards responsively
+        let control_row: Element<'_, Message> = if is_compact {
+            column![
+                core_status_card,
+                proxy_status_card,
+                routing_mode_card
             ]
             .spacing(16)
             .width(Length::Fill)
@@ -281,6 +334,24 @@ pub fn render<'a>(
             row![
                 core_status_card,
                 proxy_status_card,
+                routing_mode_card
+            ]
+            .spacing(16)
+            .width(Length::Fill)
+            .into()
+        };
+
+        // Layout the traffic metric cards responsively
+        let traffic_row: Element<'_, Message> = if is_compact {
+            column![
+                download_card,
+                upload_card
+            ]
+            .spacing(16)
+            .width(Length::Fill)
+            .into()
+        } else {
+            row![
                 download_card,
                 upload_card
             ]
@@ -385,85 +456,10 @@ pub fn render<'a>(
         .height(if is_compact { Length::Fixed(220.0) } else { Length::Fixed(240.0) })
         .style(theme::card_bg);
 
-        // Vertical card-like Mode Item builder
-        let make_mode_item = |mode: RoutingMode, title_key: &'static str, desc_key: &'static str| {
-            let active = gui_config.routing_mode == mode;
-            let title_text = tr(lang, title_key);
-            let desc_text = tr(lang, desc_key);
-            
-            let item_content = container(
-                column![
-                    text(title_text)
-                        .size(13)
-                        .font(iced::Font {
-                            weight: iced::font::Weight::Bold,
-                            ..Default::default()
-                        }),
-                    text(desc_text)
-                        .size(10)
-                ]
-                .spacing(3)
-            )
-            .padding(12)
-            .width(Length::Fill);
-
-            button(item_content)
-                .padding(0)
-                .style(theme::button_mode(active))
-                .on_press(Message::RoutingModeChanged(mode))
-                .width(Length::Fill)
-        };
-        
-        let mode_items: Element<'_, Message> = if is_compact {
-            column![
-                make_mode_item(RoutingMode::Rule, "mode_rules", "mode_rules_desc"),
-                make_mode_item(RoutingMode::Global, "mode_global", "mode_global_desc"),
-                make_mode_item(RoutingMode::Direct, "mode_direct", "mode_direct_desc")
-            ]
-            .spacing(8)
-            .width(Length::Fill)
-            .into()
-        } else {
-            row![
-                make_mode_item(RoutingMode::Rule, "mode_rules", "mode_rules_desc"),
-                make_mode_item(RoutingMode::Global, "mode_global", "mode_global_desc"),
-                make_mode_item(RoutingMode::Direct, "mode_direct", "mode_direct_desc")
-            ]
-            .spacing(16)
-            .width(Length::Fill)
-            .into()
-        };
-
-        let mode_card = container(
-            column![
-                text(tr(lang, "active_mode")).color(text_muted).size(13),
-                mode_items
-            ]
-            .spacing(12)
-        )
-        .padding(20)
-        .width(Length::Fill)
-        .style(theme::card_bg);
-
-        let bottom_col = if is_compact {
-            column![
-                chart_card,
-                mode_card
-            ]
-            .spacing(20)
-            .width(Length::Fill)
-        } else {
-            column![
-                chart_card,
-                mode_card
-            ]
-            .spacing(20)
-            .width(Length::Fill)
-        };
-        
         let content_col = column![
-            top_row,
-            bottom_col
+            control_row,
+            traffic_row,
+            chart_card
         ]
         .spacing(20)
         .width(Length::Fill);

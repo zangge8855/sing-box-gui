@@ -1,5 +1,5 @@
 use iced::widget::{button, container, scrollable, text, Column, responsive, column};
-use iced::{Element, Font, Length, Alignment};
+use iced::{Element, Length, Alignment};
 use crate::message::Message;
 use crate::ui::theme;
 use crate::ui::{page_header, page_padding};
@@ -48,7 +48,6 @@ pub fn render<'a>(
             logs_col = logs_col.push(
                 text(line.clone())
                     .color(line_color)
-                    .font(Font::MONOSPACE)
                     .size(12)
             );
         }
@@ -57,7 +56,6 @@ pub fn render<'a>(
             container(
                 text(tr(lang, "no_logs"))
                     .color(text_muted)
-                    .font(Font::MONOSPACE)
                     .size(13)
             )
             .padding(15)
