@@ -173,9 +173,9 @@ CI 配置文件位于 `.github/workflows/build.yml`.
 
 本项目采用 **GNU General Public License v3.0** (GPL-3.0) 协议开源。该协议与本项目所依赖的开源组件完全兼容。
 
----
-
+<!--
 ## 🏷️ Keywords & Search Tags (搜索优化标签)
 
 `sing-box`, `sing-box-gui`, `sing-box client`, `sing-box windows`, `rust-gui`, `iced-gui`, `proxy-client`, `clash-alternative`, `v2ray-client`, `shadowsocks-client`, `trojan-client`, `vless-client`, `vless`, `network-proxy`, `tun-mode`, `rules-routing`, `rust-proxy`, `cross-platform`, `high-aesthetic-gui`, `singbox`, `clash`, `proxy`
+-->
 
