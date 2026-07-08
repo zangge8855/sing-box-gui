@@ -86,6 +86,9 @@ struct App {
     dns_server_remote_input_str: String,
     connections_search: String,
     _tray_icon: Option<tray_icon::TrayIcon>,
+    tray_menu_show: tray_icon::menu::MenuItem,
+    tray_menu_exit: tray_icon::menu::MenuItem,
+    tray_menu_submenu: tray_icon::menu::Submenu,
     tray_menu_toggle_core: tray_icon::menu::MenuItem,
     tray_menu_rule_mode: tray_icon::menu::CheckMenuItem,
     tray_menu_global_mode: tray_icon::menu::CheckMenuItem,
@@ -217,6 +220,9 @@ impl App {
             dns_server_remote_input_str,
             connections_search: String::new(),
             _tray_icon: tray_icon,
+            tray_menu_show: show_item,
+            tray_menu_exit: exit_item,
+            tray_menu_submenu: mode_submenu,
             tray_menu_toggle_core: toggle_core_item,
             tray_menu_rule_mode: rule_mode_item,
             tray_menu_global_mode: global_mode_item,
@@ -277,11 +283,36 @@ impl App {
     }
     
     fn update_tray_menu(&self) {
-        if self.core_running {
-            self.tray_menu_toggle_core.set_text("关闭内核 (Stop Core)");
+        let is_zh = self.gui_config.language == state::Language::Zh;
+        
+        if is_zh {
+            self.tray_menu_show.set_text("显示主界面");
+            if self.core_running {
+                self.tray_menu_toggle_core.set_text("关闭内核");
+            } else {
+                self.tray_menu_toggle_core.set_text("启动内核");
+            }
+            self.tray_menu_system_proxy.set_text("系统代理");
+            self.tray_menu_submenu.set_text("代理模式");
+            self.tray_menu_rule_mode.set_text("规则分流");
+            self.tray_menu_global_mode.set_text("全局代理");
+            self.tray_menu_direct_mode.set_text("直接连接");
+            self.tray_menu_exit.set_text("退出");
         } else {
-            self.tray_menu_toggle_core.set_text("启动内核 (Start Core)");
+            self.tray_menu_show.set_text("Show Window");
+            if self.core_running {
+                self.tray_menu_toggle_core.set_text("Stop Core");
+            } else {
+                self.tray_menu_toggle_core.set_text("Start Core");
+            }
+            self.tray_menu_system_proxy.set_text("System Proxy");
+            self.tray_menu_submenu.set_text("Proxy Mode");
+            self.tray_menu_rule_mode.set_text("Rules");
+            self.tray_menu_global_mode.set_text("Global");
+            self.tray_menu_direct_mode.set_text("Direct");
+            self.tray_menu_exit.set_text("Exit");
         }
+
         self.tray_menu_rule_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Rule);
         self.tray_menu_global_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Global);
         self.tray_menu_direct_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Direct);
@@ -890,6 +921,7 @@ impl App {
             Message::SetLanguage(lang) => {
                 self.gui_config.language = lang;
                 let _ = config::save_gui_config(&self.gui_config);
+                self.update_tray_menu();
                 Task::none()
             }
             Message::SetTheme(theme) => {
