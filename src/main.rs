@@ -71,6 +71,7 @@ struct App {
     url_input: String,
     core_installed: bool,
     core_install_msg: Option<String>,
+    update_status: state::UpdateStatus,
     node_search: String,
     profile_error: Option<String>,
     selected_group: String,
@@ -201,6 +202,7 @@ impl App {
             url_input: String::new(),
             core_installed,
             core_install_msg: None,
+            update_status: state::UpdateStatus::NotChecked,
             node_search: String::new(),
             profile_error: None,
             selected_group: String::new(),
@@ -959,6 +961,41 @@ impl App {
                 self.log_lines.push("[GUI] Settings saved and applied successfully.".to_string());
                 self.restart_core()
             }
+            Message::CheckUpdate => {
+                self.update_status = state::UpdateStatus::Checking;
+                Task::perform(check_app_update(), Message::UpdateChecked)
+            }
+            Message::UpdateChecked(result) => {
+                match result {
+                    Ok(tag_name) => {
+                        let current_version = format!("v{}", env!("CARGO_PKG_VERSION"));
+                        if tag_name.trim() == current_version.trim() {
+                            self.update_status = state::UpdateStatus::UpToDate;
+                        } else {
+                            self.update_status = state::UpdateStatus::NewVersion(tag_name);
+                        }
+                    }
+                    Err(e) => {
+                        self.update_status = state::UpdateStatus::Error(e);
+                    }
+                }
+                Task::none()
+            }
+            Message::OpenUrl(url) => {
+                #[cfg(target_os = "windows")]
+                let _ = std::process::Command::new("cmd")
+                    .args(&["/c", "start", "", &url])
+                    .spawn();
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open")
+                    .arg(&url)
+                    .spawn();
+                #[cfg(target_os = "linux")]
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&url)
+                    .spawn();
+                Task::none()
+            }
         }
     }
     
@@ -999,6 +1036,7 @@ impl App {
         let dns_server_local_input_str_ref = &self.dns_server_local_input_str;
         let dns_server_remote_input_str_ref = &self.dns_server_remote_input_str;
         let core_install_msg_ref = self.core_install_msg.as_deref();
+        let update_status_ref = &self.update_status;
 
         let main_content = responsive(move |size| {
             let theme = theme_ref;
@@ -1058,6 +1096,7 @@ impl App {
                     dns_server_remote_input_str_ref,
                     core_installed,
                     core_install_msg_ref,
+                    update_status_ref,
                     theme,
                 ),
             };
@@ -1458,6 +1497,34 @@ fn open_path_in_system(path: &std::path::Path) {
     let _ = std::process::Command::new("xdg-open")
         .arg(path)
         .spawn();
+}
+
+async fn check_app_update() -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+        
+    let res = client.get("https://api.github.com/repos/zangge8855/sing-box-gui/releases/latest")
+        .header("User-Agent", "sing-box-gui")
+        .send()
+        .await
+        .map_err(|e| format!("Network request failed: {}", e))?;
+        
+    if !res.status().is_success() {
+        return Err(format!("Server returned error status: {}", res.status()));
+    }
+    
+    #[derive(serde::Deserialize)]
+    struct GithubRelease {
+        tag_name: String,
+    }
+    
+    let release: GithubRelease = res.json()
+        .await
+        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        
+    Ok(release.tag_name)
 }
 
 fn main() -> iced::Result {

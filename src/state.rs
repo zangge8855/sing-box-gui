@@ -140,3 +140,12 @@ pub struct Bandwidth {
     pub up: u64,
     pub down: u64,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateStatus {
+    NotChecked,
+    Checking,
+    UpToDate,
+    NewVersion(String),
+    Error(String),
+}

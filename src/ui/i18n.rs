@@ -138,6 +138,16 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "close_conn" => "Close",
             "no_active_connections" => "No active connections.",
             "no_matching_connections" => "No matching connections found.",
+            
+            // Software Update
+            "app_update" => "Software Update",
+            "current_ver_label" => "Current Version",
+            "btn_check_update" => "Check for Updates",
+            "status_checking" => "Checking for updates...",
+            "status_uptodate" => "You are running the latest version.",
+            "status_new_available" => "New version available:",
+            "btn_goto_github" => "Go to GitHub Release",
+            "status_check_failed" => "Check failed:",
 
             _ => key,
         },
@@ -277,6 +287,16 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "close_conn" => "断开",
             "no_active_connections" => "当前没有活动的连接。",
             "no_matching_connections" => "未找到匹配的活动连接。",
+            
+            // Software Update
+            "app_update" => "软件更新",
+            "current_ver_label" => "当前版本",
+            "btn_check_update" => "检查更新",
+            "status_checking" => "正在检查更新...",
+            "status_uptodate" => "当前已是最新版本。",
+            "status_new_available" => "检测到新版本:",
+            "btn_goto_github" => "前往 GitHub 下载",
+            "status_check_failed" => "检查更新失败:",
             
             _ => key,
         }

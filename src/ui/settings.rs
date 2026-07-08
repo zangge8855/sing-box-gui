@@ -1,7 +1,7 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, responsive};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, responsive, pick_list};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
-use crate::state::{GuiConfig, Language, AppTheme};
+use crate::state::{GuiConfig, Language, AppTheme, UpdateStatus};
 use crate::ui::theme;
 use crate::ui::page_header;
 
@@ -13,6 +13,7 @@ pub fn render<'a>(
     dns_remote_str: &'a str,
     core_installed: bool,
     install_message: Option<&'a str>,
+    update_status: &'a UpdateStatus,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     
@@ -141,83 +142,51 @@ pub fn render<'a>(
         // 3. App & Core Preferences Card (Right Column)
         let lang_label = text(tr(lang, "app_language")).color(text_muted).size(13);
         
-        let make_lang_btn = |target_lang: Language, label: &'static str| {
-            let active = gui_config.language == target_lang;
-            let btn = button(
-                text(label)
-                    .size(13)
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center)
-            )
-            .padding([8, 16])
-            .width(Length::Fill)
-            .style(move |theme, status| {
-                if active {
-                    theme::button_primary(theme, status)
-                } else {
-                    theme::button_secondary(theme, status)
-                }
-            });
-                
-            let btn_el: Element<'_, Message> = if active {
-                btn.into()
-            } else {
-                btn.on_press(Message::SetLanguage(target_lang)).into()
-            };
-            btn_el
-        };
+        let lang_options = vec![
+            LanguageOption { lang: Language::Zh, label: "简体中文" },
+            LanguageOption { lang: Language::En, label: "English" },
+        ];
         
-        let lang_row = row![
-            make_lang_btn(Language::Zh, "简体中文"),
-            make_lang_btn(Language::En, "English")
-        ]
-        .spacing(15)
-        .width(Length::Fill);
+        let selected_lang_opt = lang_options.iter()
+            .find(|o| o.lang == gui_config.language)
+            .cloned();
+            
+        let lang_selector = pick_list(
+            lang_options,
+            selected_lang_opt,
+            move |opt| Message::SetLanguage(opt.lang)
+        )
+        .width(Length::Fill)
+        .padding(8);
         
         let theme_label = text(tr(lang, "app_theme")).color(text_muted).size(13);
         
-        let make_theme_btn = |target_theme: AppTheme, label_key: &'static str| {
-            let active = gui_config.theme == target_theme;
-            let btn = button(
-                text(tr(lang, label_key))
-                    .size(13)
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center)
-            )
-            .padding([8, 16])
-            .width(Length::Fill)
-            .style(move |theme, status| {
-                if active {
-                    theme::button_primary(theme, status)
-                } else {
-                    theme::button_secondary(theme, status)
-                }
-            });
-                
-            let btn_el: Element<'_, Message> = if active {
-                btn.into()
-            } else {
-                btn.on_press(Message::SetTheme(target_theme)).into()
-            };
-            btn_el
-        };
+        let theme_options = vec![
+            ThemeOption { theme: AppTheme::Auto, label: tr(lang, "theme_auto") },
+            ThemeOption { theme: AppTheme::Dark, label: tr(lang, "theme_dark") },
+            ThemeOption { theme: AppTheme::Light, label: tr(lang, "theme_light") },
+        ];
         
-        let theme_row = row![
-            make_theme_btn(AppTheme::Auto, "theme_auto"),
-            make_theme_btn(AppTheme::Dark, "theme_dark"),
-            make_theme_btn(AppTheme::Light, "theme_light")
-        ]
-        .spacing(15)
-        .width(Length::Fill);
+        let selected_theme_opt = theme_options.iter()
+            .find(|o| o.theme == gui_config.theme)
+            .cloned();
+            
+        let theme_selector = pick_list(
+            theme_options,
+            selected_theme_opt,
+            move |opt| Message::SetTheme(opt.theme)
+        )
+        .width(Length::Fill)
+        .padding(8);
         
         let app_prefs_card = container(
             column![
                 lang_label,
-                lang_row,
+                lang_selector,
                 theme_label,
-                theme_row
+                theme_selector
             ]
-            .spacing(15)
+            .spacing(12)
         )
         .padding(25)
         .width(Length::Fill)
@@ -283,6 +252,108 @@ pub fn render<'a>(
         .width(Length::Fill)
         .style(theme::card_bg);
         
+        let app_update_card = {
+            let update_info: Element<'_, Message> = match update_status {
+                UpdateStatus::NotChecked => {
+                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_check_update")).size(12))
+                        .padding([6, 12])
+                        .style(theme::button_primary)
+                        .on_press(Message::CheckUpdate)
+                        .into();
+                    row![
+                        text(format!("{}: v{}", tr(lang, "current_ver_label"), env!("CARGO_PKG_VERSION")))
+                            .color(text_muted)
+                            .size(13)
+                            .width(Length::Fill),
+                        btn
+                    ]
+                    .width(Length::Fill)
+                    .align_y(Alignment::Center)
+                    .into()
+                }
+                UpdateStatus::Checking => {
+                    row![
+                        text(tr(lang, "status_checking"))
+                            .color(text_muted)
+                            .size(13)
+                            .width(Length::Fill)
+                    ]
+                    .width(Length::Fill)
+                    .align_y(Alignment::Center)
+                    .into()
+                }
+                UpdateStatus::UpToDate => {
+                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_check_update")).size(12))
+                        .padding([6, 12])
+                        .style(theme::button_secondary)
+                        .on_press(Message::CheckUpdate)
+                        .into();
+                    row![
+                        text(tr(lang, "status_uptodate"))
+                            .color(theme::SUCCESS)
+                            .size(13)
+                            .width(Length::Fill),
+                        btn
+                    ]
+                    .width(Length::Fill)
+                    .align_y(Alignment::Center)
+                    .into()
+                }
+                UpdateStatus::NewVersion(tag_name) => {
+                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_goto_github")).size(12))
+                        .padding([6, 12])
+                        .style(theme::button_primary)
+                        .on_press(Message::OpenUrl("https://github.com/zangge8855/sing-box-gui/releases/latest".to_string()))
+                        .into();
+                    row![
+                        text(format!("{} {}", tr(lang, "status_new_available"), tag_name))
+                            .color(theme::WARNING)
+                            .size(13)
+                            .width(Length::Fill),
+                        btn
+                    ]
+                    .width(Length::Fill)
+                    .align_y(Alignment::Center)
+                    .into()
+                }
+                UpdateStatus::Error(err) => {
+                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_check_update")).size(12))
+                        .padding([6, 12])
+                        .style(theme::button_secondary)
+                        .on_press(Message::CheckUpdate)
+                        .into();
+                    column![
+                        row![
+                            text(tr(lang, "status_check_failed"))
+                                .color(theme::DANGER)
+                                .size(13)
+                                .width(Length::Fill),
+                            btn
+                        ]
+                        .width(Length::Fill)
+                        .align_y(Alignment::Center),
+                        text(err.clone())
+                            .color(theme::DANGER)
+                            .size(11)
+                    ]
+                    .spacing(8)
+                    .width(Length::Fill)
+                    .into()
+                }
+            };
+            
+            container(
+                column![
+                    text(tr(lang, "app_update")).color(text_muted).size(13),
+                    update_info
+                ]
+                .spacing(15)
+            )
+            .padding(25)
+            .width(Length::Fill)
+            .style(theme::card_bg)
+        };
+        
         // Layout columns responsively
         let left_col = column![
             settings_card,
@@ -298,7 +369,8 @@ pub fn render<'a>(
 
         let app_and_core_col = column![
             app_prefs_card,
-            core_mgmt_card
+            core_mgmt_card,
+            app_update_card
         ]
         .spacing(20)
         .width(if is_compact { Length::Fill } else { Length::FillPortion(1) });
@@ -398,4 +470,28 @@ pub fn render<'a>(
     });
     
     main_content.into()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LanguageOption {
+    pub lang: Language,
+    pub label: &'static str,
+}
+
+impl std::fmt::Display for LanguageOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThemeOption {
+    pub theme: AppTheme,
+    pub label: &'static str,
+}
+
+impl std::fmt::Display for ThemeOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
 }

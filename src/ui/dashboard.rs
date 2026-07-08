@@ -414,46 +414,56 @@ pub fn render<'a>(
                 .width(Length::Fill)
         };
         
+        let mode_items: Element<'_, Message> = if is_compact {
+            column![
+                make_mode_item(RoutingMode::Rule, "mode_rules", "mode_rules_desc"),
+                make_mode_item(RoutingMode::Global, "mode_global", "mode_global_desc"),
+                make_mode_item(RoutingMode::Direct, "mode_direct", "mode_direct_desc")
+            ]
+            .spacing(8)
+            .width(Length::Fill)
+            .into()
+        } else {
+            row![
+                make_mode_item(RoutingMode::Rule, "mode_rules", "mode_rules_desc"),
+                make_mode_item(RoutingMode::Global, "mode_global", "mode_global_desc"),
+                make_mode_item(RoutingMode::Direct, "mode_direct", "mode_direct_desc")
+            ]
+            .spacing(16)
+            .width(Length::Fill)
+            .into()
+        };
+
         let mode_card = container(
             column![
                 text(tr(lang, "active_mode")).color(text_muted).size(13),
-                column![
-                    make_mode_item(RoutingMode::Rule, "mode_rules", "mode_rules_desc"),
-                    make_mode_item(RoutingMode::Global, "mode_global", "mode_global_desc"),
-                    make_mode_item(RoutingMode::Direct, "mode_direct", "mode_direct_desc")
-                ]
-                .spacing(8)
-                .width(Length::Fill)
+                mode_items
             ]
             .spacing(12)
-            .height(Length::Fill)
         )
         .padding(20)
         .width(Length::Fill)
         .style(theme::card_bg);
 
-        let bottom_row: Element<'_, Message> = if is_compact {
+        let bottom_col = if is_compact {
             column![
                 container(chart_card).height(Length::Fixed(240.0)),
                 container(mode_card)
             ]
             .spacing(20)
             .width(Length::Fill)
-            .into()
         } else {
-            row![
-                container(chart_card).width(Length::FillPortion(2)).height(Length::Fill),
-                container(mode_card).width(Length::FillPortion(1)).height(Length::Fill)
+            column![
+                container(chart_card).height(Length::Fixed(260.0)),
+                container(mode_card)
             ]
             .spacing(20)
             .width(Length::Fill)
-            .height(Length::Fixed(300.0))
-            .into()
         };
         
         let content_col = column![
             top_row,
-            bottom_row
+            bottom_col
         ]
         .spacing(20)
         .width(Length::Fill);

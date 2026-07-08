@@ -62,4 +62,7 @@ pub enum Message {
     ToggleFakeIp,
     ToggleTcpFastOpen,
     ToggleTcpMultipath,
+    CheckUpdate,
+    UpdateChecked(Result<String, String>),
+    OpenUrl(String),
 }
