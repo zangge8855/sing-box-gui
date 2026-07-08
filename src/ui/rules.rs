@@ -22,7 +22,6 @@ pub fn render<'a>(
         let is_compact = size.width < 800.0;
         let theme = &theme_cloned;
         let text_primary = theme::text_primary(theme);
-        let text_muted = theme::text_muted(theme);
 
         let make_rule_section = |
             title_key: &'static str,
@@ -32,33 +31,43 @@ pub fn render<'a>(
         | {
             let mut list_col = Column::new().spacing(6);
             
-            if items.is_empty() {
-                list_col = list_col.push(
-                    text(tr(lang, "rules_desc"))
-                        .color(text_muted)
-                        .size(12)
-                );
-            } else {
-                for (idx, item) in items.iter().enumerate() {
-                    let del_btn = button(text("✕").size(10))
-                        .style(theme::button_danger)
-                        .padding([3, 6])
-                        .on_press(Message::RemoveRule {
-                            field: field_name.to_string(),
-                            index: idx,
-                        });
-                        
-                    let item_row = row![
-                        text(item).color(text_primary).size(13).width(Length::Fill),
-                        del_btn
-                    ]
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .padding([4, 8]);
+            for (idx, item) in items.iter().enumerate() {
+                let del_btn = button(text("✕").size(10))
+                    .style(theme::button_danger)
+                    .padding([3, 6])
+                    .on_press(Message::RemoveRule {
+                        field: field_name.to_string(),
+                        index: idx,
+                    });
                     
-                    list_col = list_col.push(container(item_row).style(move |t| theme::list_item_style(t, false, false)));
-                }
+                let item_row = row![
+                    text(item).color(text_primary).size(13).width(Length::Fill),
+                    del_btn
+                ]
+                .align_y(Alignment::Center)
+                .spacing(10)
+                .padding([4, 8]);
+                
+                list_col = list_col.push(container(item_row).style(move |t| theme::list_item_style(t, false, false)));
             }
+            
+            let list_content: Element<'_, Message> = if items.is_empty() {
+                container(
+                    text(tr(lang, "rules_desc"))
+                        .color(theme::text_tertiary(theme))
+                        .size(12)
+                        .align_x(Alignment::Center)
+                )
+                .width(Length::Fill)
+                .height(180.0)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .into()
+            } else {
+                scrollable(list_col)
+                    .height(180.0)
+                    .into()
+            };
             
             let placeholder = if field_name.contains("ip") {
                 tr(lang, "placeholder_ip")
@@ -91,7 +100,7 @@ pub fn render<'a>(
                         ..Default::default()
                     }),
                     row![input_box, add_btn].spacing(10).align_y(Alignment::Center),
-                    scrollable(list_col).height(Length::Fixed(180.0))
+                    list_content
                 ]
                 .spacing(12)
             )

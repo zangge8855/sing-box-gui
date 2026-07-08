@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Space, responsive};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::ui::theme;
@@ -26,147 +26,266 @@ pub fn render<'a>(
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
     
-    let text_primary = theme::text_primary(theme);
-    let text_muted = theme::text_muted(theme);
+    let theme_cloned = theme.clone();
+    let query_str = search_query.to_string();
     
-    // Build Header
-    let header = row![
-        text(tr(lang, "host")).width(Length::FillPortion(3)).color(text_muted).size(14),
-        text(tr(lang, "network")).width(Length::FillPortion(1)).color(text_muted).size(14),
-        text(tr(lang, "chains")).width(Length::FillPortion(2)).color(text_muted).size(14),
-        text(tr(lang, "rule")).width(Length::FillPortion(1)).color(text_muted).size(14),
-        text(tr(lang, "download")).width(Length::FillPortion(1)).color(text_muted).size(14),
-        text(tr(lang, "upload")).width(Length::FillPortion(1)).color(text_muted).size(14),
-        Space::new().width(Length::FillPortion(1))
-    ]
-    .spacing(10)
-    .padding([0, 10]);
-
-    // Filter connections
-    let filtered_connections: Vec<&Connection> = if search_query.trim().is_empty() {
-        active_connections.iter().collect()
-    } else {
-        let q = search_query.to_lowercase();
-        active_connections.iter()
-            .filter(|conn| {
-                let host_text = if !conn.metadata.host.is_empty() {
-                    &conn.metadata.host
-                } else {
-                    &conn.metadata.destination_ip
-                };
-                host_text.to_lowercase().contains(&q)
-                    || conn.metadata.destination_ip.to_lowercase().contains(&q)
-                    || conn.chains.iter().any(|c| c.to_lowercase().contains(&q))
-                    || conn.rule.to_lowercase().contains(&q)
-                    || conn.metadata.network.to_lowercase().contains(&q)
-            })
-            .collect()
-    };
-
-    // Build List
-    let mut list = column!().spacing(0);
-    if filtered_connections.is_empty() {
-        let empty_msg = if search_query.trim().is_empty() {
-            tr(lang, "no_active_connections")
+    let main_content = responsive(move |size| {
+        let theme = &theme_cloned;
+        let text_primary = theme::text_primary(theme);
+        let text_muted = theme::text_muted(theme);
+        let is_compact = size.width < 850.0;
+        
+        // Filter connections
+        let filtered_connections: Vec<&Connection> = if query_str.trim().is_empty() {
+            active_connections.iter().collect()
         } else {
-            tr(lang, "no_matching_connections")
+            let q = query_str.to_lowercase();
+            active_connections.iter()
+                .filter(|conn| {
+                    let host_text = if !conn.metadata.host.is_empty() {
+                        &conn.metadata.host
+                    } else {
+                        &conn.metadata.destination_ip
+                    };
+                    host_text.to_lowercase().contains(&q)
+                        || conn.metadata.destination_ip.to_lowercase().contains(&q)
+                        || conn.chains.iter().any(|c| c.to_lowercase().contains(&q))
+                        || conn.rule.to_lowercase().contains(&q)
+                        || conn.metadata.network.to_lowercase().contains(&q)
+                })
+                .collect()
         };
-        list = list.push(
-            container(text(empty_msg).color(text_muted))
-                .width(Length::Fill)
-                .center_x(Length::Fill)
-                .padding(40)
-        );
-    } else {
-        let len = filtered_connections.len();
-        for (idx, conn) in filtered_connections.into_iter().enumerate() {
-            let host_full = if !conn.metadata.host.is_empty() {
-                conn.metadata.host.clone()
+        
+        if is_compact {
+            // Mobile / Compact Layout: List of clean Connection Cards
+            let mut list = column!().spacing(12);
+            
+            if filtered_connections.is_empty() {
+                let empty_msg = if query_str.trim().is_empty() {
+                    tr(lang, "no_active_connections")
+                } else {
+                    tr(lang, "no_matching_connections")
+                };
+                list = list.push(
+                    container(text(empty_msg).color(text_muted).size(13))
+                        .width(Length::Fill)
+                        .center_x(Length::Fill)
+                        .padding(40)
+                );
             } else {
-                conn.metadata.destination_ip.clone()
-            };
-            let host_text = if host_full.chars().count() > 48 {
-                let head: String = host_full.chars().take(45).collect();
-                format!("{}...", head)
-            } else {
-                host_full
-            };
-            
-            let chains_text = if conn.chains.is_empty() {
-                tr(lang, "direct_chain").to_string()
-            } else {
-                conn.chains.join(" ➔ ")
-            };
-            
-            let dl_text = format_size(conn.download);
-            let ul_text = format_size(conn.upload);
-            
-            let close_btn = button(
-                text(tr(lang, "close_conn")).size(12)
-            )
-            .style(theme::button_danger)
-            .padding([4, 8])
-            .on_press(Message::CloseConnection(conn.id.clone()));
-            
-            let row_content = row![
-                text(host_text).width(Length::FillPortion(3)).size(13).color(text_primary),
-                text(&conn.metadata.network).width(Length::FillPortion(1)).size(13).color(theme::ACCENT_GREEN),
-                text(chains_text).width(Length::FillPortion(2)).size(13).color(text_muted),
-                text(&conn.rule).width(Length::FillPortion(1)).size(13).color(text_primary),
-                text(dl_text).width(Length::FillPortion(1)).size(13).color(text_primary),
-                text(ul_text).width(Length::FillPortion(1)).size(13).color(text_primary),
-                container(close_btn).width(Length::FillPortion(1)).center_x(Length::FillPortion(1))
-            ]
-            .align_y(Alignment::Center)
-            .spacing(10)
-            .padding(10);
-            
-            list = list.push(container(row_content));
-            
-            // Add subtle divider except for the last item
-            if idx + 1 < len {
-                let separator = container(Space::new())
-                    .height(1)
+                for conn in filtered_connections {
+                    let host_full = if !conn.metadata.host.is_empty() {
+                        conn.metadata.host.clone()
+                    } else {
+                        conn.metadata.destination_ip.clone()
+                    };
+                    
+                    let chains_text = if conn.chains.is_empty() {
+                        tr(lang, "direct_chain").to_string()
+                    } else {
+                        conn.chains.join(" ➔ ")
+                    };
+                    
+                    let dl_text = format_size(conn.download);
+                    let ul_text = format_size(conn.upload);
+                    
+                    let close_btn = button(
+                        text(tr(lang, "close_conn")).size(11)
+                    )
+                    .style(theme::button_danger)
+                    .padding([4, 8])
+                    .on_press(Message::CloseConnection(conn.id.clone()));
+                    
+                    let card = container(
+                        column![
+                            row![
+                                text(host_full)
+                                    .color(text_primary)
+                                    .size(13)
+                                    .font(iced::Font {
+                                        weight: iced::font::Weight::Bold,
+                                        ..Default::default()
+                                    })
+                                    .width(Length::Fill),
+                                close_btn
+                            ]
+                            .align_y(Alignment::Center)
+                            .width(Length::Fill),
+                            
+                            row![
+                                container(text(&conn.metadata.network).size(9).color(theme::ACCENT_GREEN))
+                                    .padding([2, 6])
+                                    .style(|t| container::Style {
+                                        background: Some(iced::Background::Color(if theme::is_dark(t) {
+                                            iced::Color::from_rgba(0.2, 0.8, 0.2, 0.1)
+                                        } else {
+                                            iced::Color::from_rgba(0.2, 0.8, 0.2, 0.05)
+                                        })),
+                                        border: iced::Border {
+                                            color: theme::ACCENT_GREEN,
+                                            width: 1.0,
+                                            radius: 4.0.into(),
+                                        },
+                                        ..Default::default()
+                                    }),
+                                container(text(&conn.rule).size(9).color(theme::ACCENT_PURPLE))
+                                    .padding([2, 6])
+                                    .style(|t| container::Style {
+                                        background: Some(iced::Background::Color(if theme::is_dark(t) {
+                                            iced::Color::from_rgba(0.55, 0.36, 0.96, 0.1)
+                                        } else {
+                                            iced::Color::from_rgba(0.55, 0.36, 0.96, 0.05)
+                                        })),
+                                        border: iced::Border {
+                                            color: theme::ACCENT_PURPLE,
+                                            width: 1.0,
+                                            radius: 4.0.into(),
+                                        },
+                                        ..Default::default()
+                                    }),
+                            ]
+                            .spacing(8)
+                            .align_y(Alignment::Center),
+                            
+                            text(format!("{}: {}", tr(lang, "chains"), chains_text))
+                                .color(text_muted)
+                                .size(11),
+                                
+                            row![
+                                text(format!("↓ {}", dl_text)).color(theme::ACCENT_BLUE).size(11),
+                                Space::new().width(12),
+                                text(format!("↑ {}", ul_text)).color(theme::ACCENT_PURPLE).size(11)
+                            ]
+                            .align_y(Alignment::Center)
+                        ]
+                        .spacing(8)
+                    )
+                    .padding(14)
                     .width(Length::Fill)
-                    .style(|theme| container::Style {
-                        background: Some(iced::Background::Color(if theme::is_dark(theme) {
-                            theme::BORDER_DARK
-                        } else {
-                            theme::BORDER_LIGHT
-                        })),
-                        ..Default::default()
-                    });
-                list = list.push(separator);
+                    .style(theme::card_bg);
+                    
+                    list = list.push(card);
+                }
             }
-        }
-    }
-    
-    // Header styled background inside the card
-    let header_styled = container(header)
-        .padding([12, 10])
-        .style(|theme| container::Style {
-            background: Some(iced::Background::Color(if theme::is_dark(theme) {
-                theme::CARD_LIGHT
+            scrollable(list).height(Length::Fill).into()
+        } else {
+            // Desktop Layout: 7-Column clean aligned table
+            let header = row![
+                text(tr(lang, "host")).width(Length::FillPortion(3)).color(text_muted).size(14),
+                text(tr(lang, "network")).width(Length::FillPortion(1)).color(text_muted).size(14),
+                text(tr(lang, "chains")).width(Length::FillPortion(2)).color(text_muted).size(14),
+                text(tr(lang, "rule")).width(Length::FillPortion(1)).color(text_muted).size(14),
+                text(tr(lang, "download")).width(Length::FillPortion(1)).color(text_muted).size(14),
+                text(tr(lang, "upload")).width(Length::FillPortion(1)).color(text_muted).size(14),
+                Space::new().width(Length::FillPortion(1))
+            ]
+            .spacing(10)
+            .padding([0, 10]);
+            
+            let mut list = column!().spacing(0);
+            if filtered_connections.is_empty() {
+                let empty_msg = if query_str.trim().is_empty() {
+                    tr(lang, "no_active_connections")
+                } else {
+                    tr(lang, "no_matching_connections")
+                };
+                list = list.push(
+                    container(text(empty_msg).color(text_muted))
+                        .width(Length::Fill)
+                        .center_x(Length::Fill)
+                        .padding(40)
+                );
             } else {
-                theme::SIDEBAR_BG_LIGHT
-            })),
-            border: iced::Border {
-                color: if theme::is_dark(theme) { theme::BORDER_DARK } else { theme::BORDER_LIGHT },
-                width: 1.0,
-                radius: 0.0.into(),
-            },
-            ..Default::default()
-        });
+                let len = filtered_connections.len();
+                for (idx, conn) in filtered_connections.into_iter().enumerate() {
+                    let host_full = if !conn.metadata.host.is_empty() {
+                        conn.metadata.host.clone()
+                    } else {
+                        conn.metadata.destination_ip.clone()
+                    };
+                    let host_text = if host_full.chars().count() > 48 {
+                        let head: String = host_full.chars().take(45).collect();
+                        format!("{}...", head)
+                    } else {
+                        host_full
+                    };
+                    
+                    let chains_text = if conn.chains.is_empty() {
+                        tr(lang, "direct_chain").to_string()
+                    } else {
+                        conn.chains.join(" ➔ ")
+                    };
+                    
+                    let dl_text = format_size(conn.download);
+                    let ul_text = format_size(conn.upload);
+                    
+                    let close_btn = button(
+                        text(tr(lang, "close_conn")).size(12)
+                    )
+                    .style(theme::button_danger)
+                    .padding([4, 8])
+                    .on_press(Message::CloseConnection(conn.id.clone()));
+                    
+                    let row_content = row![
+                        text(host_text).width(Length::FillPortion(3)).size(13).color(text_primary),
+                        text(&conn.metadata.network).width(Length::FillPortion(1)).size(13).color(theme::ACCENT_GREEN),
+                        text(chains_text).width(Length::FillPortion(2)).size(13).color(text_muted),
+                        text(&conn.rule).width(Length::FillPortion(1)).size(13).color(text_primary),
+                        text(dl_text).width(Length::FillPortion(1)).size(13).color(text_primary),
+                        text(ul_text).width(Length::FillPortion(1)).size(13).color(text_primary),
+                        container(close_btn).width(Length::FillPortion(1)).center_x(Length::FillPortion(1))
+                    ]
+                    .align_y(Alignment::Center)
+                    .spacing(10)
+                    .padding(10);
+                    
+                    list = list.push(container(row_content));
+                    
+                    if idx + 1 < len {
+                        let separator = container(Space::new())
+                            .height(1)
+                            .width(Length::Fill)
+                            .style(|theme| container::Style {
+                                background: Some(iced::Background::Color(if theme::is_dark(theme) {
+                                    theme::BORDER_DARK
+                                } else {
+                                    theme::BORDER_LIGHT
+                                })),
+                                ..Default::default()
+                            });
+                        list = list.push(separator);
+                    }
+                }
+            }
+            
+            let header_styled = container(header)
+                .padding([12, 10])
+                .style(|theme| container::Style {
+                    background: Some(iced::Background::Color(if theme::is_dark(theme) {
+                        theme::CARD_LIGHT
+                    } else {
+                        theme::SIDEBAR_BG_LIGHT
+                    })),
+                    border: iced::Border {
+                        color: if theme::is_dark(theme) { theme::BORDER_DARK } else { theme::BORDER_LIGHT },
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                });
 
-    let table_container = container(
-        column![
-            header_styled,
-            scrollable(list).height(Length::Fill)
-        ]
-    )
-    .style(theme::card_bg)
-    .height(Length::Fill)
-    .width(Length::Fill);
+            container(
+                column![
+                    header_styled,
+                    scrollable(list).height(Length::Fill)
+                ]
+            )
+            .style(theme::card_bg)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .into()
+        }
+    });
 
     let search_input = text_input(tr(lang, "placeholder_connections_search"), search_query)
         .on_input(Message::ConnectionsSearchChanged)
@@ -175,5 +294,5 @@ pub fn render<'a>(
         .style(theme::input_field);
 
     let header = page_header("tab_connections", lang, Some(search_input.into()), theme);
-    page_shell_fixed(header, table_container.into())
+    page_shell_fixed(header, main_content.into())
 }

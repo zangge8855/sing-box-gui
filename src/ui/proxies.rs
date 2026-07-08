@@ -73,57 +73,114 @@ pub fn render<'a>(
         
         let group_info = proxy_groups.get(group_name).unwrap();
         
-        // Left Column: Groups List
-        let mut groups_col = Column::new().spacing(10);
-        for g in &groups {
-            let is_active = g.name == group_name;
-            let active_node = g.now.as_deref().unwrap_or("-");
+        let groups_cloned = groups.clone();
+        let selected_group_cloned = group_name.to_string();
+        let group_info_cloned = group_info.clone();
+        let nodes_cloned = nodes.to_vec();
+        let proxy_groups_cloned = proxy_groups.clone();
+        let search_query_cloned = search_query.to_string();
+        let theme_cloned = theme.clone();
+        
+        let main_content = responsive(move |size| {
+            let theme = &theme_cloned;
+            let text_primary = theme::text_primary(theme);
+            let text_muted = theme::text_muted(theme);
+            let is_compact = size.width < 750.0;
             
-            let g_btn = button(
-                column![
-                    text(&g.name).size(13).font(iced::Font {
-                        weight: iced::font::Weight::Bold,
-                        ..Default::default()
-                    }).color(if is_active { Color::WHITE } else { text_primary }),
-                    text(active_node).size(10).color(if is_active { Color::WHITE } else { theme::ACCENT_BLUE })
-                ]
-                .spacing(3)
-            )
-            .padding([10, 14])
-            .width(Length::Fill)
-            .style(move |t, s| {
-                if is_active {
-                    theme::button_primary(t, s)
-                } else {
-                    theme::button_secondary(t, s)
+            let group_selector = if is_compact {
+                let mut groups_row = Row::new().spacing(8);
+                for g in &groups_cloned {
+                    let is_active = g.name == selected_group_cloned;
+                    let active_node = g.now.as_deref().unwrap_or("-");
+                    
+                    let g_btn = button(
+                        column![
+                            text(g.name.clone()).size(12).font(iced::Font {
+                                weight: iced::font::Weight::Bold,
+                                ..Default::default()
+                            }).color(if is_active { Color::WHITE } else { text_primary }),
+                            text(active_node).size(9).color(if is_active { Color::WHITE } else { theme::ACCENT_BLUE })
+                        ]
+                        .spacing(2)
+                    )
+                    .padding([6, 12])
+                    .style(move |t, s| {
+                        if is_active {
+                            theme::button_primary(t, s)
+                        } else {
+                            theme::button_secondary(t, s)
+                        }
+                    })
+                    .on_press(Message::SelectGroup(g.name.clone()));
+                    
+                    groups_row = groups_row.push(g_btn);
                 }
-            })
-            .on_press(Message::SelectGroup(g.name.clone()));
+                
+                container(
+                    scrollable(groups_row).direction(scrollable::Direction::Horizontal(Default::default()))
+                )
+                .width(Length::Fill)
+            } else {
+                let mut groups_col = Column::new().spacing(10);
+                for g in &groups_cloned {
+                    let is_active = g.name == selected_group_cloned;
+                    let active_node = g.now.as_deref().unwrap_or("-");
+                    
+                    let g_btn = button(
+                        column![
+                            text(g.name.clone()).size(13).font(iced::Font {
+                                weight: iced::font::Weight::Bold,
+                                ..Default::default()
+                            }).color(if is_active { Color::WHITE } else { text_primary }),
+                            text(active_node).size(10).color(if is_active { Color::WHITE } else { theme::ACCENT_BLUE })
+                        ]
+                        .spacing(3)
+                    )
+                    .padding([10, 14])
+                    .width(Length::Fill)
+                    .style(move |t, s| {
+                        if is_active {
+                            theme::button_primary(t, s)
+                        } else {
+                            theme::button_secondary(t, s)
+                        }
+                    })
+                    .on_press(Message::SelectGroup(g.name.clone()));
+                    
+                    groups_col = groups_col.push(g_btn);
+                }
+                
+                container(
+                    scrollable(groups_col).height(Length::Fill)
+                )
+                .width(Length::Fixed(180.0))
+                .height(Length::Fill)
+            };
             
-            groups_col = groups_col.push(g_btn);
-        }
-        
-        let left_pane = container(
-            scrollable(groups_col).height(Length::Fill)
-        )
-        .width(Length::Fixed(180.0))
-        .height(Length::Fill);
-        
-        // Right Column: Nodes Grid of Selected Group (Responsive Grid)
-        let right_grid = responsive(move |size| {
-            if let Some(ref sub_nodes) = group_info.all {
-                let is_selector = group_info.proxy_type.to_lowercase() == "selector";
-                let filtered_sub_nodes: Vec<&String> = if search_query.trim().is_empty() {
+            let grid_width = if is_compact { size.width } else { size.width - 220.0 };
+            let cols = if grid_width < 450.0 {
+                1
+            } else if grid_width < 700.0 {
+                2
+            } else if grid_width < 950.0 {
+                3
+            } else {
+                4
+            };
+            
+            let right_pane_content: Element<'a, Message> = if let Some(ref sub_nodes) = group_info_cloned.all {
+                let is_selector = group_info_cloned.proxy_type.to_lowercase() == "selector";
+                let filtered_sub_nodes: Vec<&String> = if search_query_cloned.trim().is_empty() {
                     sub_nodes.iter().collect()
                 } else {
-                    let q = search_query.to_lowercase();
+                    let q = search_query_cloned.to_lowercase();
                     sub_nodes.iter()
                         .filter(|n| n.to_lowercase().contains(&q))
                         .collect()
                 };
 
                 if filtered_sub_nodes.is_empty() {
-                    return container(
+                    container(
                         text(tr(lang, "no_matching_nodes"))
                             .color(text_muted)
                             .size(15)
@@ -131,198 +188,186 @@ pub fn render<'a>(
                     .padding(40)
                     .width(Length::Fill)
                     .style(theme::card_bg)
-                    .into();
-                }
-
-                let mut card_elements: Vec<Element<'_, Message>> = Vec::new();
-                for node_name in filtered_sub_nodes {
-                    let active = Some(node_name.as_str()) == group_info.now.as_deref();
-                    
-                    // Find node latency and type
-                    let mut latency = None;
-                    let mut node_type = "unknown".to_string();
-                    
-                    if let Some(n_info) = proxy_groups.get(node_name) {
-                        node_type = n_info.proxy_type.clone();
-                        if let Some(ref hist) = n_info.history {
-                            if let Some(last) = hist.last() {
-                                if let Some(d) = last.get("delay").and_then(|d| d.as_u64()) {
-                                    latency = Some(d);
+                    .into()
+                } else {
+                    let mut card_elements: Vec<Element<'a, Message>> = Vec::new();
+                    for node_name in filtered_sub_nodes {
+                        let active = Some(node_name.as_str()) == group_info_cloned.now.as_deref();
+                        
+                        let mut latency = None;
+                        let mut node_type = "unknown".to_string();
+                        
+                        if let Some(n_info) = proxy_groups_cloned.get(node_name) {
+                            node_type = n_info.proxy_type.clone();
+                            if let Some(ref hist) = n_info.history {
+                                if let Some(last) = hist.last() {
+                                    if let Some(d) = last.get("delay").and_then(|d| d.as_u64()) {
+                                        latency = Some(d);
+                                    }
                                 }
                             }
+                        } else if let Some(n) = nodes_cloned.iter().find(|n| n.name == *node_name) {
+                            node_type = n.node_type.clone();
                         }
-                    } else if let Some(n) = nodes.iter().find(|n| n.name == *node_name) {
-                        node_type = n.node_type.clone();
-                    }
-                    
-                    if latency.is_none() {
-                        if let Some(n) = nodes.iter().find(|n| n.name == *node_name) {
-                            latency = n.latency;
-                        }
-                    }
-                    
-                    let latency_text = match latency {
-                        Some(ms) => {
-                            let col = if ms < 150 {
-                                theme::SUCCESS
-                            } else if ms < 300 {
-                                theme::WARNING
-                            } else {
-                                theme::DANGER
-                            };
-                            
-                            if ms >= 9999 {
-                                text(tr(lang, "latency_timeout"))
-                                    .color(theme::DANGER)
-                                    .size(11)
-                                    .font(iced::Font {
-                                        weight: iced::font::Weight::Bold,
-                                        ..Default::default()
-                                    })
-                            } else {
-                                text(format!("{} ms", ms))
-                                    .color(col)
-                                    .size(11)
-                                    .font(iced::Font {
-                                        weight: iced::font::Weight::Bold,
-                                        ..Default::default()
-                                    })
+                        
+                        if latency.is_none() {
+                            if let Some(n) = nodes_cloned.iter().find(|n| n.name == *node_name) {
+                                latency = n.latency;
                             }
                         }
-                        None => text("-")
-                            .color(text_muted)
-                            .size(11)
-                            .font(iced::Font {
-                                weight: iced::font::Weight::Bold,
-                                ..Default::default()
-                            }),
-                    };
-                    
-                    let type_tag = container(
-                        text(node_type.to_uppercase())
-                            .size(9)
-                            .color(text_muted)
-                            .font(iced::Font {
-                                weight: iced::font::Weight::Bold,
-                                ..Default::default()
-                            })
-                    )
-                    .padding([2, 6])
-                    .style(move |t| {
-                        let bg_color = if theme::is_dark(t) {
-                            Color::from_rgb(0.14, 0.17, 0.22)
-                        } else {
-                            Color::from_rgb(0.92, 0.94, 0.97)
+                        
+                        let latency_text = match latency {
+                            Some(ms) => {
+                                let col = if ms < 150 {
+                                    theme::SUCCESS
+                                } else if ms < 300 {
+                                    theme::WARNING
+                                } else {
+                                    theme::DANGER
+                                };
+                                
+                                if ms >= 9999 {
+                                    text(tr(lang, "latency_timeout"))
+                                        .color(theme::DANGER)
+                                        .size(11)
+                                        .font(iced::Font {
+                                            weight: iced::font::Weight::Bold,
+                                            ..Default::default()
+                                        })
+                                } else {
+                                    text(format!("{} ms", ms))
+                                        .color(col)
+                                        .size(11)
+                                        .font(iced::Font {
+                                            weight: iced::font::Weight::Bold,
+                                            ..Default::default()
+                                        })
+                                }
+                            }
+                            None => text("-")
+                                .color(text_muted)
+                                .size(11)
+                                .font(iced::Font {
+                                    weight: iced::font::Weight::Bold,
+                                    ..Default::default()
+                                }),
                         };
-                        container::Style {
-                            background: Some(iced::Background::Color(bg_color)),
-                            border: iced::Border {
-                                radius: 4.0.into(),
+                        
+                        let type_tag = container(
+                            text(node_type.to_uppercase())
+                                .size(9)
+                                .color(text_muted)
+                                .font(iced::Font {
+                                    weight: iced::font::Weight::Bold,
+                                    ..Default::default()
+                                })
+                        )
+                        .padding([2, 6])
+                        .style(move |t| {
+                            let bg_color = if theme::is_dark(t) {
+                                Color::from_rgb(0.14, 0.17, 0.22)
+                            } else {
+                                Color::from_rgb(0.92, 0.94, 0.97)
+                            };
+                            container::Style {
+                                background: Some(iced::Background::Color(bg_color)),
+                                border: iced::Border {
+                                    radius: 4.0.into(),
+                                    ..Default::default()
+                                },
                                 ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    });
-                    
-                    let card_content = container(
-                        column![
-                            row![
-                                text(node_name)
-                                    .color(text_primary)
-                                    .size(14)
-                                    .font(iced::Font {
-                                        weight: iced::font::Weight::Medium,
-                                        ..Default::default()
-                                    })
-                                    .width(Length::Fill),
-                                latency_text
+                            }
+                        });
+                        
+                        let card_content = container(
+                            column![
+                                row![
+                                    text(node_name.clone())
+                                        .color(text_primary)
+                                        .size(14)
+                                        .font(iced::Font {
+                                            weight: iced::font::Weight::Medium,
+                                            ..Default::default()
+                                        })
+                                        .width(Length::Fill),
+                                    latency_text
+                                ]
+                                .align_y(Alignment::Center),
+                                row![
+                                    type_tag
+                                ]
                             ]
-                            .align_y(Alignment::Center),
-                            row![
-                                type_tag
-                            ]
-                        ]
-                        .spacing(8)
-                    )
-                    .padding(20)
-                    .width(Length::Fill)
-                    .style(move |t| {
-                        if active {
-                            theme::card_selected(t)
-                        } else {
-                            theme::card_bg(t)
-                        }
-                    });
-                    
-                    let group_clone = group_name.to_string();
-                    let node_clone = node_name.clone();
-                    
-                    let mut card_btn = button(card_content)
-                        .padding(0)
-                        .style(move |t, s| {
-                            let base = if active {
+                            .spacing(8)
+                        )
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(move |t| {
+                            if active {
                                 theme::card_selected(t)
                             } else {
                                 theme::card_bg(t)
-                            };
-                            let border_color = match s {
-                                button::Status::Hovered if is_selector => theme::ACCENT_PURPLE,
-                                _ => base.border.color,
-                            };
-                            button::Style {
-                                background: base.background,
-                                text_color: if theme::is_dark(t) { theme::TEXT_PRIMARY } else { theme::TEXT_PRIMARY_LIGHT },
-                                border: iced::Border {
-                                    color: border_color,
-                                    width: base.border.width,
-                                    radius: base.border.radius,
-                                },
-                                shadow: base.shadow,
-                                ..Default::default()
                             }
-                        })
-                        .width(Length::Fill);
-                        
-                    if is_selector {
-                        card_btn = card_btn.on_press(Message::SelectGroupNode {
-                            group: group_clone,
-                            node: node_clone,
                         });
-                    }
                         
-                    card_elements.push(card_btn.into());
-                }
+                        let group_clone = group_name.to_string();
+                        let node_clone = node_name.clone();
+                        
+                        let mut card_btn = button(card_content)
+                            .padding(0)
+                            .style(move |t, s| {
+                                let base = if active {
+                                    theme::card_selected(t)
+                                } else {
+                                    theme::card_bg(t)
+                                };
+                                let border_color = match s {
+                                    button::Status::Hovered if is_selector => theme::ACCENT_PURPLE,
+                                    _ => base.border.color,
+                                };
+                                button::Style {
+                                    background: base.background,
+                                    text_color: if theme::is_dark(t) { theme::TEXT_PRIMARY } else { theme::TEXT_PRIMARY_LIGHT },
+                                    border: iced::Border {
+                                        color: border_color,
+                                        width: base.border.width,
+                                        radius: base.border.radius,
+                                    },
+                                    shadow: base.shadow,
+                                    ..Default::default()
+                                }
+                            })
+                            .width(Length::Fill);
+                            
+                        if is_selector {
+                            card_btn = card_btn.on_press(Message::SelectGroupNode {
+                                group: group_clone,
+                                node: node_clone,
+                            });
+                        }
+                            
+                        card_elements.push(card_btn.into());
+                    }
 
-                // Calculate columns based on width
-                let cols = if size.width < 500.0 {
-                    1
-                } else if size.width < 750.0 {
-                    2
-                } else if size.width < 1000.0 {
-                    3
-                } else {
-                    4
-                };
-
-                let mut grid_rows = Column::new().spacing(15);
-                let mut current_row = Row::new().spacing(15);
-                let total_cards = card_elements.len();
-                
-                for (i, card) in card_elements.into_iter().enumerate() {
-                    current_row = current_row.push(container(card).width(Length::FillPortion(1)));
-                    if (i + 1) % cols == 0 {
+                    let mut grid_rows = Column::new().spacing(15);
+                    let mut current_row = Row::new().spacing(15);
+                    let total_cards = card_elements.len();
+                    
+                    for (i, card) in card_elements.into_iter().enumerate() {
+                        current_row = current_row.push(container(card).width(Length::FillPortion(1)));
+                        if (i + 1) % cols == 0 {
+                            grid_rows = grid_rows.push(current_row);
+                            current_row = Row::new().spacing(15);
+                        }
+                    }
+                    let remaining_elements = total_cards % cols;
+                    if remaining_elements > 0 {
+                        for _ in remaining_elements..cols {
+                            current_row = current_row.push(container(text("")).width(Length::FillPortion(1)));
+                        }
                         grid_rows = grid_rows.push(current_row);
-                        current_row = Row::new().spacing(15);
                     }
+                    scrollable(grid_rows).height(Length::Fill).into()
                 }
-                let remaining_elements = total_cards % cols;
-                if remaining_elements > 0 {
-                    for _ in remaining_elements..cols {
-                        current_row = current_row.push(container(text("")).width(Length::FillPortion(1)));
-                    }
-                    grid_rows = grid_rows.push(current_row);
-                }
-                scrollable(grid_rows).height(Length::Fill).into()
             } else {
                 container(
                     text(tr(lang, "no_matching_nodes"))
@@ -333,43 +378,44 @@ pub fn render<'a>(
                 .width(Length::Fill)
                 .style(theme::card_bg)
                 .into()
+            };
+            
+            if is_compact {
+                column![
+                    group_selector,
+                    right_pane_content
+                ]
+                .spacing(15)
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .into()
+            } else {
+                let divider = container(iced::widget::Space::new())
+                    .width(1)
+                    .height(Length::Fill)
+                    .style(|theme| container::Style {
+                        background: Some(iced::Background::Color(if theme::is_dark(theme) {
+                            theme::BORDER_DARK
+                        } else {
+                            theme::BORDER_LIGHT
+                        })),
+                        ..Default::default()
+                    });
+                    
+                row![
+                    group_selector,
+                    divider,
+                    column![right_pane_content].spacing(20).width(Length::Fill).height(Length::Fill)
+                ]
+                .spacing(20)
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .into()
             }
         });
         
-        let right_pane = column![
-            right_grid
-        ]
-        .spacing(20)
-        .width(Length::Fill)
-        .height(Length::Fill);
-        
-        let divider = container(iced::widget::Space::new())
-            .width(1)
-            .height(Length::Fill)
-            .style(|theme| container::Style {
-                background: Some(iced::Background::Color(if theme::is_dark(theme) {
-                    theme::BORDER_DARK
-                } else {
-                    theme::BORDER_LIGHT
-                })),
-                ..Default::default()
-            });
-
-        let content: Element<'a, Message> = container(
-            row![
-                left_pane,
-                divider,
-                right_pane
-            ]
-            .spacing(20)
-            .height(Length::Fill)
-            .width(Length::Fill)
-        )
-        .height(Length::Fill)
-        .into();
-        
         let header = page_header("proxy_nodes", lang, Some(header_actions), theme);
-        page_shell_fixed(header, content)
+        page_shell_fixed(header, main_content.into())
         
     } else {
         // Fallback: simple flat node list when core is not running

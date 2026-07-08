@@ -17,92 +17,127 @@ pub fn render<'a>(
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
     
-    let text_primary = theme::text_primary(theme);
-    let text_muted = theme::text_muted(theme);
+    let theme_cloned = theme.clone();
     
-    // Title (now provided by page_header)
-    
-    // Add subscription input form
-    let input = text_input(tr(lang, "sub_url_placeholder"), url_input)
-        .on_input(Message::SubscriptionInputChanged)
-        .on_submit(Message::DownloadSubscription)
-        .padding(12)
-        .width(Length::Fill)
-        .style(theme::input_field);
+    let main_content = responsive(move |size| {
+        let theme = &theme_cloned;
+        let is_compact = size.width < 750.0;
+        let text_primary = theme::text_primary(theme);
+        let text_muted = theme::text_muted(theme);
         
-    let download_btn = if downloading {
-        button(text(tr(lang, "btn_downloading")).size(14))
+        // Add subscription input form
+        let input = text_input(tr(lang, "sub_url_placeholder"), url_input)
+            .on_input(Message::SubscriptionInputChanged)
+            .on_submit(Message::DownloadSubscription)
+            .padding(12)
+            .width(Length::Fill)
+            .style(theme::input_field);
+            
+        let download_btn = if downloading {
+            button(
+                text(tr(lang, "btn_downloading"))
+                    .size(14)
+                    .align_x(Alignment::Center)
+            )
             .padding([12, 24])
             .style(theme::button_secondary)
-    } else {
-        button(text(tr(lang, "btn_download")).size(14))
+        } else {
+            button(
+                text(tr(lang, "btn_download"))
+                    .size(14)
+                    .align_x(Alignment::Center)
+            )
             .padding([12, 24])
             .style(theme::button_primary)
             .on_press(Message::DownloadSubscription)
-    };
-    
-    let add_form = container(
-        column![
-            text(tr(lang, "import_sub")).color(text_muted).size(14),
+        };
+        
+        let open_folder_btn = button(
+            text(tr(lang, "btn_open_folder"))
+                .size(14)
+                .align_x(Alignment::Center)
+        )
+        .padding([12, 24])
+        .style(theme::button_secondary)
+        .on_press(Message::OpenProfilesFolder);
+        
+        let form_layout: Element<'a, Message> = if is_compact {
+            column![
+                input,
+                row![
+                    download_btn.width(Length::Fill),
+                    open_folder_btn.width(Length::Fill)
+                ]
+                .spacing(15)
+                .width(Length::Fill)
+            ]
+            .spacing(12)
+            .width(Length::Fill)
+            .into()
+        } else {
             row![
                 input,
                 download_btn,
-                button(text(tr(lang, "btn_open_folder")).size(14))
-                    .padding([12, 24])
-                    .style(theme::button_secondary)
-                    .on_press(Message::OpenProfilesFolder)
+                open_folder_btn
             ]
             .spacing(15)
             .align_y(Alignment::Center)
-        ]
-        .spacing(10)
-    )
-    .padding(20)
-    .style(theme::card_bg);
-    
-    let error_banner = if let Some(err) = profile_error {
-        Some(
-            container(
-                row![
-                    text("⚠️ ").size(14),
-                    text(err).size(13).color(theme::DANGER)
-                ]
-                .align_y(Alignment::Center)
-            )
-            .padding(12)
             .width(Length::Fill)
-            .style(|theme| container::Style {
-                background: Some(iced::Background::Color(if theme::is_dark(theme) {
-                    iced::Color::from_rgba(0.94, 0.27, 0.27, 0.1)
-                } else {
-                    iced::Color::from_rgba(0.94, 0.27, 0.27, 0.05)
-                })),
-                border: iced::Border {
-                    color: theme::DANGER,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..Default::default()
-            })
+            .into()
+        };
+        
+        let add_form = container(
+            column![
+                text(tr(lang, "import_sub")).color(text_muted).size(14),
+                form_layout
+            ]
+            .spacing(10)
         )
-    } else {
-        None
-    };
-    
-    // Grid system for profiles list (Responsive Grid)
-    let right_grid: Element<'a, Message> = if gui_config.subscriptions.is_empty() {
-        container(
-            text(tr(lang, "no_profiles"))
-                .color(text_muted)
-                .size(14)
-        )
-        .padding(25)
-        .width(Length::Fill)
-        .style(theme::card_bg)
-        .into()
-    } else {
-        responsive(move |size| {
-            let mut card_elements: Vec<Element<'_, Message>> = Vec::new();
+        .padding(20)
+        .style(theme::card_bg);
+        
+        let error_banner = if let Some(err) = profile_error {
+            Some(
+                container(
+                    row![
+                        text("⚠️ ").size(14),
+                        text(err).size(13).color(theme::DANGER)
+                    ]
+                    .align_y(Alignment::Center)
+                )
+                .padding(12)
+                .width(Length::Fill)
+                .style(|theme| container::Style {
+                    background: Some(iced::Background::Color(if theme::is_dark(theme) {
+                        iced::Color::from_rgba(0.94, 0.27, 0.27, 0.1)
+                    } else {
+                        iced::Color::from_rgba(0.94, 0.27, 0.27, 0.05)
+                    })),
+                    border: iced::Border {
+                        color: theme::DANGER,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                })
+            )
+        } else {
+            None
+        };
+        
+        // Grid system for profiles list (Responsive Grid)
+        let grid_content: Element<'a, Message> = if gui_config.subscriptions.is_empty() {
+            container(
+                text(tr(lang, "no_profiles"))
+                    .color(text_muted)
+                    .size(14)
+            )
+            .padding(25)
+            .width(Length::Fill)
+            .style(theme::card_bg)
+            .into()
+        } else {
+            let mut card_elements: Vec<Element<'a, Message>> = Vec::new();
             
             for profile in &gui_config.subscriptions {
                 let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
@@ -111,7 +146,7 @@ pub fn render<'a>(
                     .padding([5, 10])
                     .style(theme::button_primary)
                     .on_press(Message::UpdateSubscription(profile.id.clone()));
-      
+          
                 let delete_btn = if confirm_delete_id == Some(profile.id.as_str()) {
                     button(text(tr(lang, "confirm_delete_profile")).size(11))
                         .padding([5, 10])
@@ -129,7 +164,7 @@ pub fn render<'a>(
                     .style(theme::button_secondary)
                     .on_press(Message::EditProfile(profile.id.clone()));
                     
-                let badge_or_spacer: Element<'_, Message> = if is_active {
+                let badge_or_spacer: Element<'a, Message> = if is_active {
                     container(text(tr(lang, "active_profile")).color(Color::WHITE).size(11))
                         .padding([5, 10])
                         .style(|_theme: &iced::Theme| container::Style {
@@ -204,9 +239,9 @@ pub fn render<'a>(
             }
 
             // Calculate columns based on width
-            let cols = if size.width < 500.0 {
+            let cols = if size.width < 650.0 {
                 1
-            } else if size.width < 900.0 {
+            } else if size.width < 950.0 {
                 2
             } else {
                 3
@@ -232,23 +267,25 @@ pub fn render<'a>(
                 grid_rows = grid_rows.push(current_row);
             }
             scrollable(grid_rows).height(Length::Fill).into()
-        })
-        .into()
-    };
+        };
         
-    let mut main_layout_col = column![
-        add_form,
-    ]
-    .spacing(20);
+        let mut main_layout_col = column![
+            add_form,
+        ]
+        .spacing(20)
+        .width(Length::Fill);
+        
+        if let Some(banner) = error_banner {
+            main_layout_col = main_layout_col.push(banner);
+        }
+        
+        main_layout_col = main_layout_col.push(text(tr(lang, "imported_profiles")).color(text_muted).size(14));
+        main_layout_col = main_layout_col.push(grid_content);
+        
+        main_layout_col.into()
+    });
     
-    if let Some(banner) = error_banner {
-        main_layout_col = main_layout_col.push(banner);
-    }
-    
-    main_layout_col = main_layout_col.push(text(tr(lang, "imported_profiles")).color(text_muted).size(14));
-    main_layout_col = main_layout_col.push(right_grid);
-    
-    let content: Element<'a, Message> = main_layout_col.into();
+    let content: Element<'a, Message> = main_content.into();
     let header = page_header("tab_profiles", lang, None, theme);
     page_shell_fixed(header, content)
 }
