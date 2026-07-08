@@ -113,6 +113,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "mode_rules" => "Rules",
             "mode_global" => "Global",
             "mode_direct" => "Direct",
+            "mode_rules_desc" => "Bypass LAN & China Mainland",
+            "mode_global_desc" => "Proxy all network traffic",
+            "mode_direct_desc" => "Bypass all proxy servers",
             "placeholder_domain" => "e.g. google.com",
             "placeholder_ip" => "e.g. 192.168.1.0/24",
             
@@ -249,6 +252,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "mode_rules" => "规则分流",
             "mode_global" => "全局代理",
             "mode_direct" => "直接连接",
+            "mode_rules_desc" => "自动分流，绕过局域网及大陆地区",
+            "mode_global_desc" => "所有流量接管，全部通过代理访问",
+            "mode_direct_desc" => "直接连接网络，不通过代理服务器",
             "placeholder_domain" => "例如 google.com",
             "placeholder_ip" => "例如 192.168.1.0/24",
             

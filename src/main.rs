@@ -1212,30 +1212,20 @@ fn tray_subscription() -> impl iced::futures::Stream<Item = Message> {
 }
 
 fn load_icon_safe() -> Option<tray_icon::Icon> {
-    if let Ok(icon) = load_icon(std::path::Path::new("assets/logo.jpg")) {
-        return Some(icon);
-    }
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(parent) = exe_path.parent() {
-            if let Ok(icon) = load_icon(&parent.join("assets/logo.jpg")) {
-                return Some(icon);
-            }
+    let logo_bytes = include_bytes!("../assets/logo.jpg");
+    match image::load_from_memory(logo_bytes) {
+        Ok(img) => {
+            let rgba_img = img.resize(32, 32, image::imageops::FilterType::Lanczos3).into_rgba8();
+            let (width, height) = rgba_img.dimensions();
+            let rgba = rgba_img.into_raw();
+            tray_icon::Icon::from_rgba(rgba, width, height).ok()
+        }
+        Err(_) => {
+            // Fallback transparent 16x16 icon
+            let rgba = vec![0; 16 * 16 * 4];
+            tray_icon::Icon::from_rgba(rgba, 16, 16).ok()
         }
     }
-    // Fallback transparent 16x16 icon
-    let rgba = vec![0; 16 * 16 * 4];
-    tray_icon::Icon::from_rgba(rgba, 16, 16).ok()
-}
-
-fn load_icon(path: &std::path::Path) -> Result<tray_icon::Icon, String> {
-    let img = image::open(path)
-        .map_err(|e| format!("Failed to open image: {}", e))?
-        .resize(32, 32, image::imageops::FilterType::Lanczos3)
-        .into_rgba8();
-    let (width, height) = img.dimensions();
-    let rgba = img.into_raw();
-    tray_icon::Icon::from_rgba(rgba, width, height)
-        .map_err(|e| format!("Failed to create icon: {}", e))
 }
 
 // Download subscription configuration task implementation

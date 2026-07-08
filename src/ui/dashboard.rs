@@ -44,327 +44,423 @@ pub fn render<'a>(
     let history_cloned = speed_history.to_vec();
     
     let main_content = responsive(move |size| {
-        let is_compact = size.width < 800.0;
+        let is_compact = size.width < 900.0;
         let theme = &theme_cloned;
         let current_speed = &speed_cloned;
         let speed_history = &history_cloned;
         
         let text_muted = theme::text_muted(theme);
         
-        // Core Status Section
+        // 1. Core Status Card
         let status_indicator = if core_running {
-        text(tr(lang, "status_running")).color(theme::SUCCESS).size(16)
-    } else {
-        text(tr(lang, "status_stopped")).color(theme::DANGER).size(16)
-    };
-    
-    let core_control_btn = if core_running {
-        button(
-            row![icon('\u{E047}'), text(tr(lang, "btn_stop_core")).size(13)]
-                .spacing(8)
-                .align_y(Alignment::Center)
-        )
-        .padding([8, 16])
-        .width(Length::Fixed(120.0))
-        .style(theme::button_danger)
-        .on_press(Message::ToggleCore)
-    } else {
-        button(
-            row![icon('\u{E037}'), text(tr(lang, "btn_start_core")).size(13)]
-                .spacing(8)
-                .align_y(Alignment::Center)
-        )
-        .padding([8, 16])
-        .width(Length::Fixed(120.0))
-        .style(theme::button_primary)
-        .on_press(Message::ToggleCore)
-    };
-    
-    // System Proxy Control Section
-    let sys_proxy_indicator = if sys_proxy_enabled {
-        text(tr(lang, "enabled")).color(theme::SUCCESS).size(16)
-    } else {
-        text(tr(lang, "disabled")).color(text_muted).size(16)
-    };
-    
-    let sys_proxy_btn = button(
-        row![
-            icon(if sys_proxy_enabled { '\u{E047}' } else { '\u{E037}' }),
-            text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") }).size(13)
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center)
-    )
-    .padding([8, 16])
-    .width(Length::Fixed(120.0))
-    .style(if sys_proxy_enabled { theme::button_danger } else { theme::button_primary })
-    .on_press(Message::ToggleSystemProxy);
-
-    let system_control_card = container(
-        column![
             row![
-                row![icon('\u{E322}'), text(tr(lang, "singbox_core")).color(text_muted).size(13)].spacing(8).align_y(Alignment::Center),
-                Space::new().width(Length::Fill),
-                status_indicator,
-                Space::new().width(Length::Fixed(16.0)),
-                core_control_btn
+                container(Space::new())
+                    .width(8)
+                    .height(8)
+                    .style(|_t| container::Style {
+                        background: Some(iced::Background::Color(theme::SUCCESS)),
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                text(tr(lang, "status_running")).color(theme::SUCCESS).size(14)
             ]
-            .width(Length::Fill)
-            .align_y(Alignment::Center),
-            
-            row![
-                row![icon('\u{E32A}'), text(tr(lang, "system_proxy")).color(text_muted).size(13)].spacing(8).align_y(Alignment::Center),
-                Space::new().width(Length::Fill),
-                sys_proxy_indicator,
-                Space::new().width(Length::Fixed(16.0)),
-                sys_proxy_btn
-            ]
-            .width(Length::Fill)
+            .spacing(6)
             .align_y(Alignment::Center)
-        ]
-        .spacing(24) // Increased spacing
-    )
-    .padding(24) // Increased padding
-    .width(Length::Fill)
-    .style(theme::card_bg);
-    
-    // Routing Mode selection card
-    let make_mode_btn = |mode: RoutingMode, key: &'static str| {
-        let active = gui_config.routing_mode == mode;
-        let btn = button(
-            text(tr(lang, key))
-                .size(12)
-                .width(Length::Fill)
-                .align_x(Alignment::Center)
-        )
-        .padding([8, 10])
-        .width(Length::Fill)
-        .style(move |t, s| {
-            if active {
-                theme::button_primary(t, s)
-            } else {
-                theme::button_secondary(t, s)
-            }
-        });
-            
-        let btn_el: Element<'a, Message> = if active {
-            btn.into()
         } else {
-            btn.on_press(Message::RoutingModeChanged(mode)).into()
+            row![
+                container(Space::new())
+                    .width(8)
+                    .height(8)
+                    .style(|_t| container::Style {
+                        background: Some(iced::Background::Color(theme::DANGER)),
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                text(tr(lang, "status_stopped")).color(theme::DANGER).size(14)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
         };
-        btn_el
-    };
-    
-    let mode_buttons = row![
-        make_mode_btn(RoutingMode::Rule, "routing_rules_desc"),
-        make_mode_btn(RoutingMode::Global, "routing_global_desc"),
-        make_mode_btn(RoutingMode::Direct, "routing_direct_desc")
-    ]
-    .spacing(10)
-    .width(Length::Fill);
-    
-    let mode_card = container(
-        column![
-            text(tr(lang, "active_mode")).color(text_muted).size(13),
-            mode_buttons
-        ]
-        .spacing(20) // Increased spacing
-    )
-    .padding(24) // Increased padding
-    .width(Length::Fill)
-    .style(theme::card_bg);
+        
+        let core_control_btn = if core_running {
+            button(
+                row![icon('\u{E047}'), text(tr(lang, "btn_stop_core")).size(12)]
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+            )
+            .padding([6, 12])
+            .style(theme::button_danger)
+            .on_press(Message::ToggleCore)
+        } else {
+            button(
+                row![icon('\u{E037}'), text(tr(lang, "btn_start_core")).size(12)]
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+            )
+            .padding([6, 12])
+            .style(theme::button_primary)
+            .on_press(Message::ToggleCore)
+        };
 
-    // Speed Stats cards
-    let download_card = container(
-        column![
-            row![
-                icon('\u{E5DB}').color(theme::ACCENT_BLUE),
-                text(tr(lang, "download")).color(text_muted).size(13)
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center),
-            text(format_speed(current_speed.down))
-                .font(iced::Font {
-                    family: iced::font::Family::Monospace,
-                    weight: iced::font::Weight::Bold,
-                    ..Default::default()
-                })
-                .color(theme::ACCENT_BLUE)
-                .size(32),
-            text(format!("{} {}", tr(lang, "total_label"), format_size(total_downloaded)))
-                .color(theme::text_tertiary(theme))
-                .size(11),
-        ]
-        .spacing(12)
-    )
-    .padding(24)
-    .width(Length::FillPortion(1))
-    .style(theme::card_bg);
-    
-    let upload_card = container(
-        column![
-            row![
-                icon('\u{E5D8}').color(theme::ACCENT_PURPLE),
-                text(tr(lang, "upload")).color(text_muted).size(13)
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center),
-            text(format_speed(current_speed.up))
-                .font(iced::Font {
-                    family: iced::font::Family::Monospace,
-                    weight: iced::font::Weight::Bold,
-                    ..Default::default()
-                })
-                .color(theme::ACCENT_PURPLE)
-                .size(32),
-            text(format!("{} {}", tr(lang, "total_label"), format_size(total_uploaded)))
-                .color(theme::text_tertiary(theme))
-                .size(11),
-        ]
-        .spacing(12)
-    )
-    .padding(24)
-    .width(Length::FillPortion(1))
-    .style(theme::card_bg);
-    
-    let speed_row = row![
-        download_card,
-        upload_card
-    ]
-    .spacing(24); // Increased spacing between cards
-    
-    // Render dynamic SVG chart of speed history
-    let max_speed = speed_history.iter()
-        .map(|&(u, d)| u.max(d))
-        .max()
-        .unwrap_or(0)
-        .max(1024 * 10); // 10 KB/s dynamic min scale
-        
-    let points_count = speed_history.len();
-    
-    let mut down_path = String::new();
-    let mut up_path = String::new();
-    
-    if points_count > 1 {
-        let get_x = |i: usize| i as f32 * (300.0 / (points_count - 1) as f32);
-        let get_y_down = |down: u64| 100.0 - (down as f32 / max_speed as f32 * 80.0);
-        let get_y_up = |up: u64| 100.0 - (up as f32 / max_speed as f32 * 80.0);
-        
-        down_path.push_str(&format!("M 0 100 L 0 {:.2}", get_y_down(speed_history[0].1)));
-        
-        for i in 0..points_count - 1 {
-            let x0 = get_x(i);
-            let y0 = get_y_down(speed_history[i].1);
-            let x1 = get_x(i + 1);
-            let y1 = get_y_down(speed_history[i + 1].1);
-            let cx = (x0 + x1) / 2.0;
-            down_path.push_str(&format!(" C {:.2} {:.2}, {:.2} {:.2}, {:.2} {:.2}", cx, y0, cx, y1, x1, y1));
-        }
-        down_path.push_str(" L 300 100 Z");
-        
-        up_path.push_str(&format!("M 0 {:.2}", get_y_up(speed_history[0].0)));
-        for i in 0..points_count - 1 {
-            let x0 = get_x(i);
-            let y0 = get_y_up(speed_history[i].0);
-            let x1 = get_x(i + 1);
-            let y1 = get_y_up(speed_history[i + 1].0);
-            let cx = (x0 + x1) / 2.0;
-            up_path.push_str(&format!(" C {:.2} {:.2}, {:.2} {:.2}, {:.2} {:.2}", cx, y0, cx, y1, x1, y1));
-        }
-    } else {
-        down_path = "M 0 100 L 300 100 Z".to_string();
-        up_path = "M 0 100 L 300 100".to_string();
-    }
-    
-    let grid_color = if theme::is_dark(theme) {
-        "rgba(255, 255, 255, 0.05)"
-    } else {
-        "rgba(0, 0, 0, 0.04)"
-    };
-
-    let mut grid_lines = String::new();
-    for y in [20, 40, 60, 80] {
-        grid_lines.push_str(&format!(r#"<line x1="-5" y1="{}" x2="305" y2="{}" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, y, y, grid_color));
-    }
-    for x in [50, 100, 150, 200, 250] {
-        grid_lines.push_str(&format!(r#"<line x1="{}" y1="-5" x2="{}" y2="105" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, x, x, grid_color));
-    }
-
-    let down_color_hex = format!("rgba({},{},{},1)", (theme::ACCENT_BLUE.r * 255.0).round() as u8, (theme::ACCENT_BLUE.g * 255.0).round() as u8, (theme::ACCENT_BLUE.b * 255.0).round() as u8);
-    let up_color_hex = format!("rgba({},{},{},1)", (theme::ACCENT_PURPLE.r * 255.0).round() as u8, (theme::ACCENT_PURPLE.g * 255.0).round() as u8, (theme::ACCENT_PURPLE.b * 255.0).round() as u8);
-
-    let svg_xml = format!(
-        r##"<svg viewBox="-5 -5 310 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
-             <defs>
-               <linearGradient id="downGrad" x1="0" y1="0" x2="0" y2="1">
-                 <stop offset="0%" stop-color="{}" stop-opacity="0.4"/>
-                 <stop offset="100%" stop-color="{}" stop-opacity="0"/>
-               </linearGradient>
-             </defs>
-             {}
-             <path d="{}" fill="url(#downGrad)" stroke="{}" stroke-width="2.5"/>
-             <path d="{}" fill="none" stroke="{}" stroke-width="2.5"/>
-           </svg>"##,
-          down_color_hex, down_color_hex, grid_lines, down_path, down_color_hex, up_path, up_color_hex
-    );
-    
-    let chart_handle = svg::Handle::from_memory(svg_xml.into_bytes());
-    let chart_svg = svg(chart_handle)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .content_fit(iced::ContentFit::Fill);
-        
-    let chart_card = container(
-        column![
-            text(tr(lang, "speed_history_chart")).color(text_muted).size(13),
-            container(chart_svg)
+        let core_status_card = container(
+            column![
+                row![
+                    icon('\u{E322}').color(theme::ACCENT_PURPLE),
+                    text(tr(lang, "singbox_core")).color(text_muted).size(13)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                
+                row![
+                    status_indicator,
+                    Space::new().width(Length::Fill),
+                    core_control_btn
+                ]
+                .align_y(Alignment::Center)
                 .width(Length::Fill)
-                .height(Length::Fill)
-        ]
-        .spacing(10)
-        .height(Length::Fill)
-    )
-    .padding(20)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(theme::card_bg);
-    
-    // Balanced 2-Column Responsive Dashboard Layout (Responsive Stack)
-    let left_col = column![
-        system_control_card,
-        mode_card
-    ]
-    .spacing(20)
-    .width(if is_compact { Length::Fill } else { Length::FillPortion(5) });
-    
-    let right_col = column![
-        speed_row,
-        container(chart_card).height(Length::Fixed(220.0))
-    ]
-    .spacing(20)
-    .width(if is_compact { Length::Fill } else { Length::FillPortion(7) });
-    
-    let result_content: Element<'_, Message> = if is_compact {
-        column![
-            left_col,
-            right_col
-        ]
-        .spacing(20)
-        .width(Length::Fill)
-        .into()
-    } else {
-        row![
-            left_col,
-            right_col
-        ]
-        .spacing(20)
-        .width(Length::Fill)
-        .into()
-    };
-    
-    result_content
-});
+            ]
+            .spacing(16)
+        )
+        .padding(20)
+        .width(Length::FillPortion(1))
+        .style(theme::card_bg);
 
-let header = page_header("tab_dashboard", lang, None, theme);
-page_shell(header, main_content.into())
+        // 2. System Proxy Card
+        let sys_proxy_indicator = if sys_proxy_enabled {
+            row![
+                container(Space::new())
+                    .width(8)
+                    .height(8)
+                    .style(|_t| container::Style {
+                        background: Some(iced::Background::Color(theme::SUCCESS)),
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                text(tr(lang, "enabled")).color(theme::SUCCESS).size(14)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+        } else {
+            row![
+                container(Space::new())
+                    .width(8)
+                    .height(8)
+                    .style(move |_t| container::Style {
+                        background: Some(iced::Background::Color(text_muted)),
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                text(tr(lang, "disabled")).color(text_muted).size(14)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+        };
+        
+        let sys_proxy_btn = button(
+            row![
+                icon(if sys_proxy_enabled { '\u{E047}' } else { '\u{E037}' }),
+                text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") }).size(12)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+        )
+        .padding([6, 12])
+        .style(if sys_proxy_enabled { theme::button_danger } else { theme::button_primary })
+        .on_press(Message::ToggleSystemProxy);
+
+        let proxy_status_card = container(
+            column![
+                row![
+                    icon('\u{E32A}').color(theme::ACCENT_BLUE),
+                    text(tr(lang, "system_proxy")).color(text_muted).size(13)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                
+                row![
+                    sys_proxy_indicator,
+                    Space::new().width(Length::Fill),
+                    sys_proxy_btn
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+            ]
+            .spacing(16)
+        )
+        .padding(20)
+        .width(Length::FillPortion(1))
+        .style(theme::card_bg);
+
+        // 3. Download Speed Card
+        let download_card = container(
+            column![
+                row![
+                    icon('\u{E5DB}').color(theme::ACCENT_BLUE),
+                    text(tr(lang, "download")).color(text_muted).size(13)
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+                
+                row![
+                    text(format_speed(current_speed.down))
+                        .font(iced::Font {
+                            family: iced::font::Family::Monospace,
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        })
+                        .color(theme::ACCENT_BLUE)
+                        .size(22),
+                    Space::new().width(Length::Fill),
+                    text(format!("{} {}", tr(lang, "total_label"), format_size(total_downloaded)))
+                        .color(theme::text_tertiary(theme))
+                        .size(11)
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+            ]
+            .spacing(16)
+        )
+        .padding(20)
+        .width(Length::FillPortion(1))
+        .style(theme::card_bg);
+
+        // 4. Upload Speed Card
+        let upload_card = container(
+            column![
+                row![
+                    icon('\u{E5D8}').color(theme::ACCENT_PURPLE),
+                    text(tr(lang, "upload")).color(text_muted).size(13)
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+                
+                row![
+                    text(format_speed(current_speed.up))
+                        .font(iced::Font {
+                            family: iced::font::Family::Monospace,
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        })
+                        .color(theme::ACCENT_PURPLE)
+                        .size(22),
+                    Space::new().width(Length::Fill),
+                    text(format!("{} {}", tr(lang, "total_label"), format_size(total_uploaded)))
+                        .color(theme::text_tertiary(theme))
+                        .size(11)
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+            ]
+            .spacing(16)
+        )
+        .padding(20)
+        .width(Length::FillPortion(1))
+        .style(theme::card_bg);
+
+        // Layout the top row metrics responsively
+        let top_row: Element<'_, Message> = if size.width < 1050.0 {
+            column![
+                row![core_status_card, proxy_status_card].spacing(16).width(Length::Fill),
+                row![download_card, upload_card].spacing(16).width(Length::Fill)
+            ]
+            .spacing(16)
+            .width(Length::Fill)
+            .into()
+        } else {
+            row![
+                core_status_card,
+                proxy_status_card,
+                download_card,
+                upload_card
+            ]
+            .spacing(16)
+            .width(Length::Fill)
+            .into()
+        };
+
+        // Render dynamic SVG chart of speed history
+        let max_speed = speed_history.iter()
+            .map(|&(u, d)| u.max(d))
+            .max()
+            .unwrap_or(0)
+            .max(1024 * 10); // 10 KB/s dynamic min scale
+            
+        let points_count = speed_history.len();
+        
+        let mut down_path = String::new();
+        let mut up_path = String::new();
+        
+        if points_count > 1 {
+            let get_x = |i: usize| i as f32 * (300.0 / (points_count - 1) as f32);
+            let get_y_down = |down: u64| 100.0 - (down as f32 / max_speed as f32 * 80.0);
+            let get_y_up = |up: u64| 100.0 - (up as f32 / max_speed as f32 * 80.0);
+            
+            down_path.push_str(&format!("M 0 100 L 0 {:.2}", get_y_down(speed_history[0].1)));
+            
+            for i in 0..points_count - 1 {
+                let x0 = get_x(i);
+                let y0 = get_y_down(speed_history[i].1);
+                let x1 = get_x(i + 1);
+                let y1 = get_y_down(speed_history[i + 1].1);
+                let cx = (x0 + x1) / 2.0;
+                down_path.push_str(&format!(" C {:.2} {:.2}, {:.2} {:.2}, {:.2} {:.2}", cx, y0, cx, y1, x1, y1));
+            }
+            down_path.push_str(" L 300 100 Z");
+            
+            up_path.push_str(&format!("M 0 {:.2}", get_y_up(speed_history[0].0)));
+            for i in 0..points_count - 1 {
+                let x0 = get_x(i);
+                let y0 = get_y_up(speed_history[i].0);
+                let x1 = get_x(i + 1);
+                let y1 = get_y_up(speed_history[i + 1].0);
+                let cx = (x0 + x1) / 2.0;
+                up_path.push_str(&format!(" C {:.2} {:.2}, {:.2} {:.2}, {:.2} {:.2}", cx, y0, cx, y1, x1, y1));
+            }
+        } else {
+            down_path = "M 0 100 L 300 100 Z".to_string();
+            up_path = "M 0 100 L 300 100".to_string();
+        }
+        
+        let grid_color = if theme::is_dark(theme) {
+            "rgba(255, 255, 255, 0.05)"
+        } else {
+            "rgba(0, 0, 0, 0.04)"
+        };
+
+        let mut grid_lines = String::new();
+        for y in [20, 40, 60, 80] {
+            grid_lines.push_str(&format!(r#"<line x1="-5" y1="{}" x2="305" y2="{}" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, y, y, grid_color));
+        }
+        for x in [50, 100, 150, 200, 250] {
+            grid_lines.push_str(&format!(r#"<line x1="{}" y1="-5" x2="{}" y2="105" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, x, x, grid_color));
+        }
+
+        let down_color_hex = format!("rgba({},{},{},1)", (theme::ACCENT_BLUE.r * 255.0).round() as u8, (theme::ACCENT_BLUE.g * 255.0).round() as u8, (theme::ACCENT_BLUE.b * 255.0).round() as u8);
+        let up_color_hex = format!("rgba({},{},{},1)", (theme::ACCENT_PURPLE.r * 255.0).round() as u8, (theme::ACCENT_PURPLE.g * 255.0).round() as u8, (theme::ACCENT_PURPLE.b * 255.0).round() as u8);
+
+        let svg_xml = format!(
+            r##"<svg viewBox="-5 -5 310 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+                 <defs>
+                   <linearGradient id="downGrad" x1="0" y1="0" x2="0" y2="1">
+                     <stop offset="0%" stop-color="{}" stop-opacity="0.4"/>
+                     <stop offset="100%" stop-color="{}" stop-opacity="0"/>
+                   </linearGradient>
+                 </defs>
+                 {}
+                 <path d="{}" fill="url(#downGrad)" stroke="{}" stroke-width="2.5"/>
+                 <path d="{}" fill="none" stroke="{}" stroke-width="2.5"/>
+               </svg>"##,
+              down_color_hex, down_color_hex, grid_lines, down_path, down_color_hex, up_path, up_color_hex
+        );
+        
+        let chart_handle = svg::Handle::from_memory(svg_xml.into_bytes());
+        let chart_svg = svg(chart_handle)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .content_fit(iced::ContentFit::Fill);
+            
+        let chart_card = container(
+            column![
+                text(tr(lang, "speed_history_chart")).color(text_muted).size(13),
+                container(chart_svg)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+            ]
+            .spacing(10)
+            .height(Length::Fill)
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(theme::card_bg);
+
+        // Vertical card-like Mode Item builder
+        let make_mode_item = |mode: RoutingMode, title_key: &'static str, desc_key: &'static str| {
+            let active = gui_config.routing_mode == mode;
+            let title_text = tr(lang, title_key);
+            let desc_text = tr(lang, desc_key);
+            
+            let item_content = container(
+                column![
+                    text(title_text)
+                        .size(13)
+                        .font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        }),
+                    text(desc_text)
+                        .size(10)
+                ]
+                .spacing(3)
+            )
+            .padding(12)
+            .width(Length::Fill);
+
+            button(item_content)
+                .padding(0)
+                .style(theme::button_mode(active))
+                .on_press(Message::RoutingModeChanged(mode))
+                .width(Length::Fill)
+        };
+        
+        let mode_card = container(
+            column![
+                text(tr(lang, "active_mode")).color(text_muted).size(13),
+                column![
+                    make_mode_item(RoutingMode::Rule, "mode_rules", "mode_rules_desc"),
+                    make_mode_item(RoutingMode::Global, "mode_global", "mode_global_desc"),
+                    make_mode_item(RoutingMode::Direct, "mode_direct", "mode_direct_desc")
+                ]
+                .spacing(8)
+                .width(Length::Fill)
+            ]
+            .spacing(12)
+            .height(Length::Fill)
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .style(theme::card_bg);
+
+        let bottom_row: Element<'_, Message> = if is_compact {
+            column![
+                container(chart_card).height(Length::Fixed(240.0)),
+                container(mode_card)
+            ]
+            .spacing(20)
+            .width(Length::Fill)
+            .into()
+        } else {
+            row![
+                container(chart_card).width(Length::FillPortion(2)).height(Length::Fill),
+                container(mode_card).width(Length::FillPortion(1)).height(Length::Fill)
+            ]
+            .spacing(20)
+            .width(Length::Fill)
+            .height(Length::Fixed(300.0))
+            .into()
+        };
+        
+        column![
+            top_row,
+            bottom_row
+        ]
+        .spacing(20)
+        .width(Length::Fill)
+        .into()
+    });
+    
+    let header = page_header("tab_dashboard", lang, None, theme);
+    page_shell(header, main_content.into())
 }

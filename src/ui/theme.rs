@@ -353,6 +353,47 @@ pub fn input_field(theme: &iced::Theme, status: text_input::Status) -> text_inpu
     }
 }
 
+pub fn button_mode(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |theme: &iced::Theme, status: button::Status| {
+        let dark = is_dark(theme);
+        
+        let (bg, border_color, text_color) = if is_active {
+            (
+                if dark { Color::from_rgba(0.55, 0.36, 0.96, 0.15) } else { Color::from_rgba(0.55, 0.36, 0.96, 0.08) },
+                ACCENT_PURPLE,
+                ACCENT_PURPLE,
+            )
+        } else {
+            let border = if dark { BORDER_DARK } else { BORDER_LIGHT };
+            let text = if dark { TEXT_MUTED } else { TEXT_MUTED_LIGHT };
+            match status {
+                button::Status::Hovered => (
+                    if dark { Color::from_rgba(1.0, 1.0, 1.0, 0.04) } else { Color::from_rgba(0.0, 0.0, 0.0, 0.04) },
+                    if dark { Color::from_rgb(0.35, 0.40, 0.48) } else { Color::from_rgb(0.60, 0.65, 0.72) },
+                    if dark { TEXT_PRIMARY } else { TEXT_PRIMARY_LIGHT },
+                ),
+                _ => (
+                    Color::TRANSPARENT,
+                    border,
+                    text,
+                )
+            }
+        };
+
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color,
+            border: Border {
+                radius: 12.0.into(),
+                width: if is_active { 1.5 } else { 1.0 },
+                color: border_color,
+            },
+            shadow: Shadow::default(),
+            ..Default::default()
+        }
+    }
+}
+
 pub fn text_primary(theme: &iced::Theme) -> Color {
     if is_dark(theme) { TEXT_PRIMARY } else { TEXT_PRIMARY_LIGHT }
 }
