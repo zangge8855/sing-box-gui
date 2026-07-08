@@ -99,6 +99,9 @@ struct App {
     // Performance and UX optimizations
     traffic_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
     confirm_delete_profile_id: Option<String>,
+    editing_profile_id: Option<String>,
+    editing_profile_name: String,
+    editing_profile_url: String,
     
     // Redundant updates prevention
     last_core_running: bool,
@@ -232,6 +235,9 @@ impl App {
             
             traffic_cancel_tx: None,
             confirm_delete_profile_id: None,
+            editing_profile_id: None,
+            editing_profile_name: String::new(),
+            editing_profile_url: String::new(),
             
             last_core_running: false,
             last_sys_proxy_enabled: false,
@@ -942,6 +948,37 @@ impl App {
                 open_path_in_system(&path);
                 Task::none()
             }
+            Message::StartEditProfile(id) => {
+                if let Some(profile) = self.gui_config.subscriptions.iter().find(|p| p.id == id) {
+                    self.editing_profile_id = Some(id);
+                    self.editing_profile_name = profile.name.clone();
+                    self.editing_profile_url = profile.url.clone();
+                }
+                Task::none()
+            }
+            Message::EditProfileNameChanged(name) => {
+                self.editing_profile_name = name;
+                Task::none()
+            }
+            Message::EditProfileUrlChanged(url) => {
+                self.editing_profile_url = url;
+                Task::none()
+            }
+            Message::SaveProfileEdit => {
+                if let Some(id) = self.editing_profile_id.clone() {
+                    if let Some(profile) = self.gui_config.subscriptions.iter_mut().find(|p| p.id == id) {
+                        profile.name = self.editing_profile_name.clone();
+                        profile.url = self.editing_profile_url.clone();
+                        let _ = config::save_gui_config(&self.gui_config);
+                    }
+                    self.editing_profile_id = None;
+                }
+                Task::none()
+            }
+            Message::CancelProfileEdit => {
+                self.editing_profile_id = None;
+                Task::none()
+            }
             Message::ToggleCloseCoreOnExit => {
                 self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
                 let _ = config::save_gui_config(&self.gui_config);
@@ -1069,6 +1106,9 @@ impl App {
         let dns_server_remote_input_str_ref = &self.dns_server_remote_input_str;
         let core_install_msg_ref = self.core_install_msg.as_deref();
         let update_status_ref = &self.update_status;
+        let editing_profile_id_ref = self.editing_profile_id.as_deref();
+        let editing_profile_name_ref = &self.editing_profile_name;
+        let editing_profile_url_ref = &self.editing_profile_url;
 
         let main_content = responsive(move |size| {
             let theme = theme_ref;
@@ -1103,6 +1143,9 @@ impl App {
                     downloading,
                     profile_error_ref,
                     confirm_delete_profile_id_ref,
+                    editing_profile_id_ref,
+                    editing_profile_name_ref,
+                    editing_profile_url_ref,
                     theme,
                 ),
                 Tab::Rules => ui::rules::render(
@@ -1571,16 +1614,8 @@ fn main() -> iced::Result {
         ..Default::default()
     };
 
-    let font_family = if cfg!(target_os = "windows") {
-        iced::font::Family::Name("Microsoft YaHei UI")
-    } else if cfg!(target_os = "macos") {
-        iced::font::Family::Name("PingFang SC")
-    } else {
-        iced::font::Family::Name("Noto Sans CJK SC")
-    };
-    
     let default_font = iced::Font {
-        family: font_family,
+        family: iced::font::Family::SansSerif,
         ..Default::default()
     };
 

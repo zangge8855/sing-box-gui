@@ -179,18 +179,27 @@ pub fn render<'a>(
         .width(Length::Fill)
         .padding(8);
         
-        let app_prefs_card = container(
+        let app_prefs_content: Element<'_, Message> = if is_compact {
             column![
-                lang_label,
-                lang_selector,
-                theme_label,
-                theme_selector
+                column![lang_label, lang_selector].spacing(8),
+                column![theme_label, theme_selector].spacing(8)
             ]
-            .spacing(12)
-        )
-        .padding(25)
-        .width(Length::Fill)
-        .style(theme::card_bg);
+            .spacing(15)
+            .into()
+        } else {
+            row![
+                column![lang_label, lang_selector].spacing(8).width(Length::FillPortion(1)),
+                column![theme_label, theme_selector].spacing(8).width(Length::FillPortion(1))
+            ]
+            .spacing(20)
+            .width(Length::Fill)
+            .into()
+        };
+        
+        let app_prefs_card = container(app_prefs_content)
+            .padding(25)
+            .width(Length::Fill)
+            .style(theme::card_bg);
         
         // Core Management Card
         let core_downloader = if core_installed {

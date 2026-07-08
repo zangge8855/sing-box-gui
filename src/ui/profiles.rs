@@ -11,6 +11,9 @@ pub fn render<'a>(
     downloading: bool,
     profile_error: Option<&'a str>,
     confirm_delete_id: Option<&'a str>,
+    editing_profile_id: Option<&'a str>,
+    editing_profile_name: &'a str,
+    editing_profile_url: &'a str,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     
@@ -18,6 +21,9 @@ pub fn render<'a>(
     use crate::ui::i18n::tr;
     
     let theme_cloned = theme.clone();
+    let editing_id = editing_profile_id.map(|s| s.to_string());
+    let editing_name = editing_profile_name.to_string();
+    let editing_url = editing_profile_url.to_string();
     
     let main_content = responsive(move |size| {
         let theme = &theme_cloned;
@@ -142,30 +148,35 @@ pub fn render<'a>(
             for profile in &gui_config.subscriptions {
                 let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
                 
-                let update_btn = button(text(tr(lang, "btn_update")).size(11))
+                let update_btn = button(text(tr(lang, "btn_update")).size(12))
                     .padding([5, 10])
                     .style(theme::button_primary)
                     .on_press(Message::UpdateSubscription(profile.id.clone()));
           
                 let delete_btn = if confirm_delete_id == Some(profile.id.as_str()) {
-                    button(text(tr(lang, "confirm_delete_profile")).size(11))
+                    button(text(tr(lang, "confirm_delete_profile")).size(12))
                         .padding([5, 10])
                         .style(theme::button_danger)
                         .on_press(Message::DeleteProfile(profile.id.clone()))
                 } else {
-                    button(text(tr(lang, "btn_delete")).size(11))
+                    button(text(tr(lang, "btn_delete")).size(12))
                         .padding([5, 10])
                         .style(theme::button_secondary)
                         .on_press(Message::DeleteProfile(format!("confirm:{}", profile.id)))
                 };
                     
-                let edit_btn = button(text(tr(lang, "btn_edit")).size(11))
+                let edit_btn = button(text(tr(lang, "btn_edit")).size(12))
                     .padding([5, 10])
                     .style(theme::button_secondary)
                     .on_press(Message::EditProfile(profile.id.clone()));
                     
+                let edit_url_btn = button(text(tr(lang, "btn_edit_url")).size(12))
+                    .padding([5, 10])
+                    .style(theme::button_secondary)
+                    .on_press(Message::StartEditProfile(profile.id.clone()));
+                    
                 let badge_or_spacer: Element<'a, Message> = if is_active {
-                    container(text(tr(lang, "active_profile")).color(Color::WHITE).size(11))
+                    container(text(tr(lang, "active_profile")).color(Color::WHITE).size(12))
                         .padding([5, 10])
                         .style(|_theme: &iced::Theme| container::Style {
                             background: Some(iced::Background::Color(theme::SUCCESS)),
@@ -182,7 +193,7 @@ pub fn render<'a>(
                 
                 let mut actions_row = row![].spacing(8).align_y(Alignment::Center);
                 if !is_active {
-                    let select_btn = button(text(tr(lang, "btn_select")).size(11))
+                    let select_btn = button(text(tr(lang, "btn_select")).size(12))
                         .padding([5, 10])
                         .style(theme::button_secondary)
                         .on_press(Message::SelectProfile(profile.id.clone()));
@@ -190,6 +201,7 @@ pub fn render<'a>(
                 }
                 actions_row = actions_row
                     .push(update_btn)
+                    .push(edit_url_btn)
                     .push(edit_btn)
                     .push(delete_btn);
                     
@@ -200,40 +212,94 @@ pub fn render<'a>(
                     profile.url.clone()
                 };
 
-                let card_layout = column![
-                    column![
-                        text(&profile.name)
-                            .color(text_primary)
-                            .size(15)
-                            .font(iced::Font {
-                                weight: iced::font::Weight::Bold,
-                                ..Default::default()
-                            }),
-                        text(display_url).color(text_muted).size(12),
-                        text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(text_muted).size(11),
-                    ]
-                    .spacing(6)
-                    .width(Length::Fill),
-                    row![
-                        badge_or_spacer,
-                        iced::widget::Space::new().width(Length::Fill),
-                        actions_row
-                    ]
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill)
-                ]
-                .spacing(12);
+                let is_editing = editing_id.as_deref() == Some(profile.id.as_str());
                 
-                let profile_card = container(card_layout)
-                    .padding(20)
-                    .width(Length::Fill)
-                    .style(move |theme| {
-                        if is_active {
-                            theme::card_selected(theme)
-                        } else {
-                            theme::card_bg(theme)
-                        }
-                    });
+                let profile_card = if is_editing {
+                    let name_input = text_input(tr(lang, "placeholder_profile_name"), &editing_name)
+                        .on_input(Message::EditProfileNameChanged)
+                        .padding(10)
+                        .size(13)
+                        .style(theme::input_field);
+                        
+                    let url_input_field = text_input(tr(lang, "placeholder_profile_url"), &editing_url)
+                        .on_input(Message::EditProfileUrlChanged)
+                        .padding(10)
+                        .size(13)
+                        .style(theme::input_field);
+                        
+                    let save_btn: Element<'a, Message> = button(text(tr(lang, "btn_save")).size(12))
+                        .padding([6, 12])
+                        .style(theme::button_primary)
+                        .on_press(Message::SaveProfileEdit)
+                        .into();
+                        
+                    let cancel_btn: Element<'a, Message> = button(text(tr(lang, "btn_cancel")).size(12))
+                        .padding([6, 12])
+                        .style(theme::button_secondary)
+                        .on_press(Message::CancelProfileEdit)
+                        .into();
+                        
+                    let form_col = column![
+                        text(tr(lang, "btn_edit_url")).color(text_primary).size(14).font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        }),
+                        column![
+                            text(tr(lang, "placeholder_profile_name")).color(text_muted).size(11),
+                            name_input
+                        ].spacing(4),
+                        column![
+                            text(tr(lang, "placeholder_profile_url")).color(text_muted).size(11),
+                            url_input_field
+                        ].spacing(4),
+                        row![
+                            iced::widget::Space::new().width(Length::Fill),
+                            cancel_btn,
+                            save_btn
+                        ].spacing(10)
+                    ]
+                    .spacing(12);
+                    
+                    container(form_col)
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(theme::card_selected)
+                } else {
+                    let card_layout = column![
+                        column![
+                            text(&profile.name)
+                                .color(text_primary)
+                                .size(15)
+                                .font(iced::Font {
+                                    weight: iced::font::Weight::Bold,
+                                    ..Default::default()
+                                }),
+                            text(display_url).color(text_muted).size(12),
+                            text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(text_muted).size(11),
+                        ]
+                        .spacing(6)
+                        .width(Length::Fill),
+                        row![
+                            badge_or_spacer,
+                            iced::widget::Space::new().width(Length::Fill),
+                            actions_row
+                        ]
+                        .align_y(Alignment::Center)
+                        .width(Length::Fill)
+                    ]
+                    .spacing(12);
+                    
+                    container(card_layout)
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(move |theme| {
+                            if is_active {
+                                theme::card_selected(theme)
+                            } else {
+                                theme::card_bg(theme)
+                            }
+                        })
+                };
                 
                 card_elements.push(container(profile_card).width(Length::Fill).into());
             }

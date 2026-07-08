@@ -382,7 +382,7 @@ pub fn render<'a>(
         )
         .padding(20)
         .width(Length::Fill)
-        .height(Length::Fill)
+        .height(if is_compact { Length::Fixed(220.0) } else { Length::Fixed(240.0) })
         .style(theme::card_bg);
 
         // Vertical card-like Mode Item builder
@@ -447,15 +447,15 @@ pub fn render<'a>(
 
         let bottom_col = if is_compact {
             column![
-                container(chart_card).height(Length::Fixed(240.0)),
-                container(mode_card)
+                chart_card,
+                mode_card
             ]
             .spacing(20)
             .width(Length::Fill)
         } else {
             column![
-                container(chart_card).height(Length::Fixed(260.0)),
-                container(mode_card)
+                chart_card,
+                mode_card
             ]
             .spacing(20)
             .width(Length::Fill)

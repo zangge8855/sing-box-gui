@@ -65,4 +65,9 @@ pub enum Message {
     CheckUpdate,
     UpdateChecked(Result<String, String>),
     OpenUrl(String),
+    StartEditProfile(String),
+    EditProfileNameChanged(String),
+    EditProfileUrlChanged(String),
+    SaveProfileEdit,
+    CancelProfileEdit,
 }
