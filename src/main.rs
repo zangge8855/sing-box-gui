@@ -974,7 +974,7 @@ impl App {
                 row![
                     indicator,
                     text(icon_char.to_string())
-                        .font(Font::with_name("Icons"))
+                        .font(Font::with_name("Material Icons"))
                         .size(16),
                     text(ui::i18n::tr(lang, key))
                         .size(15) // Slightly larger font
@@ -1394,6 +1394,7 @@ fn main() -> iced::Result {
         .window(window_settings)
         .theme(App::theme)
         .default_font(default_font)
+        .font(include_bytes!("../assets/material-icons.ttf").as_slice())
         .subscription(App::subscription)
         .run();
         

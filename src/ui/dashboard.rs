@@ -6,7 +6,7 @@ use crate::ui::theme;
 use crate::ui::{page_header, page_shell};
 
 fn icon(unicode: char) -> text::Text<'static> {
-    text(unicode.to_string()).font(iced::Font::with_name("Icons")).size(16)
+    text(unicode.to_string()).font(iced::Font::with_name("Material Icons")).size(16)
 }
 
 fn format_size(bytes: u64) -> String {

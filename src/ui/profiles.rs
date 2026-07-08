@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Length, Color};
 use crate::message::Message;
 use crate::state::GuiConfig;
 use crate::ui::theme;
-use crate::ui::{page_header, page_shell};
+use crate::ui::{page_header, page_shell_fixed};
 
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
@@ -250,5 +250,5 @@ pub fn render<'a>(
     
     let content: Element<'a, Message> = main_layout_col.into();
     let header = page_header("tab_profiles", lang, None, theme);
-    page_shell(header, content)
+    page_shell_fixed(header, content)
 }

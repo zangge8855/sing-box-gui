@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Length, Color};
 use crate::message::Message;
 use crate::state::ProxyNode;
 use crate::ui::theme;
-use crate::ui::{page_header, page_shell};
+use crate::ui::{page_header, page_shell_fixed};
 
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
@@ -369,7 +369,7 @@ pub fn render<'a>(
         .into();
         
         let header = page_header("proxy_nodes", lang, Some(header_actions), theme);
-        page_shell(header, content)
+        page_shell_fixed(header, content)
         
     } else {
         // Fallback: simple flat node list when core is not running
@@ -384,7 +384,7 @@ pub fn render<'a>(
             .style(theme::card_bg)
             .into();
             let header = page_header("proxy_nodes", lang, Some(header_actions), theme);
-            return page_shell(header, content);
+            return page_shell_fixed(header, content);
         }
         
         let filtered_nodes: Vec<&ProxyNode> = if search_query.trim().is_empty() {
@@ -407,7 +407,7 @@ pub fn render<'a>(
             .style(theme::card_bg)
             .into();
             let header = page_header("proxy_nodes", lang, Some(header_actions), theme);
-            return page_shell(header, content);
+            return page_shell_fixed(header, content);
         }
         
         let content = responsive(move |size| {
@@ -527,6 +527,6 @@ pub fn render<'a>(
         });
             
         let header = page_header("proxy_nodes", lang, Some(header_actions), theme);
-        page_shell(header, content.into())
+        page_shell_fixed(header, content.into())
     }
 }
