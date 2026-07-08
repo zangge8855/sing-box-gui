@@ -177,5 +177,5 @@ CI 配置文件位于 `.github/workflows/build.yml`.
 
 ## 🏷️ Keywords & Search Tags (搜索优化标签)
 
-`sing-box`, `sing-box-gui`, `sing-box client`, `sing-box windows`, `rust-gui`, `iced-gui`, `proxy-client`, `clash-alternative`, `v2ray-client`, `shadowsocks-client`, `trojan-client`, `network-proxy`, `tun-mode`, `rules-routing`, `rust-proxy`, `cross-platform`, `high-aesthetic-gui`, `singbox`, `clash`, `proxy`
+`sing-box`, `sing-box-gui`, `sing-box client`, `sing-box windows`, `rust-gui`, `iced-gui`, `proxy-client`, `clash-alternative`, `v2ray-client`, `shadowsocks-client`, `trojan-client`, `vless-client`, `vless`, `network-proxy`, `tun-mode`, `rules-routing`, `rust-proxy`, `cross-platform`, `high-aesthetic-gui`, `singbox`, `clash`, `proxy`
 
