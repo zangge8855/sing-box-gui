@@ -19,7 +19,7 @@ pub fn render<'a>(
     let theme_cloned = theme.clone();
 
     let main_content = responsive(move |size| {
-        let is_compact = size.width < 800.0;
+        let is_compact = size.width < crate::ui::PAGE_NARROW_W;
         let theme = &theme_cloned;
         let text_primary = theme::text_primary(theme);
         let text_muted = theme::text_muted(theme);
@@ -47,9 +47,13 @@ pub fn render<'a>(
             let mut list_col = Column::new().spacing(6);
             
             for (idx, item) in items.iter().enumerate() {
-                let del_btn = button(text("✕").size(10))
-                    .style(theme::button_danger)
-                    .padding([3, 6])
+                let del_btn = button(
+                    text("\u{E5CD}".to_string())
+                        .font(iced::Font::with_name("Material Icons"))
+                        .size(16),
+                )
+                    .style(theme::button_secondary)
+                    .padding([4, 8])
                     .on_press(Message::RemoveRule {
                         field,
                         index: idx,
@@ -99,15 +103,19 @@ pub fn render<'a>(
                 .padding(10)
                 .style(theme::input_field);
                 
-            let add_btn = button(text("+").size(16))
+            let add_btn = button(
+                text("\u{E145}".to_string())
+                    .font(iced::Font::with_name("Material Icons"))
+                    .size(18),
+            )
                 .style(theme::button_primary)
                 .padding([9, 14])
                 .on_press(Message::AddRule { field });
                 
             container(
                 column![
-                    text(tr(lang, title_key)).color(text_primary).size(14).font(iced::Font {
-                        weight: iced::font::Weight::Bold,
+                    text(tr(lang, title_key)).color(text_primary).size(theme::TYPE_HEADING).font(iced::Font {
+                        weight: iced::font::Weight::Semibold,
                         ..Default::default()
                     }),
                     row![input_box, add_btn].spacing(10).align_y(Alignment::Center),
@@ -162,20 +170,11 @@ pub fn render<'a>(
         
         let header = page_header("tab_rules", lang, None, theme, is_compact);
         
-        let col = column![header, builtin_banner, rules_layout].spacing(20).width(Length::Fill);
+        let content = column![builtin_banner, rules_layout]
+            .spacing(20)
+            .width(Length::Fill);
 
-        let inner = container(col)
-            .width(Length::Fill)
-            .max_width(1200.0)
-            .center_x(Length::Fill)
-            .padding(crate::ui::page_padding());
-
-        container(
-            scrollable(inner).height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        crate::ui::page_shell_with_pad(header, content.into(), is_compact)
     });
     
     main_content.into()

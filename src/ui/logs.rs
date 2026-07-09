@@ -3,7 +3,7 @@ use iced::{Element, Length, Alignment};
 use crate::message::Message;
 use crate::state::LogFilter;
 use crate::ui::theme;
-use crate::ui::{page_header, page_padding};
+use crate::ui::page_header;
 use std::sync::OnceLock;
 
 pub fn get_logs_scrollable_id() -> &'static iced::widget::Id {
@@ -27,7 +27,7 @@ pub fn render<'a>(
     
     let main_content = responsive(move |size| {
         let theme = &theme_cloned;
-        let is_compact = size.width < 750.0;
+        let is_compact = size.width < crate::ui::PAGE_COMPACT_W;
         let text_muted = theme::text_muted(theme);
 
         let filter_btn = |f: LogFilter, key: &'static str| {
@@ -44,7 +44,7 @@ pub fn render<'a>(
         let search_input = text_input(tr(lang, "log_search_placeholder"), &search_cloned)
             .on_input(Message::LogSearchChanged)
             .padding(8)
-            .width(if is_compact { Length::Fill } else { Length::Fixed(220.0) })
+            .width(if is_compact { Length::Fill } else { Length::Fixed(theme::SEARCH_WIDTH) })
             .style(theme::input_field);
 
         let clear_logs_btn = button(text(tr(lang, "clear_logs")).size(13))
@@ -99,7 +99,8 @@ pub fn render<'a>(
             } else if line_upper.contains("WARN") || line_upper.contains("WARNING") {
                 theme::WARNING
             } else if line_upper.contains("INFO") {
-                theme::SUCCESS
+                // Info is informational, not a success outcome
+                theme::ACCENT_BLUE
             } else {
                 text_muted
             };
@@ -113,27 +114,36 @@ pub fn render<'a>(
         }
         
         let log_terminal = if log_lines_cloned.is_empty() {
+            let cta = button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
+                .padding(theme::BTN_PAD_MD)
+                .style(theme::button_primary)
+                .on_press(Message::ToggleCore);
             container(
-                column![
-                    text(tr(lang, "no_logs")).color(text_muted).size(14),
-                    text(tr(lang, "empty_logs_hint")).color(theme::text_tertiary(theme)).size(12),
-                ]
-                .spacing(8)
-                .align_x(Alignment::Center)
+                crate::ui::empty_state(
+                    tr(lang, "no_logs"),
+                    Some(tr(lang, "empty_logs_start_hint")),
+                    Some(cta.into()),
+                    theme,
+                )
             )
-            .padding(15)
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(Alignment::Center)
             .align_y(Alignment::Center)
             .style(theme::console_bg)
         } else if shown == 0 {
+            let cta = button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
+                .padding(theme::BTN_PAD_MD)
+                .style(theme::button_secondary)
+                .on_press(Message::LogSearchChanged(String::new()));
             container(
-                text(tr(lang, "no_matching_logs"))
-                    .color(text_muted)
-                    .size(13)
+                crate::ui::empty_state(
+                    tr(lang, "no_matching_logs"),
+                    None,
+                    Some(cta.into()),
+                    theme,
+                )
             )
-            .padding(15)
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(Alignment::Center)
@@ -159,12 +169,7 @@ pub fn render<'a>(
             .width(Length::Fill)
             .height(Length::Fill);
 
-        container(col)
-            .width(Length::Fill)
-            .max_width(1200.0)
-            .center_x(Length::Fill)
-            .padding(page_padding())
-            .into()
+        crate::ui::page_body_fixed_with_pad(col.into(), is_compact)
     });
     
     main_content.into()

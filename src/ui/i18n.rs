@@ -1,5 +1,37 @@
 use crate::state::Language;
 
+/// UI keys introduced/required by layout & UX polish (must exist in both En and Zh).
+/// Used by unit tests; kept public so audits can list required keys.
+#[allow(dead_code)]
+pub const REQUIRED_POLISH_KEYS: &[&str] = &[
+    "btn_more",
+    "btn_less",
+    "btn_edit",
+    "btn_edit_url",
+    "btn_show_preview",
+    "btn_hide_preview",
+    "traffic_used",
+    "traffic_left",
+    "chart_legend_down",
+    "chart_legend_up",
+    "tun_admin_banner",
+    "core_not_running_hint",
+    "no_proxy_groups",
+    "toast_start_core_first",
+    "toast_no_nodes",
+    "toast_latency_done",
+    "toast_clipboard_empty",
+    "chart_waiting_traffic",
+    "btn_start_core_short",
+    "btn_clear_search",
+    "btn_goto_proxies",
+    "btn_reinstall_core",
+    "latency_test_url_label",
+    "col_process",
+    "empty_connections_hint",
+    "empty_logs_start_hint",
+];
+
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
     match lang {
         Language::En => match key {
@@ -170,15 +202,43 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_update" => "Update",
             "imported_profiles" => "Imported Profiles",
             "btn_open_folder" => "Open Folder",
-            "btn_edit" => "Config",
-            "btn_edit_url" => "Link",
+            "btn_edit" => "Open Config",
+            "btn_edit_url" => "Edit Info",
             "edit_link_title" => "Edit Subscription Link",
             "btn_save" => "Save",
             "btn_cancel" => "Cancel",
+            "btn_more" => "More",
+            "btn_less" => "Less",
             "placeholder_profile_name" => "Profile Name",
             "placeholder_profile_url" => "Subscription URL",
             "btn_open_data_dir" => "Open Data Folder",
             "core_config_preview" => "Configuration Preview (Read-only)",
+            "btn_show_preview" => "Show Config Preview",
+            "btn_hide_preview" => "Hide Config Preview",
+            "traffic_used" => "used",
+            "traffic_left" => "left",
+            "chart_legend_down" => "Download",
+            "chart_legend_up" => "Upload",
+            "chart_waiting_traffic" => "Waiting for traffic…",
+            "btn_start_core_short" => "Start Core",
+            "btn_clear_search" => "Clear search",
+            "btn_goto_proxies" => "Open Proxies",
+            "btn_reinstall_core" => "Reinstall Core",
+            "help_reinstall_core" => "Force re-download the managed sing-box binary (replaces existing).",
+            "latency_test_url_label" => "Latency test URL",
+            "latency_test_timeout_label" => "Latency timeout (ms)",
+            "help_latency_test" => "Used by multi-node delay tests via Clash API.",
+            "col_process" => "Process",
+            "process_unknown" => "—",
+            "empty_connections_hint" => "Start the core to see live connections.",
+            "empty_logs_start_hint" => "Start the core to stream logs here.",
+            "tun_admin_banner" => "TUN mode requires running as Administrator. Without elevation, the core may fail to start.",
+            "core_not_running_hint" => "Start the core to load proxy groups and test latency.",
+            "no_proxy_groups" => "No selector groups available from the core.",
+            "toast_start_core_first" => "Start the core before testing latency",
+            "toast_no_nodes" => "No nodes available for latency test",
+            "toast_latency_done" => "Latency test complete",
+            "toast_clipboard_empty" => "Clipboard is empty",
             
             // Connections
             "tab_connections" => "Connections",
@@ -371,15 +431,43 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_update" => "更新",
             "imported_profiles" => "已导入的配置",
             "btn_open_folder" => "打开目录",
-            "btn_edit" => "配置",
-            "btn_edit_url" => "链接",
+            "btn_edit" => "打开配置",
+            "btn_edit_url" => "编辑信息",
             "edit_link_title" => "修改订阅链接",
             "btn_save" => "保存",
             "btn_cancel" => "取消",
+            "btn_more" => "更多",
+            "btn_less" => "收起",
             "placeholder_profile_name" => "配置文件名称",
             "placeholder_profile_url" => "订阅链接网址",
             "btn_open_data_dir" => "打开数据目录",
             "core_config_preview" => "内核配置预览 (只读)",
+            "btn_show_preview" => "显示配置预览",
+            "btn_hide_preview" => "隐藏配置预览",
+            "traffic_used" => "已用",
+            "traffic_left" => "剩余",
+            "chart_legend_down" => "下载",
+            "chart_legend_up" => "上传",
+            "chart_waiting_traffic" => "等待流量数据…",
+            "btn_start_core_short" => "启动内核",
+            "btn_clear_search" => "清除搜索",
+            "btn_goto_proxies" => "打开节点",
+            "btn_reinstall_core" => "重新安装内核",
+            "help_reinstall_core" => "强制重新下载托管的 sing-box 内核（覆盖现有文件）。",
+            "latency_test_url_label" => "测速 URL",
+            "latency_test_timeout_label" => "测速超时 (毫秒)",
+            "help_latency_test" => "多节点延迟测试经 Clash API 使用此地址。",
+            "col_process" => "进程",
+            "process_unknown" => "—",
+            "empty_connections_hint" => "启动内核后可查看活动连接。",
+            "empty_logs_start_hint" => "启动内核后将在此显示实时日志。",
+            "tun_admin_banner" => "TUN 模式需要以管理员身份运行。未提权时内核可能启动失败。",
+            "core_not_running_hint" => "请先启动内核以加载策略组并测速。",
+            "no_proxy_groups" => "内核未返回可用的选择器策略组。",
+            "toast_start_core_first" => "请先启动内核再测速",
+            "toast_no_nodes" => "当前没有可测速的节点",
+            "toast_latency_done" => "延迟测试完成",
+            "toast_clipboard_empty" => "剪贴板为空",
             
             // Connections
             "tab_connections" => "连接管理",
@@ -404,5 +492,33 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             
             _ => key,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::Language;
+
+    #[test]
+    fn polish_keys_resolve_in_en_and_zh() {
+        for key in REQUIRED_POLISH_KEYS {
+            let en = tr(Language::En, key);
+            let zh = tr(Language::Zh, key);
+            assert_ne!(en, *key, "missing En translation for {key}");
+            assert_ne!(zh, *key, "missing Zh translation for {key}");
+            assert!(!en.is_empty());
+            assert!(!zh.is_empty());
+        }
+    }
+
+    #[test]
+    fn en_and_zh_differ_for_user_facing_polish_keys() {
+        // Spot-check that Chinese is not English copy-paste for key banners.
+        assert_ne!(
+            tr(Language::En, "tun_admin_banner"),
+            tr(Language::Zh, "tun_admin_banner")
+        );
+        assert_ne!(tr(Language::En, "btn_more"), tr(Language::Zh, "btn_more"));
     }
 }

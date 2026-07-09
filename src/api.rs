@@ -41,21 +41,62 @@ pub struct DelayResponse {
     pub delay: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectionMetadata {
     pub network: String,
     #[serde(rename = "type")]
+    #[allow(dead_code)]
     pub conn_type: String,
     #[serde(rename = "sourceIP")]
+    #[allow(dead_code)]
     pub source_ip: String,
     #[serde(rename = "destinationIP")]
     pub destination_ip: String,
     #[serde(rename = "sourcePort")]
+    #[allow(dead_code)]
     pub source_port: String,
     #[serde(rename = "destinationPort")]
+    #[allow(dead_code)]
     pub destination_port: String,
     pub host: String,
+    /// Process path when provided by clash_api (optional).
+    #[serde(default, rename = "processPath")]
+    pub process_path: Option<String>,
+    #[serde(default, rename = "sourceProcess")]
+    pub source_process: Option<String>,
+}
+
+impl ConnectionMetadata {
+    /// Best-effort display name for the originating process (file name only).
+    pub fn process_display(&self) -> Option<String> {
+        let p = self
+            .process_path
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.source_process.as_deref().filter(|s| !s.is_empty()))?;
+        Some(p.rsplit(['\\', '/']).next().unwrap_or(p).to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_display_strips_path() {
+        let m = ConnectionMetadata {
+            network: "tcp".into(),
+            conn_type: "HTTP".into(),
+            source_ip: String::new(),
+            destination_ip: String::new(),
+            source_port: String::new(),
+            destination_port: String::new(),
+            host: String::new(),
+            process_path: Some(r"C:\Program Files\App\chrome.exe".into()),
+            source_process: None,
+        };
+        assert_eq!(m.process_display().as_deref(), Some("chrome.exe"));
+    }
 }
 
 #[allow(dead_code)]
@@ -117,11 +158,24 @@ pub async fn select_proxy(api_port: u16, selector: &str, node_tag: &str) -> Resu
     }
 }
 
-pub async fn test_node_latency(api_port: u16, node_tag: &str) -> Result<u64, String> {
+pub async fn test_node_latency(
+    api_port: u16,
+    node_tag: &str,
+    test_url: &str,
+    timeout_ms: u32,
+) -> Result<u64, String> {
+    let test_url = if test_url.trim().is_empty() {
+        "http://cp.cloudflare.com/generate_204"
+    } else {
+        test_url.trim()
+    };
+    let timeout_ms = timeout_ms.clamp(500, 30_000);
     let url = format!(
-        "http://127.0.0.1:{}/proxies/{}/delay?url=http://cp.cloudflare.com/generate_204&timeout=2000",
+        "http://127.0.0.1:{}/proxies/{}/delay?url={}&timeout={}",
         api_port,
-        urlencoding::encode(node_tag)
+        urlencoding::encode(node_tag),
+        urlencoding::encode(test_url),
+        timeout_ms
     );
     let client = get_client();
     let res = client.get(&url)

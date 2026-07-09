@@ -16,6 +16,7 @@ pub fn render<'a>(
     install_message: Option<&'a str>,
     core_version: Option<&'a str>,
     update_status: &'a UpdateStatus,
+    config_preview_expanded: bool,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     
@@ -25,7 +26,7 @@ pub fn render<'a>(
     let theme_cloned = theme.clone();
     
     let main_content = responsive(move |size| {
-        let is_compact = size.width < 800.0;
+        let is_compact = size.width < crate::ui::PAGE_NARROW_W;
         let theme = &theme_cloned;
         
         let make_toggle_row = move |label_key: &'static str, is_on: bool, msg: Message| {
@@ -52,23 +53,45 @@ pub fn render<'a>(
         let text_muted = theme::text_muted(theme);
         
         // 1. System Integration Card (Left Column)
-        let settings_card = container(
-            column![
-                text(tr(lang, "sys_integration")).color(text_muted).size(13),
-                column![make_toggle_row("tun_mode_label", gui_config.tun_mode, Message::ToggleTun), text(tr(lang, "help_tun_mode")).color(text_muted).size(11)].spacing(4),
-                column![make_toggle_row("autostart_label", gui_config.start_on_boot, Message::ToggleAutostart), text(tr(lang, "help_autostart")).color(text_muted).size(11)].spacing(4),
-                column![make_toggle_row("close_core_on_exit_label", gui_config.close_core_on_exit, Message::ToggleCloseCoreOnExit), text(tr(lang, "help_close_core")).color(text_muted).size(11)].spacing(4),
-                column![make_toggle_row("auto_start_core_label", gui_config.auto_start_core, Message::ToggleAutoStartCore), text(tr(lang, "help_auto_start_core")).color(text_muted).size(11)].spacing(4),
-                column![make_toggle_row("auto_sys_proxy_label", gui_config.auto_sys_proxy, Message::ToggleAutoSysProxy), text(tr(lang, "help_auto_sys_proxy")).color(text_muted).size(11)].spacing(4),
-                column![make_toggle_row("tcp_fast_open_label", gui_config.tcp_fast_open, Message::ToggleTcpFastOpen), text(tr(lang, "help_tcp_fast_open")).color(text_muted).size(11)].spacing(4),
-                column![make_toggle_row("tcp_multipath_label", gui_config.tcp_multipath, Message::ToggleTcpMultipath), text(tr(lang, "help_tcp_multipath")).color(text_muted).size(11)].spacing(4),
-                column![make_toggle_row("disable_proxy_on_stop_label", gui_config.disable_proxy_on_core_stop, Message::ToggleDisableProxyOnCoreStop), text(tr(lang, "help_disable_proxy_on_stop")).color(text_muted).size(11)].spacing(4),
-            ]
-            .spacing(16)
-        )
-        .padding(25)
-        .width(Length::Fill)
-        .style(theme::card_bg);
+        let mut sys_items: Vec<Element<'_, Message>> = vec![
+            text(tr(lang, "sys_integration")).color(text_muted).size(13).into(),
+        ];
+        if gui_config.tun_mode {
+            sys_items.push(
+                container(text(tr(lang, "tun_admin_banner")).size(11).color(theme::WARNING))
+                    .padding(10)
+                    .width(Length::Fill)
+                    .style(|t| theme::tinted_banner(t, theme::WARNING))
+                    .into(),
+            );
+        }
+        for (key, on, msg, help) in [
+            ("tun_mode_label", gui_config.tun_mode, Message::ToggleTun, "help_tun_mode"),
+            ("autostart_label", gui_config.start_on_boot, Message::ToggleAutostart, "help_autostart"),
+            ("close_core_on_exit_label", gui_config.close_core_on_exit, Message::ToggleCloseCoreOnExit, "help_close_core"),
+            ("auto_start_core_label", gui_config.auto_start_core, Message::ToggleAutoStartCore, "help_auto_start_core"),
+            ("auto_sys_proxy_label", gui_config.auto_sys_proxy, Message::ToggleAutoSysProxy, "help_auto_sys_proxy"),
+            ("tcp_fast_open_label", gui_config.tcp_fast_open, Message::ToggleTcpFastOpen, "help_tcp_fast_open"),
+            ("tcp_multipath_label", gui_config.tcp_multipath, Message::ToggleTcpMultipath, "help_tcp_multipath"),
+            ("disable_proxy_on_stop_label", gui_config.disable_proxy_on_core_stop, Message::ToggleDisableProxyOnCoreStop, "help_disable_proxy_on_stop"),
+        ] {
+            sys_items.push(
+                column![
+                    make_toggle_row(key, on, msg),
+                    text(tr(lang, help)).color(text_muted).size(11)
+                ]
+                .spacing(4)
+                .into(),
+            );
+        }
+        let mut sys_col = column![].spacing(12);
+        for item in sys_items {
+            sys_col = sys_col.push(item);
+        }
+        let settings_card = container(sys_col)
+            .padding(theme::CARD_PAD)
+            .width(Length::Fill)
+            .style(theme::card_bg);
         
         // 2. Network & DNS Settings Card (Middle Column)
         let mixed_port_input = text_input("2080", mixed_port_str)
@@ -143,7 +166,7 @@ pub fn render<'a>(
             ]
             .spacing(20)
         )
-        .padding(25)
+        .padding(theme::CARD_PAD)
         .width(Length::Fill)
         .style(theme::card_bg);
         
@@ -207,7 +230,7 @@ pub fn render<'a>(
         };
         
         let app_prefs_card = container(app_prefs_content)
-            .padding(25)
+            .padding(theme::CARD_PAD)
             .width(Length::Fill)
             .style(theme::card_bg);
         
@@ -248,14 +271,25 @@ pub fn render<'a>(
             String::new()
         };
 
-        let core_downloader = if core_installed {
-            row![
-                text(tr(lang, "core_installed_status")).color(theme::SUCCESS).size(13).width(Length::Fill),
-                text(version_label).color(text_muted).size(11)
+        let core_downloader: Element<'_, Message> = if core_installed {
+            let reinstall = button(text(tr(lang, "btn_reinstall_core")).size(theme::TYPE_BTN_SM))
+                .padding(theme::BTN_PAD_SM)
+                .style(theme::button_secondary)
+                .on_press(Message::ForceCoreDownload);
+            column![
+                row![
+                    text(tr(lang, "core_installed_status")).color(theme::SUCCESS).size(13).width(Length::Fill),
+                    text(version_label).color(text_muted).size(11)
+                ]
+                .width(Length::Fill)
+                .spacing(5)
+                .align_y(Alignment::Center),
+                text(tr(lang, "help_reinstall_core")).color(text_muted).size(11),
+                reinstall,
             ]
+            .spacing(8)
             .width(Length::Fill)
-            .spacing(5)
-            .align_y(Alignment::Center)
+            .into()
         } else {
             let btn = button(
                 text(tr(lang, "btn_download_core"))
@@ -275,13 +309,40 @@ pub fn render<'a>(
             .width(Length::Fill)
             .spacing(10)
             .align_y(Alignment::Center)
+            .into()
         };
         
-        let install_status_row = if let Some(msg) = install_message {
-            row![text(msg).color(theme::WARNING).size(11)]
+        let install_status_row: Element<'_, Message> = if let Some(msg) = install_message {
+            crate::ui::loading_row(msg, theme)
         } else {
-            row![]
+            row![].into()
         };
+
+        let latency_url_input = text_input(
+            "http://cp.cloudflare.com/generate_204",
+            &gui_config.latency_test_url,
+        )
+        .on_input(Message::LatencyTestUrlChanged)
+        .on_submit(Message::SaveSettings)
+        .padding(10)
+        .style(theme::input_field);
+
+        let latency_timeout_str = gui_config.latency_test_timeout_ms.to_string();
+        let latency_timeout_input = text_input("2000", &latency_timeout_str)
+            .on_input(Message::LatencyTestTimeoutChanged)
+            .on_submit(Message::SaveSettings)
+            .padding(10)
+            .style(theme::input_field);
+
+        let latency_block = column![
+            text(tr(lang, "latency_test_url_label")).color(text_muted).size(12),
+            text(tr(lang, "help_latency_test")).color(text_muted).size(11),
+            latency_url_input.width(Length::Fill),
+            text(tr(lang, "latency_test_timeout_label")).color(text_muted).size(12),
+            latency_timeout_input.width(Length::Fill),
+        ]
+        .spacing(6)
+        .width(Length::Fill);
         
         let open_dir_btn = button(
             text(tr(lang, "btn_open_data_dir"))
@@ -319,13 +380,14 @@ pub fn render<'a>(
                 text(tr(lang, "core_components")).color(text_muted).size(13),
                 core_downloader,
                 core_path_row,
+                latency_block,
                 auto_update_block,
                 open_dir_btn,
                 install_status_row
             ]
-            .spacing(15)
+            .spacing(12)
         )
-        .padding(25)
+        .padding(theme::CARD_PAD)
         .width(Length::Fill)
         .style(theme::card_bg);
         
@@ -424,9 +486,9 @@ pub fn render<'a>(
                     text(tr(lang, "app_update")).color(text_muted).size(13),
                     update_info
                 ]
-                .spacing(15)
+                .spacing(12)
             )
-            .padding(25)
+            .padding(theme::CARD_PAD)
             .width(Length::Fill)
             .style(theme::card_bg)
         };
@@ -452,7 +514,7 @@ pub fn render<'a>(
         .spacing(20)
         .width(if is_compact { Length::Fill } else { Length::FillPortion(1) });
 
-        let main_row_layout: Element<'_, Message> = if size.width < 800.0 {
+        let main_row_layout: Element<'_, Message> = if size.width < crate::ui::SETTINGS_2COL_W {
             column![
                 left_col,
                 mid_col,
@@ -461,7 +523,7 @@ pub fn render<'a>(
             .spacing(20)
             .width(Length::Fill)
             .into()
-        } else if size.width < 1150.0 {
+        } else if size.width < crate::ui::SETTINGS_3COL_W {
             column![
                 row![left_col, mid_col].spacing(20).width(Length::Fill),
                 app_and_core_col
@@ -480,31 +542,66 @@ pub fn render<'a>(
             .into()
         };
 
-        // Generate config preview string
-        let preview_json = crate::config::generate_preview_config(gui_config);
-        
-        let preview_card = container(
-            column![
-                text(tr(lang, "core_config_preview"))
-                    .color(text_muted)
-                    .size(13),
-                container(
-                    scrollable(
-                        text(preview_json)
-                            .font(iced::Font::MONOSPACE)
-                            .size(12)
-                            .color(text_primary)
-                    )
-                    .height(Length::Fixed(300.0))
-                    .width(Length::Fill)
-                )
-                .padding(15)
-                .style(theme::console_bg)
-            ]
-            .spacing(20)
+        // Collapsible config preview — avoids nested scroll fight when collapsed
+        let preview_toggle = button(
+            text(if config_preview_expanded {
+                tr(lang, "btn_hide_preview")
+            } else {
+                tr(lang, "btn_show_preview")
+            })
+            .size(13)
         )
-        .padding([20, 30])
-        .width(Length::Fill);
+        .padding(theme::BTN_PAD_MD)
+        .style(theme::button_secondary)
+        .on_press(Message::ToggleConfigPreview);
+
+        let preview_card: Element<'_, Message> = if config_preview_expanded {
+            let preview_json = crate::config::generate_preview_config(gui_config);
+            container(
+                column![
+                    row![
+                        text(tr(lang, "core_config_preview"))
+                            .color(text_muted)
+                            .size(13)
+                            .width(Length::Fill),
+                        preview_toggle,
+                    ]
+                    .align_y(Alignment::Center),
+                    container(
+                        scrollable(
+                            text(preview_json)
+                                .font(iced::Font::MONOSPACE)
+                                .size(12)
+                                .color(text_primary)
+                        )
+                        .height(Length::Fixed(280.0))
+                        .width(Length::Fill)
+                    )
+                    .padding(15)
+                    .style(theme::console_bg)
+                ]
+                .spacing(12)
+            )
+            .padding(theme::CARD_PAD)
+            .width(Length::Fill)
+            .style(theme::card_bg)
+            .into()
+        } else {
+            container(
+                row![
+                    text(tr(lang, "core_config_preview"))
+                        .color(text_muted)
+                        .size(13)
+                        .width(Length::Fill),
+                    preview_toggle,
+                ]
+                .align_y(Alignment::Center)
+            )
+            .padding(theme::CARD_PAD)
+            .width(Length::Fill)
+            .style(theme::card_bg)
+            .into()
+        };
 
         let content_col = column![
             main_row_layout,
@@ -519,21 +616,7 @@ pub fn render<'a>(
             .on_press(Message::SaveSettings);
 
         let header = page_header("settings", lang, Some(save_btn.into()), theme, is_compact);
-        
-        let col = column![header, content_col].spacing(20).width(Length::Fill);
-
-        let inner = container(col)
-            .width(Length::Fill)
-            .max_width(1200.0)
-            .center_x(Length::Fill)
-            .padding(crate::ui::page_padding());
-
-        container(
-            scrollable(inner).height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        crate::ui::page_shell_with_pad(header, content_col.into(), is_compact)
     });
     
     main_content.into()

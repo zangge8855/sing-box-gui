@@ -25,7 +25,7 @@ mod ui;
 use std::sync::{Mutex, OnceLock};
 use tokio::sync::mpsc;
 use iced::{Alignment, Element, Length, Subscription, Task, Font};
-use iced::widget::{button, column, container, row, text, responsive};
+use iced::widget::{button, column, container, row, text, responsive, tooltip};
 use state::{Bandwidth, GuiConfig, Profile, ProxyNode, Tab, Toast};
 use message::Message;
 use futures::SinkExt;
@@ -115,6 +115,14 @@ struct App {
     core_version: Option<String>,
     /// Seconds since last auto-update scan (Tick increments).
     auto_update_tick_counter: u32,
+    /// Settings: expand generated config preview.
+    config_preview_expanded: bool,
+    /// Profiles: which card shows secondary actions.
+    profile_more_id: Option<String>,
+    /// Queued subscription IDs for sequential auto-update.
+    pending_auto_updates: std::collections::VecDeque<String>,
+    /// Follow new log lines (snap scroll to end).
+    logs_follow: bool,
 }
 
 impl App {
@@ -163,23 +171,66 @@ impl App {
             TrayIconBuilder,
         };
 
-        // Create the tray menu
+        // Create the tray menu (labels match current language; update_tray_menu refreshes later)
+        let is_zh = gui_config.language == state::Language::Zh;
         let tray_menu = Menu::new();
-        let show_item = MenuItem::with_id("show_window", "显示主界面 (Show Window)", true, None);
-        let toggle_core_item = MenuItem::with_id("toggle_core", "启动内核 (Start Core)", true, None);
+        let show_item = MenuItem::with_id(
+            "show_window",
+            if is_zh { "显示主界面" } else { "Show Window" },
+            true,
+            None,
+        );
+        let toggle_core_item = MenuItem::with_id(
+            "toggle_core",
+            if is_zh { "启动内核" } else { "Start Core" },
+            true,
+            None,
+        );
         
-        let rule_mode_item = CheckMenuItem::with_id("mode_rule", "规则分流 (Rules)", true, false, None);
-        let global_mode_item = CheckMenuItem::with_id("mode_global", "全局代理 (Global)", true, false, None);
-        let direct_mode_item = CheckMenuItem::with_id("mode_direct", "直接连接 (Direct)", true, false, None);
+        let rule_mode_item = CheckMenuItem::with_id(
+            "mode_rule",
+            if is_zh { "规则分流" } else { "Rules" },
+            true,
+            false,
+            None,
+        );
+        let global_mode_item = CheckMenuItem::with_id(
+            "mode_global",
+            if is_zh { "全局代理" } else { "Global" },
+            true,
+            false,
+            None,
+        );
+        let direct_mode_item = CheckMenuItem::with_id(
+            "mode_direct",
+            if is_zh { "直接连接" } else { "Direct" },
+            true,
+            false,
+            None,
+        );
         
-        let system_proxy_item = CheckMenuItem::with_id("toggle_system_proxy", "系统代理 (System Proxy)", true, gui_config.system_proxy_enabled, None);
+        let system_proxy_item = CheckMenuItem::with_id(
+            "toggle_system_proxy",
+            if is_zh { "系统代理" } else { "System Proxy" },
+            true,
+            gui_config.system_proxy_enabled,
+            None,
+        );
         
-        let mode_submenu = tray_icon::menu::Submenu::new("代理模式 (Proxy Mode)", true);
+        let mode_submenu = tray_icon::menu::Submenu::new(
+            if is_zh { "代理模式" } else { "Proxy Mode" },
+            true,
+        );
         let _ = mode_submenu.append(&rule_mode_item);
         let _ = mode_submenu.append(&global_mode_item);
         let _ = mode_submenu.append(&direct_mode_item);
         
-        let exit_item = MenuItem::with_id("exit_app", "退出 (Exit)", true, None);
+        let exit_item = MenuItem::with_id(
+            "exit_app",
+            if is_zh { "退出" } else { "Exit" },
+            true,
+            None,
+        );
         
         let _ = tray_menu.append(&show_item);
         let _ = tray_menu.append(&PredefinedMenuItem::separator());
@@ -259,6 +310,10 @@ impl App {
             log_search: String::new(),
             core_version: None,
             auto_update_tick_counter: 0,
+            config_preview_expanded: false,
+            profile_more_id: None,
+            pending_auto_updates: std::collections::VecDeque::new(),
+            logs_follow: true,
         };
         
         // Force initialization of log and traffic streams on startup
@@ -378,6 +433,22 @@ impl App {
 
     fn toast_info(&mut self, msg: impl Into<String>) {
         self.show_toast(Toast::info(msg));
+    }
+
+    fn tr(&self, key: &'static str) -> &'static str {
+        ui::i18n::tr(self.gui_config.language, key)
+    }
+
+    /// Start next queued auto-update if idle.
+    fn kick_pending_auto_update(&mut self) -> Task<Message> {
+        if self.downloading {
+            return Task::none();
+        }
+        if let Some(id) = self.pending_auto_updates.pop_front() {
+            Task::done(Message::UpdateSubscription(id))
+        } else {
+            Task::none()
+        }
     }
     
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -623,6 +694,7 @@ impl App {
                         }
                         Err(e) => {
                             self.log_lines.push(format!("[GUI] Error starting core: {}", e));
+                            self.toast_error(e);
                             Task::none()
                         }
                     }
@@ -633,12 +705,15 @@ impl App {
                 if self.log_lines.len() > 1000 {
                     self.log_lines.drain(0..100); // Amortized shifting cost optimization
                 }
-                
-                // Automatically scroll logs scrollable to bottom on new logs
-                iced::widget::operation::snap_to(
-                    ui::logs::get_logs_scrollable_id().clone(),
-                    iced::widget::scrollable::RelativeOffset::END
-                )
+                // Follow tail when Logs tab is active
+                if self.logs_follow && self.current_tab == state::Tab::Logs {
+                    iced::widget::operation::snap_to(
+                        ui::logs::get_logs_scrollable_id().clone(),
+                        iced::widget::scrollable::RelativeOffset::END,
+                    )
+                } else {
+                    Task::none()
+                }
             }
             Message::ClearLogs => {
                 self.log_lines.clear();
@@ -702,11 +777,7 @@ impl App {
             Message::ClipboardContent(Some(text)) => {
                 let text = text.trim().to_string();
                 if text.is_empty() {
-                    self.toast_info(if self.gui_config.language == state::Language::Zh {
-                        "剪贴板为空"
-                    } else {
-                        "Clipboard is empty"
-                    });
+                    self.toast_info(self.tr("toast_clipboard_empty"));
                     return Task::none();
                 }
                 self.url_input = text;
@@ -739,8 +810,28 @@ impl App {
                 self.log_lines.push("[GUI] Starting sing-box core download...".to_string());
                 self.core_install_msg = Some("Downloading...".to_string());
                 Task::perform(async move {
-                    core::download_core(log_tx).await
+                    core::download_core(log_tx, false).await
                 }, Message::CoreDownloaded)
+            }
+            Message::ForceCoreDownload => {
+                let log_tx = get_log_tx();
+                self.log_lines.push("[GUI] Force reinstalling sing-box core...".to_string());
+                self.core_install_msg = Some("Reinstalling...".to_string());
+                Task::perform(async move {
+                    core::download_core(log_tx, true).await
+                }, Message::CoreDownloaded)
+            }
+            Message::LatencyTestUrlChanged(url) => {
+                self.gui_config.latency_test_url = url;
+                let _ = config::save_gui_config(&self.gui_config);
+                Task::none()
+            }
+            Message::LatencyTestTimeoutChanged(s) => {
+                if let Ok(ms) = s.parse::<u32>() {
+                    self.gui_config.latency_test_timeout_ms = ms.clamp(500, 30_000);
+                    let _ = config::save_gui_config(&self.gui_config);
+                }
+                Task::none()
             }
             Message::CoreDownloaded(res) => {
                 match res {
@@ -888,7 +979,7 @@ impl App {
                         "Subscription downloaded successfully"
                     });
                 }
-                Task::none()
+                self.kick_pending_auto_update()
             }
             Message::SelectProfile(id) => {
                 self.confirm_delete_profile_id = None;
@@ -963,28 +1054,24 @@ impl App {
             }
             Message::StartLatencyTest => {
                 if !self.core_running {
-                    self.toast_info(if self.gui_config.language == state::Language::Zh {
-                        "请先启动内核再测速"
-                    } else {
-                        "Start the core before testing latency"
-                    });
+                    self.toast_info(self.tr("toast_start_core_first"));
                     return Task::none();
                 }
                 if self.active_profile_nodes.is_empty() {
-                    self.toast_info(if self.gui_config.language == state::Language::Zh {
-                        "当前没有可测速的节点"
-                    } else {
-                        "No nodes available for latency test"
-                    });
+                    self.toast_info(self.tr("toast_no_nodes"));
                     return Task::none();
                 }
                 self.latency_testing = true;
                 let api_port = self.gui_config.api_port;
+                let test_url = self.gui_config.latency_test_url.clone();
+                let timeout_ms = self.gui_config.latency_test_timeout_ms;
                 
                 let tasks = self.active_profile_nodes.iter().map(|node| {
                     let tag = node.name.clone();
+                    let test_url = test_url.clone();
                     Task::perform(async move {
-                        let latency = api::test_node_latency(api_port, &tag).await;
+                        let latency =
+                            api::test_node_latency(api_port, &tag, &test_url, timeout_ms).await;
                         (tag, latency)
                     }, |(tag, res)| {
                         Message::NodeLatencyTested {
@@ -1006,11 +1093,7 @@ impl App {
             }
             Message::LatencyTestComplete => {
                 self.latency_testing = false;
-                self.toast_success(if self.gui_config.language == state::Language::Zh {
-                    "延迟测试完成"
-                } else {
-                    "Latency test complete"
-                });
+                self.toast_success(self.tr("toast_latency_done"));
                 Task::none()
             }
             Message::UpdateSubscription(id) => {
@@ -1051,15 +1134,11 @@ impl App {
                 }
             }
             Message::AutoUpdateDue(ids) => {
-                if ids.is_empty() || self.downloading {
+                if ids.is_empty() {
                     return Task::none();
                 }
-                // Chain first due update (others will be picked next scan)
-                if let Some(id) = ids.into_iter().next() {
-                    Task::done(Message::UpdateSubscription(id))
-                } else {
-                    Task::none()
-                }
+                enqueue_pending_updates(&mut self.pending_auto_updates, ids);
+                self.kick_pending_auto_update()
             }
             Message::Tick => {
                 self.core_running = core::is_core_running();
@@ -1347,6 +1426,18 @@ impl App {
                 self.editing_profile_id = None;
                 Task::none()
             }
+            Message::ToggleConfigPreview => {
+                self.config_preview_expanded = !self.config_preview_expanded;
+                Task::none()
+            }
+            Message::ToggleProfileMore(id) => {
+                if self.profile_more_id.as_deref() == Some(id.as_str()) {
+                    self.profile_more_id = None;
+                } else {
+                    self.profile_more_id = Some(id);
+                }
+                Task::none()
+            }
             Message::ToggleCloseCoreOnExit => {
                 self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
                 let _ = config::save_gui_config(&self.gui_config);
@@ -1496,10 +1587,12 @@ impl App {
         let core_version_ref = self.core_version.as_deref();
         let active_connections_count = self.active_connections.len();
         let selected_node_for_dash = self.selected_node_tag.as_deref();
+        let profile_more_id_ref = self.profile_more_id.as_deref();
+        let config_preview_expanded = self.config_preview_expanded;
 
         let main_content = responsive(move |size| {
             let theme = theme_ref;
-            let is_compact = size.width < 750.0;
+            let is_compact = size.width < ui::SHELL_COMPACT_W;
             let text_muted = ui::theme::text_muted(theme);
             
             // Render active tab view
@@ -1536,6 +1629,7 @@ impl App {
                     editing_profile_id_ref,
                     editing_profile_name_ref,
                     editing_profile_url_ref,
+                    profile_more_id_ref,
                     theme,
                 ),
                 Tab::Rules => ui::rules::render(
@@ -1570,14 +1664,15 @@ impl App {
                     core_install_msg_ref,
                     core_version_ref,
                     update_status_ref,
+                    config_preview_expanded,
                     theme,
                 ),
             };
 
-            let make_tab_btn = |tab: Tab, icon_char: char, key: &'static str| {
+            let make_tab_btn = |tab: Tab, icon_char: char, key: &'static str| -> Element<'_, Message> {
                 let active = current_tab == tab;
                 
-                let indicator = container(iced::widget::Space::new())
+                let indicator: Element<'_, Message> = container(iced::widget::Space::new())
                     .width(4)
                     .height(20)
                     .style(move |_theme| container::Style {
@@ -1591,9 +1686,10 @@ impl App {
                             ..Default::default()
                         },
                         ..Default::default()
-                    });
+                    })
+                    .into();
                 
-                let btn_content = if is_compact {
+                let btn_content: Element<'_, Message> = if is_compact {
                     row![
                         indicator,
                         container(
@@ -1605,6 +1701,7 @@ impl App {
                         .align_x(Alignment::Center)
                     ]
                     .align_y(Alignment::Center)
+                    .into()
                 } else {
                     row![
                         indicator,
@@ -1620,13 +1717,32 @@ impl App {
                     ]
                     .spacing(12)
                     .align_y(Alignment::Center)
+                    .into()
                 };
                 
-                button(btn_content)
+                let btn = button(btn_content)
                     .padding(if is_compact { [14, 0] } else { [14, 16] })
                     .width(Length::Fill)
                     .style(ui::theme::button_tab(active))
-                    .on_press(Message::TabChanged(tab))
+                    .on_press(Message::TabChanged(tab));
+
+                // Compact icon rail: show tab name on hover
+                if is_compact {
+                    tooltip(
+                        btn,
+                        container(
+                            text(ui::i18n::tr(lang, key))
+                                .size(12)
+                                .color(ui::theme::text_primary(theme)),
+                        )
+                        .padding([6, 10])
+                        .style(ui::theme::card_bg),
+                        tooltip::Position::Right,
+                    )
+                    .into()
+                } else {
+                    btn.into()
+                }
             };
 
             let logo_handle = iced::widget::image::Handle::from_bytes(
@@ -1635,19 +1751,34 @@ impl App {
             let status_dot_color = if core_running {
                 ui::theme::SUCCESS
             } else {
-                ui::theme::DANGER
+                // Neutral resting state — not an error
+                ui::theme::text_muted(theme)
+            };
+
+            let logo_rounded = |handle: iced::widget::image::Handle, size: f32| {
+                container(
+                    iced::widget::image(handle)
+                        .width(size)
+                        .height(size)
+                        .content_fit(iced::ContentFit::Cover)
+                )
+                .width(size)
+                .height(size)
+                .clip(true)
+                .style(|_t| container::Style {
+                    border: iced::Border {
+                        radius: ui::theme::RADIUS_SM.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
             };
 
             let sidebar = if is_compact {
                 container(
                     column![
                         column![
-                            container(
-                                iced::widget::image(logo_handle.clone())
-                                    .width(36)
-                                    .height(36)
-                                    .content_fit(iced::ContentFit::Cover)
-                            )
+                            container(logo_rounded(logo_handle.clone(), 36.0))
                             .width(Length::Fill)
                             .center_x(Length::Fill),
                             column![
@@ -1690,25 +1821,22 @@ impl App {
                     column![
                         column![
                             row![
-                                iced::widget::image(logo_handle)
-                                    .width(32)
-                                    .height(32)
-                                    .content_fit(iced::ContentFit::Cover),
+                                logo_rounded(logo_handle, 32.0),
                                 column![
                                     text("sing-box")
-                                        .size(20)
+                                        .size(18)
                                         .font(Font {
-                                            weight: iced::font::Weight::Bold,
+                                            weight: iced::font::Weight::Semibold,
                                             ..Default::default()
                                         })
-                                        .color(ui::theme::ACCENT_PURPLE),
+                                        .color(ui::theme::text_primary(theme)),
                                     text("GUI")
-                                        .size(11)
+                                        .size(ui::theme::TYPE_CAPTION)
                                         .font(Font {
-                                            weight: iced::font::Weight::Light,
+                                            weight: iced::font::Weight::Medium,
                                             ..Default::default()
                                         })
-                                        .color(ui::theme::ACCENT_BLUE),
+                                        .color(ui::theme::text_tertiary(theme)),
                                 ]
                                 .spacing(0)
                             ]
@@ -1730,27 +1858,40 @@ impl App {
                         .width(Length::Fill),
                         iced::widget::Space::new().height(Length::Fill),
                         row![
-                            container(iced::widget::Space::new())
-                                .width(8)
-                                .height(8)
-                                .style(move |_t| container::Style {
-                                    background: Some(iced::Background::Color(status_dot_color)),
-                                    border: iced::Border {
-                                        radius: 4.0.into(),
+                            {
+                                let dot = container(iced::widget::Space::new())
+                                    .width(8)
+                                    .height(8)
+                                    .style(move |_t| container::Style {
+                                        background: Some(iced::Background::Color(status_dot_color)),
+                                        border: iced::Border {
+                                            radius: 4.0.into(),
+                                            ..Default::default()
+                                        },
                                         ..Default::default()
-                                    },
-                                    ..Default::default()
-                                }),
+                                    });
+                                if core_running {
+                                    container(dot)
+                                        .padding(4)
+                                        .style(move |_t| ui::theme::status_ring(status_dot_color))
+                                } else {
+                                    container(dot).padding(4)
+                                }
+                            },
                             text(if core_running {
                                 ui::i18n::tr(lang, "status_running")
                             } else {
                                 ui::i18n::tr(lang, "status_stopped")
                             })
-                            .size(11)
-                            .color(text_muted),
+                            .size(ui::theme::TYPE_CAPTION)
+                            .color(if core_running {
+                                ui::theme::SUCCESS
+                            } else {
+                                text_muted
+                            }),
                             iced::widget::Space::new().width(Length::Fill),
                             text(format!("v{}", env!("CARGO_PKG_VERSION")))
-                                .size(11)
+                                .size(ui::theme::TYPE_CAPTION)
                                 .color(text_muted)
                         ]
                         .spacing(8)
@@ -2079,6 +2220,18 @@ fn parse_content_disposition_filename(header: &str) -> Option<String> {
     None
 }
 
+/// Append unique subscription ids to the auto-update queue (FIFO).
+fn enqueue_pending_updates(
+    queue: &mut std::collections::VecDeque<String>,
+    ids: impl IntoIterator<Item = String>,
+) {
+    for id in ids {
+        if !queue.contains(&id) {
+            queue.push_back(id);
+        }
+    }
+}
+
 fn collect_due_subscription_ids(gui_config: &GuiConfig, hours: u32) -> Vec<String> {
     let threshold = chrono::Duration::hours(hours as i64);
     let now = chrono::Local::now();
@@ -2099,6 +2252,62 @@ fn collect_due_subscription_ids(gui_config: &GuiConfig, hours: u32) -> Vec<Strin
         }
     }
     due
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use state::{GuiConfig, Profile};
+
+    #[test]
+    fn enqueue_pending_updates_dedupes_and_preserves_order() {
+        let mut q = std::collections::VecDeque::new();
+        enqueue_pending_updates(&mut q, vec!["a".into(), "b".into()]);
+        enqueue_pending_updates(&mut q, vec!["b".into(), "c".into(), "a".into()]);
+        assert_eq!(
+            q.into_iter().collect::<Vec<_>>(),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+    }
+
+    #[test]
+    fn collect_due_includes_stale_http_subscriptions() {
+        let mut cfg = GuiConfig::default();
+        cfg.subscriptions.push(Profile {
+            id: "remote-stale".into(),
+            name: "Stale".into(),
+            url: "https://example.com/sub".into(),
+            file_path: String::new(),
+            is_subscription: true,
+            // Far in the past → due for any positive interval
+            updated_at: "2000-01-01 00:00:00".into(),
+            traffic_upload: None,
+            traffic_download: None,
+            traffic_total: None,
+            expire_at: None,
+        });
+        cfg.subscriptions.push(Profile {
+            id: "local-file".into(),
+            name: "Local".into(),
+            url: "C:\\not\\a\\real\\path\\but\\absolute".into(),
+            file_path: String::new(),
+            is_subscription: false,
+            updated_at: "2000-01-01 00:00:00".into(),
+            traffic_upload: None,
+            traffic_download: None,
+            traffic_total: None,
+            expire_at: None,
+        });
+        let due = collect_due_subscription_ids(&cfg, 6);
+        assert!(due.contains(&"remote-stale".to_string()));
+        assert!(!due.iter().any(|id| id == "local-file"));
+    }
+
+    #[test]
+    fn window_min_matches_ui_constant() {
+        // Keep main window settings aligned with shared tokens.
+        assert!(ui::WINDOW_MIN_W < ui::SHELL_COMPACT_W);
+    }
 }
 
 fn set_windows_autostart(enable: bool) -> Result<(), String> {
@@ -2204,7 +2413,8 @@ fn main() -> iced::Result {
     
     let window_settings = iced::window::Settings {
         size: iced::Size::new(1080.0, 750.0),
-        min_size: Some(iced::Size::new(960.0, 680.0)),
+        // Low enough that SHELL_COMPACT_W icon sidebar is reachable
+        min_size: Some(iced::Size::new(ui::WINDOW_MIN_W, ui::WINDOW_MIN_H)),
         icon,
         exit_on_close_request: false,
         ..Default::default()

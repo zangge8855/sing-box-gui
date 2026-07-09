@@ -205,6 +205,20 @@ pub struct GuiConfig {
     /// When stopping the core, also disable system proxy (default true).
     #[serde(default = "default_true")]
     pub disable_proxy_on_core_stop: bool,
+    /// URL used by Clash API latency tests (default Cloudflare 204).
+    #[serde(default = "default_latency_url")]
+    pub latency_test_url: String,
+    /// Latency test timeout in milliseconds.
+    #[serde(default = "default_latency_timeout_ms")]
+    pub latency_test_timeout_ms: u32,
+}
+
+fn default_latency_url() -> String {
+    "http://cp.cloudflare.com/generate_204".to_string()
+}
+
+fn default_latency_timeout_ms() -> u32 {
+    2000
 }
 
 fn default_true() -> bool {
@@ -261,6 +275,8 @@ impl Default for GuiConfig {
             custom_proxy_ips: Vec::new(),
             auto_update_interval_hours: 0,
             disable_proxy_on_core_stop: true,
+            latency_test_url: default_latency_url(),
+            latency_test_timeout_ms: default_latency_timeout_ms(),
         }
     }
 }

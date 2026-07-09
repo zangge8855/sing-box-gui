@@ -12,6 +12,33 @@ pub const RADIUS_MD: f32 = 10.0;
 pub const RADIUS_SM: f32 = 8.0;
 pub const RADIUS_XS: f32 = 6.0;
 
+// ── Type scale (f32 for iced::Pixels) ────────────────────────────────────────
+pub const TYPE_TITLE: f32 = 22.0;
+pub const TYPE_SECTION: f32 = 13.0; // group labels — medium muted
+pub const TYPE_HEADING: f32 = 14.0; // content titles — semibold primary
+pub const TYPE_BODY: f32 = 14.0;
+pub const TYPE_CAPTION: f32 = 11.0;
+pub const TYPE_MICRO: f32 = 10.0; // badges only
+pub const TYPE_BTN_SM: f32 = 12.0;
+pub const TYPE_BTN_MD: f32 = 13.0;
+#[allow(dead_code)]
+pub const TYPE_BTN_LG: f32 = 14.0;
+#[allow(dead_code)]
+pub const TYPE_METRIC: f32 = 22.0; // dashboard speed numbers
+pub const TYPE_MONO: f32 = 12.0; // latency, mono captions
+
+// ── Spacing / padding presets ────────────────────────────────────────────────
+pub const CARD_PAD: f32 = 20.0;
+pub const CARD_PAD_DENSE: f32 = 16.0;
+pub const BTN_PAD_SM: [u16; 2] = [6, 12];
+pub const BTN_PAD_MD: [u16; 2] = [8, 16];
+#[allow(dead_code)]
+pub const BTN_PAD_LG: [u16; 2] = [12, 20];
+/// Shared width for page header search inputs.
+pub const SEARCH_WIDTH: f32 = 260.0;
+/// Grid / card list gap.
+pub const GRID_GAP: f32 = 16.0;
+
 // ── Dark mode (cool near-black with subtle blue undertone) ───────────────────
 pub const BG_DARK: Color = Color::from_rgb(0.055, 0.057, 0.070); // #0e0f12
 pub const SIDEBAR_BG: Color = Color::from_rgb(0.040, 0.042, 0.055); // #0a0b0e
@@ -50,6 +77,8 @@ pub const ACCENT_PURPLE_HOVER: Color = Color::from_rgb(0.62, 0.48, 1.0);
 pub const ACCENT_PURPLE_PRESSED: Color = Color::from_rgb(0.44, 0.30, 0.88);
 pub const ACCENT_PURPLE_DISABLED: Color = Color::from_rgb(0.28, 0.24, 0.40);
 pub const ACCENT_BLUE: Color = Color::from_rgb(0.28, 0.52, 0.96); // #4785f5
+/// Prefer SUCCESS for health/status; kept for decorative accents if needed.
+#[allow(dead_code)]
 pub const ACCENT_GREEN: Color = Color::from_rgb(0.18, 0.76, 0.58);
 pub const SUCCESS: Color = Color::from_rgb(0.12, 0.72, 0.52); // #1fb885
 pub const WARNING: Color = Color::from_rgb(0.94, 0.60, 0.12);
@@ -173,13 +202,13 @@ pub fn sidebar_bg(theme: &iced::Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(sidebar_surface(theme))),
         border: Border {
-            // Subtle separator edge into main content
+            // Right-edge separator into main content
             color: if dark {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.06)
+                Color::from_rgba(1.0, 1.0, 1.0, 0.08)
             } else {
-                Color::from_rgba(0.10, 0.12, 0.18, 0.08)
+                Color::from_rgba(0.10, 0.12, 0.18, 0.12)
             },
-            width: 0.0,
+            width: 1.0,
             radius: 0.0.into(),
         },
         ..Default::default()
@@ -267,6 +296,33 @@ pub fn badge_bg(theme: &iced::Theme) -> container::Style {
     }
 }
 
+/// Solid success pill (e.g. "Active" profile badge).
+pub fn badge_success(_theme: &iced::Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(SUCCESS)),
+        border: Border {
+            color: SUCCESS,
+            width: 0.0,
+            radius: RADIUS_XS.into(),
+        },
+        text_color: Some(Color::WHITE),
+        ..Default::default()
+    }
+}
+
+/// Soft ring around a status indicator (running core).
+pub fn status_ring(fill: Color) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(with_alpha(fill, 0.22))),
+        border: Border {
+            color: with_alpha(fill, 0.35),
+            width: 0.0,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
 /// Soft semantic banner (errors, hints) with tinted fill.
 pub fn tinted_banner(theme: &iced::Theme, accent: Color) -> container::Style {
     let dark = is_dark(theme);
@@ -283,6 +339,7 @@ pub fn tinted_banner(theme: &iced::Theme, accent: Color) -> container::Style {
 }
 
 pub fn button_primary(_theme: &iced::Theme, status: button::Status) -> button::Style {
+    let disabled = matches!(status, button::Status::Disabled);
     let (bg, shadow) = match status {
         button::Status::Hovered => (
             ACCENT_PURPLE_HOVER,
@@ -293,7 +350,15 @@ pub fn button_primary(_theme: &iced::Theme, status: button::Status) -> button::S
             },
         ),
         button::Status::Pressed => (ACCENT_PURPLE_PRESSED, Shadow::default()),
-        button::Status::Disabled => (ACCENT_PURPLE_DISABLED, Shadow::default()),
+        button::Status::Disabled => (
+            Color {
+                r: ACCENT_PURPLE_DISABLED.r * 0.85 + 0.12,
+                g: ACCENT_PURPLE_DISABLED.g * 0.85 + 0.10,
+                b: ACCENT_PURPLE_DISABLED.b * 0.85 + 0.14,
+                a: 1.0,
+            },
+            Shadow::default(),
+        ),
         button::Status::Active => (
             ACCENT_PURPLE,
             Shadow {
@@ -306,7 +371,11 @@ pub fn button_primary(_theme: &iced::Theme, status: button::Status) -> button::S
 
     button::Style {
         background: Some(Background::Color(bg)),
-        text_color: Color::WHITE,
+        text_color: if disabled {
+            with_alpha(Color::WHITE, 0.55)
+        } else {
+            Color::WHITE
+        },
         border: Border {
             radius: RADIUS_SM.into(),
             width: 0.0,
@@ -319,6 +388,7 @@ pub fn button_primary(_theme: &iced::Theme, status: button::Status) -> button::S
 
 pub fn button_secondary(theme: &iced::Theme, status: button::Status) -> button::Style {
     let dark = is_dark(theme);
+    let disabled = matches!(status, button::Status::Disabled);
     let (bg, border_c, text_c) = if dark {
         let b = match status {
             button::Status::Hovered => Color::from_rgb(0.16, 0.18, 0.24),
@@ -326,7 +396,13 @@ pub fn button_secondary(theme: &iced::Theme, status: button::Status) -> button::
             button::Status::Disabled => Color::from_rgb(0.08, 0.09, 0.12),
             button::Status::Active => CARD_DARK,
         };
-        (b, BORDER_STRONG_DARK, TEXT_PRIMARY)
+        let border = if disabled {
+            with_alpha(BORDER_STRONG_DARK, 0.45)
+        } else {
+            BORDER_STRONG_DARK
+        };
+        let text = if disabled { TEXT_TERTIARY } else { TEXT_PRIMARY };
+        (b, border, text)
     } else {
         let b = match status {
             button::Status::Hovered => Color::from_rgb(0.94, 0.945, 0.96),
@@ -334,7 +410,17 @@ pub fn button_secondary(theme: &iced::Theme, status: button::Status) -> button::
             button::Status::Disabled => Color::from_rgb(0.96, 0.96, 0.97),
             button::Status::Active => CARD_LIGHT_BG,
         };
-        (b, BORDER_STRONG_LIGHT, TEXT_PRIMARY_LIGHT)
+        let border = if disabled {
+            with_alpha(BORDER_STRONG_LIGHT, 0.45)
+        } else {
+            BORDER_STRONG_LIGHT
+        };
+        let text = if disabled {
+            TEXT_TERTIARY_LIGHT
+        } else {
+            TEXT_PRIMARY_LIGHT
+        };
+        (b, border, text)
     };
 
     button::Style {
@@ -644,6 +730,10 @@ mod tests {
 
         let primary = button_primary(&dark, button::Status::Active);
         assert_eq!(primary.text_color, Color::WHITE);
+        let primary_dis = button_primary(&dark, button::Status::Disabled);
+        assert!(primary_dis.text_color.a < 1.0);
+        let secondary_dis = button_secondary(&dark, button::Status::Disabled);
+        assert_eq!(secondary_dis.text_color, TEXT_TERTIARY);
         assert!(matches!(primary.background, Some(Background::Color(c)) if c == ACCENT_PURPLE));
 
         let secondary_l = button_secondary(&light, button::Status::Active);

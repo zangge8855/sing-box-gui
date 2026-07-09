@@ -10,18 +10,95 @@ pub mod rules;
 pub mod toast;
 pub mod util;
 
-use iced::widget::{column, container, row, text, Space};
+use iced::widget::{column, container, row, scrollable, text, Space};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::ui::theme as ui_theme;
 
+// ── Responsive breakpoints (content / window width in px) ────────────────────
+/// Minimum window width — must stay below SHELL_COMPACT_W so icon sidebar is reachable.
+pub const WINDOW_MIN_W: f32 = 720.0;
+pub const WINDOW_MIN_H: f32 = 600.0;
+/// Shell sidebar collapses to icon-only below this window width.
+pub const SHELL_COMPACT_W: f32 = 820.0;
+/// Page header actions stack vertically below this content width.
+pub const PAGE_COMPACT_W: f32 = 750.0;
+/// Single-column card layouts (settings/rules).
+pub const PAGE_NARROW_W: f32 = 800.0;
+/// Connections: card list below; mid table above this.
+pub const CONNECTIONS_TABLE_W: f32 = 850.0;
+/// Connections: full 7-column table above this.
+pub const CONNECTIONS_WIDE_W: f32 = 1100.0;
+/// Settings 2-column layout above this; 3-col above SETTINGS_3COL_W.
+pub const SETTINGS_2COL_W: f32 = 800.0;
+pub const SETTINGS_3COL_W: f32 = 1150.0;
+/// Dashboard stacks status cards below this.
+pub const DASHBOARD_COMPACT_W: f32 = 900.0;
+/// Content max width for page shells.
+pub const PAGE_MAX_WIDTH: f32 = 1200.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_min_allows_shell_compact() {
+        // Criterion 1: user can resize below shell compact breakpoint.
+        assert!(
+            WINDOW_MIN_W < SHELL_COMPACT_W,
+            "WINDOW_MIN_W ({}) must be < SHELL_COMPACT_W ({})",
+            WINDOW_MIN_W,
+            SHELL_COMPACT_W
+        );
+    }
+
+    #[test]
+    fn connection_tiers_are_ordered() {
+        assert!(CONNECTIONS_TABLE_W < CONNECTIONS_WIDE_W);
+        assert!(PAGE_COMPACT_W <= PAGE_NARROW_W);
+        assert!(SETTINGS_2COL_W < SETTINGS_3COL_W);
+    }
+
+    #[test]
+    fn page_max_width_above_settings_3col() {
+        assert!(PAGE_MAX_WIDTH >= SETTINGS_3COL_W);
+    }
+}
+
+// ── Spacing scale ────────────────────────────────────────────────────────────
+pub const SP_8: f32 = 8.0;
+pub const SP_12: f32 = 12.0;
+#[allow(dead_code)]
+pub const SP_16: f32 = 16.0;
+pub const SP_20: f32 = 20.0;
+#[allow(dead_code)]
+pub const SP_24: f32 = 24.0;
+
 // Unified page padding — generous breathing room for premium layout
 pub fn page_padding() -> iced::Padding {
     iced::Padding {
-        top: 28.0,
-        right: 28.0,
-        bottom: 32.0,
-        left: 28.0,
+        top: 24.0,
+        right: 24.0,
+        bottom: 28.0,
+        left: 24.0,
+    }
+}
+
+/// Compact page padding for narrow layouts.
+pub fn page_padding_compact() -> iced::Padding {
+    iced::Padding {
+        top: 20.0,
+        right: 16.0,
+        bottom: 24.0,
+        left: 16.0,
+    }
+}
+
+pub fn page_pad(is_compact: bool) -> iced::Padding {
+    if is_compact {
+        page_padding_compact()
+    } else {
+        page_padding()
     }
 }
 
@@ -36,7 +113,7 @@ pub fn page_header<'a>(
 ) -> Element<'a, Message> {
     let text_primary = ui_theme::text_primary(theme);
     let title = text(crate::ui::i18n::tr(lang, title_key))
-        .size(22)
+        .size(ui_theme::TYPE_TITLE)
         .font(iced::Font {
             weight: iced::font::Weight::Semibold,
             ..Default::default()
@@ -49,7 +126,7 @@ pub fn page_header<'a>(
                 title,
                 actions_el
             ]
-            .spacing(10)
+            .spacing(SP_12)
             .width(Length::Fill)
             .into()
         } else {
@@ -70,29 +147,156 @@ pub fn page_header<'a>(
         .padding(iced::Padding {
             top: 0.0,
             right: 0.0,
-            bottom: 12.0,
+            bottom: SP_12,
             left: 0.0,
         })
         .into()
 }
 
-// Unified page shell with scrollable outer container. Most tabs use this.
+/// Outer scrollable page shell — for tabs whose content is taller than the window.
+#[allow(dead_code)]
+pub fn page_shell<'a>(
+    header: Element<'a, Message>,
+    content: Element<'a, Message>,
+) -> Element<'a, Message> {
+    page_shell_with_pad(header, content, false)
+}
 
-// Non-scrolling variant for pages that manage their own inner scroll area
-// (e.g. Logs terminal that needs the full height for log scrolling).
+pub fn page_shell_with_pad<'a>(
+    header: Element<'a, Message>,
+    content: Element<'a, Message>,
+    is_compact: bool,
+) -> Element<'a, Message> {
+    let col = column![header, content]
+        .spacing(SP_20)
+        .width(Length::Fill);
+
+    let inner = container(col)
+        .width(Length::Fill)
+        .max_width(PAGE_MAX_WIDTH)
+        .center_x(Length::Fill)
+        .padding(page_pad(is_compact));
+
+    container(scrollable(inner).height(Length::Fill))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+/// Non-scrolling shell for pages that manage their own inner scroll area
+/// (e.g. Logs terminal, Proxies grid).
+#[allow(dead_code)]
 pub fn page_shell_fixed<'a>(
     header: Element<'a, Message>,
     content: Element<'a, Message>,
 ) -> Element<'a, Message> {
+    page_shell_fixed_with_pad(header, content, false)
+}
+
+pub fn page_shell_fixed_with_pad<'a>(
+    header: Element<'a, Message>,
+    content: Element<'a, Message>,
+    is_compact: bool,
+) -> Element<'a, Message> {
     let col = column![header, content]
-        .spacing(20)
+        .spacing(SP_20)
         .width(Length::Fill)
         .height(Length::Fill);
 
     container(col)
         .width(Length::Fill)
-        .max_width(1200.0)
+        .max_width(PAGE_MAX_WIDTH)
         .center_x(Length::Fill)
-        .padding(page_padding())
+        .height(Length::Fill)
+        .padding(page_pad(is_compact))
         .into()
+}
+
+/// Wrap arbitrary page body (header already included) in the fixed shell.
+#[allow(dead_code)]
+pub fn page_body_fixed<'a>(body: Element<'a, Message>) -> Element<'a, Message> {
+    page_body_fixed_with_pad(body, false)
+}
+
+pub fn page_body_fixed_with_pad<'a>(
+    body: Element<'a, Message>,
+    is_compact: bool,
+) -> Element<'a, Message> {
+    container(body)
+        .width(Length::Fill)
+        .max_width(PAGE_MAX_WIDTH)
+        .center_x(Length::Fill)
+        .height(Length::Fill)
+        .padding(page_pad(is_compact))
+        .into()
+}
+
+/// Shared empty-state block: title + description + optional primary CTA.
+pub fn empty_state<'a>(
+    title: &'a str,
+    description: Option<&'a str>,
+    cta: Option<Element<'a, Message>>,
+    theme: &iced::Theme,
+) -> Element<'a, Message> {
+    let mut col = column![
+        text(title)
+            .size(ui_theme::TYPE_HEADING)
+            .color(ui_theme::text_primary(theme))
+            .font(iced::Font {
+                weight: iced::font::Weight::Medium,
+                ..Default::default()
+            }),
+    ]
+    .spacing(SP_8)
+    .align_x(Alignment::Center);
+
+    if let Some(desc) = description {
+        col = col.push(
+            text(desc)
+                .size(12.0)
+                .color(ui_theme::text_muted(theme)),
+        );
+    }
+    if let Some(btn) = cta {
+        col = col.push(btn);
+    }
+
+    container(col)
+        .padding(40)
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+        .style(ui_theme::status_card)
+        .into()
+}
+
+/// Busy / loading row: accent bar + label (download, latency, update check).
+pub fn loading_row<'a>(label: &'a str, theme: &iced::Theme) -> Element<'a, Message> {
+    let bar = container(Space::new())
+        .width(Length::Fixed(72.0))
+        .height(Length::Fixed(4.0))
+        .style(|_t| container::Style {
+            background: Some(iced::Background::Color(ui_theme::ACCENT_PURPLE)),
+            border: iced::Border {
+                radius: 2.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    row![
+        bar,
+        text(label)
+            .size(ui_theme::TYPE_CAPTION)
+            .color(ui_theme::text_muted(theme)),
+    ]
+    .spacing(SP_12)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Material Icons glyph as text (requires material-icons font loaded).
+#[allow(dead_code)]
+pub fn material_icon(unicode: char) -> text::Text<'static> {
+    text(unicode.to_string())
+        .font(iced::Font::with_name("Material Icons"))
+        .size(16)
 }

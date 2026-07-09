@@ -3,8 +3,8 @@ use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::ui::theme;
 use crate::api::Connection;
-use crate::ui::page_header;
-use crate::ui::util::format_size;
+use crate::ui::{page_header, CONNECTIONS_TABLE_W, CONNECTIONS_WIDE_W};
+use crate::ui::util::{format_size, truncate_chars};
 
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
@@ -22,7 +22,8 @@ pub fn render<'a>(
         let theme = &theme_cloned;
         let text_primary = theme::text_primary(theme);
         let text_muted = theme::text_muted(theme);
-        let is_compact = size.width < 850.0;
+        let is_compact = size.width < CONNECTIONS_TABLE_W;
+        let is_wide = size.width >= CONNECTIONS_WIDE_W;
         
         // Filter connections
         let filtered_connections: Vec<&Connection> = if query_str.trim().is_empty() {
@@ -36,11 +37,17 @@ pub fn render<'a>(
                     } else {
                         &conn.metadata.destination_ip
                     };
+                    let process = conn
+                        .metadata
+                        .process_display()
+                        .unwrap_or_default()
+                        .to_lowercase();
                     host_text.to_lowercase().contains(&q)
                         || conn.metadata.destination_ip.to_lowercase().contains(&q)
                         || conn.chains.iter().any(|c| c.to_lowercase().contains(&q))
                         || conn.rule.to_lowercase().contains(&q)
                         || conn.metadata.network.to_lowercase().contains(&q)
+                        || process.contains(&q)
                 })
                 .collect()
         };
@@ -48,7 +55,7 @@ pub fn render<'a>(
         let search_input = text_input(tr(lang, "placeholder_connections_search"), &query_str)
             .on_input(Message::ConnectionsSearchChanged)
             .padding(8)
-            .width(if is_compact { Length::Fill } else { Length::Fixed(280.0) })
+            .width(if is_compact { Length::Fill } else { Length::Fixed(theme::SEARCH_WIDTH) })
             .style(theme::input_field);
 
         let close_all_btn = button(text(tr(lang, "close_all_conn")).size(13))
@@ -83,12 +90,25 @@ pub fn render<'a>(
                 } else {
                     tr(lang, "no_matching_connections")
                 };
-                list = list.push(
-                    container(text(empty_msg).color(text_muted).size(13))
-                        .width(Length::Fill)
-                        .center_x(Length::Fill)
-                        .padding(40)
-                );
+                let cta = if query_str.trim().is_empty() {
+                    button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
+                        .padding(theme::BTN_PAD_MD)
+                        .style(theme::button_primary)
+                        .on_press(Message::ToggleCore)
+                        .into()
+                } else {
+                    button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
+                        .padding(theme::BTN_PAD_MD)
+                        .style(theme::button_secondary)
+                        .on_press(Message::ConnectionsSearchChanged(String::new()))
+                        .into()
+                };
+                let hint = if query_str.trim().is_empty() {
+                    Some(tr(lang, "empty_connections_hint"))
+                } else {
+                    None
+                };
+                list = list.push(crate::ui::empty_state(empty_msg, hint, Some(cta), theme));
             } else {
                 for conn in filtered_connections {
                     let host_full = if !conn.metadata.host.is_empty() {
@@ -102,6 +122,11 @@ pub fn render<'a>(
                     } else {
                         conn.chains.join(" ➔ ")
                     };
+
+                    let process_label = conn
+                        .metadata
+                        .process_display()
+                        .unwrap_or_else(|| tr(lang, "process_unknown").to_string());
                     
                     let dl_text = format_size(conn.download);
                     let ul_text = format_size(conn.upload);
@@ -116,7 +141,7 @@ pub fn render<'a>(
                     let card = container(
                         column![
                             row![
-                                text(host_full)
+                                text(truncate_chars(&host_full, 48))
                                     .color(text_primary)
                                     .size(13)
                                     .font(iced::Font {
@@ -130,30 +155,34 @@ pub fn render<'a>(
                             .width(Length::Fill),
                             
                             row![
-                                container(text(&conn.metadata.network).size(9).color(theme::ACCENT_GREEN))
+                                container(text(&conn.metadata.network).size(theme::TYPE_MICRO).color(theme::SUCCESS))
                                     .padding([2, 6])
-                                    .style(|t| theme::tinted_banner(t, theme::ACCENT_GREEN)),
-                                container(text(&conn.rule).size(9).color(theme::ACCENT_PURPLE))
+                                    .style(theme::badge_bg),
+                                container(text(truncate_chars(&conn.rule, 24)).size(theme::TYPE_MICRO).color(theme::ACCENT_PURPLE))
                                     .padding([2, 6])
-                                    .style(|t| theme::tinted_banner(t, theme::ACCENT_PURPLE)),
+                                    .style(theme::badge_bg),
                             ]
                             .spacing(8)
                             .align_y(Alignment::Center),
-                            
-                            text(format!("{}: {}", tr(lang, "chains"), chains_text))
+
+                            text(format!("{}: {}", tr(lang, "col_process"), truncate_chars(&process_label, 36)))
                                 .color(text_muted)
-                                .size(11),
+                                .size(theme::TYPE_CAPTION),
+                            
+                            text(format!("{}: {}", tr(lang, "chains"), truncate_chars(&chains_text, 40)))
+                                .color(text_muted)
+                                .size(theme::TYPE_CAPTION),
                                 
                             row![
-                                text(format!("↓ {}", dl_text)).color(theme::ACCENT_BLUE).size(11),
+                                text(format!("↓ {}", dl_text)).color(theme::ACCENT_BLUE).size(theme::TYPE_CAPTION),
                                 Space::new().width(12),
-                                text(format!("↑ {}", ul_text)).color(theme::ACCENT_PURPLE).size(11)
+                                text(format!("↑ {}", ul_text)).color(theme::ACCENT_PURPLE).size(theme::TYPE_CAPTION)
                             ]
                             .align_y(Alignment::Center)
                         ]
                         .spacing(8)
                     )
-                    .padding(14)
+                    .padding(theme::CARD_PAD_DENSE)
                     .width(Length::Fill)
                     .style(theme::card_bg);
                     
@@ -164,25 +193,37 @@ pub fn render<'a>(
                 .spacing(20)
                 .width(Length::Fill)
                 .height(Length::Fill);
-            container(col)
-                .width(Length::Fill)
-                .max_width(1200.0)
-                .center_x(Length::Fill)
-                .padding(crate::ui::page_padding())
-                .into()
+            crate::ui::page_body_fixed_with_pad(col.into(), is_compact)
         } else {
-            // Desktop Layout: 7-Column clean aligned table
-            let header = row![
-                text(tr(lang, "host")).width(Length::FillPortion(3)).color(text_muted).size(14),
-                text(tr(lang, "network")).width(Length::FillPortion(1)).color(text_muted).size(14),
-                text(tr(lang, "chains")).width(Length::FillPortion(2)).color(text_muted).size(14),
-                text(tr(lang, "rule")).width(Length::FillPortion(1)).color(text_muted).size(14),
-                text(tr(lang, "download")).width(Length::FillPortion(1)).color(text_muted).size(14),
-                text(tr(lang, "upload")).width(Length::FillPortion(1)).color(text_muted).size(14),
-                Space::new().width(Length::FillPortion(1))
-            ]
-            .spacing(10)
-            .padding([0, 10]);
+            // Desktop: mid-width 5-col (host, net+rule, chains, traffic, close)
+            //          wide 7-col table
+            let header: Element<'_, Message> = if is_wide {
+                row![
+                    text(tr(lang, "host")).width(Length::FillPortion(3)).color(text_muted).size(13),
+                    text(tr(lang, "col_process")).width(Length::FillPortion(2)).color(text_muted).size(13),
+                    text(tr(lang, "network")).width(Length::FillPortion(1)).color(text_muted).size(13),
+                    text(tr(lang, "chains")).width(Length::FillPortion(2)).color(text_muted).size(13),
+                    text(tr(lang, "rule")).width(Length::FillPortion(1)).color(text_muted).size(13),
+                    text(tr(lang, "download")).width(Length::FillPortion(1)).color(text_muted).size(13),
+                    text(tr(lang, "upload")).width(Length::FillPortion(1)).color(text_muted).size(13),
+                    Space::new().width(Length::FillPortion(1))
+                ]
+                .spacing(10)
+                .padding([0, 10])
+                .into()
+            } else {
+                row![
+                    text(tr(lang, "host")).width(Length::FillPortion(3)).color(text_muted).size(13),
+                    text(tr(lang, "col_process")).width(Length::FillPortion(2)).color(text_muted).size(13),
+                    text(tr(lang, "network")).width(Length::FillPortion(2)).color(text_muted).size(13),
+                    text(tr(lang, "chains")).width(Length::FillPortion(2)).color(text_muted).size(13),
+                    text("↓ / ↑").width(Length::FillPortion(2)).color(text_muted).size(13),
+                    Space::new().width(Length::FillPortion(1))
+                ]
+                .spacing(10)
+                .padding([0, 10])
+                .into()
+            };
             
             let mut list = column!().spacing(0);
             if filtered_connections.is_empty() {
@@ -191,12 +232,25 @@ pub fn render<'a>(
                 } else {
                     tr(lang, "no_matching_connections")
                 };
-                list = list.push(
-                    container(text(empty_msg).color(text_muted))
-                        .width(Length::Fill)
-                        .center_x(Length::Fill)
-                        .padding(40)
-                );
+                let cta = if query_str.trim().is_empty() {
+                    button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
+                        .padding(theme::BTN_PAD_MD)
+                        .style(theme::button_primary)
+                        .on_press(Message::ToggleCore)
+                        .into()
+                } else {
+                    button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
+                        .padding(theme::BTN_PAD_MD)
+                        .style(theme::button_secondary)
+                        .on_press(Message::ConnectionsSearchChanged(String::new()))
+                        .into()
+                };
+                let hint = if query_str.trim().is_empty() {
+                    Some(tr(lang, "empty_connections_hint"))
+                } else {
+                    None
+                };
+                list = list.push(crate::ui::empty_state(empty_msg, hint, Some(cta), theme));
             } else {
                 let len = filtered_connections.len();
                 for (idx, conn) in filtered_connections.into_iter().enumerate() {
@@ -205,18 +259,19 @@ pub fn render<'a>(
                     } else {
                         conn.metadata.destination_ip.clone()
                     };
-                    let host_text = if host_full.chars().count() > 48 {
-                        let head: String = host_full.chars().take(45).collect();
-                        format!("{}...", head)
-                    } else {
-                        host_full
-                    };
+                    let host_text = truncate_chars(&host_full, if is_wide { 48 } else { 32 });
+                    let process_label = conn
+                        .metadata
+                        .process_display()
+                        .unwrap_or_else(|| tr(lang, "process_unknown").to_string());
+                    let process_text = truncate_chars(&process_label, if is_wide { 28 } else { 18 });
                     
                     let chains_text = if conn.chains.is_empty() {
                         tr(lang, "direct_chain").to_string()
                     } else {
                         conn.chains.join(" ➔ ")
                     };
+                    let chains_text = truncate_chars(&chains_text, if is_wide { 36 } else { 24 });
                     
                     let dl_text = format_size(conn.download);
                     let ul_text = format_size(conn.upload);
@@ -228,20 +283,44 @@ pub fn render<'a>(
                     .padding([4, 8])
                     .on_press(Message::CloseConnection(conn.id.clone()));
                     
-                    let row_content = row![
-                        text(host_text).width(Length::FillPortion(3)).size(13).color(text_primary),
-                        text(&conn.metadata.network).width(Length::FillPortion(1)).size(13).color(theme::ACCENT_GREEN),
-                        text(chains_text).width(Length::FillPortion(2)).size(13).color(text_muted),
-                        text(&conn.rule).width(Length::FillPortion(1)).size(13).color(text_primary),
-                        text(dl_text).width(Length::FillPortion(1)).size(13).color(text_primary),
-                        text(ul_text).width(Length::FillPortion(1)).size(13).color(text_primary),
-                        container(close_btn).width(Length::FillPortion(1)).center_x(Length::FillPortion(1))
-                    ]
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .padding(10);
+                    let row_content: Element<'_, Message> = if is_wide {
+                        row![
+                            text(host_text).width(Length::FillPortion(3)).size(13).color(text_primary),
+                            text(process_text).width(Length::FillPortion(2)).size(12).color(text_muted),
+                            text(&conn.metadata.network).width(Length::FillPortion(1)).size(13).color(theme::SUCCESS),
+                            text(chains_text).width(Length::FillPortion(2)).size(13).color(text_muted),
+                            text(truncate_chars(&conn.rule, 16)).width(Length::FillPortion(1)).size(13).color(text_primary),
+                            text(dl_text).width(Length::FillPortion(1)).size(13).color(text_primary),
+                            text(ul_text).width(Length::FillPortion(1)).size(13).color(text_primary),
+                            container(close_btn).width(Length::FillPortion(1)).center_x(Length::FillPortion(1))
+                        ]
+                        .align_y(Alignment::Center)
+                        .spacing(10)
+                        .padding(10)
+                        .into()
+                    } else {
+                        let net_rule = format!("{} · {}", conn.metadata.network, truncate_chars(&conn.rule, 14));
+                        let traffic = format!("↓{} ↑{}", dl_text, ul_text);
+                        row![
+                            text(host_text).width(Length::FillPortion(3)).size(13).color(text_primary),
+                            text(process_text).width(Length::FillPortion(2)).size(12).color(text_muted),
+                            text(net_rule).width(Length::FillPortion(2)).size(12).color(theme::SUCCESS),
+                            text(chains_text).width(Length::FillPortion(2)).size(12).color(text_muted),
+                            text(traffic).width(Length::FillPortion(2)).size(12).color(text_primary),
+                            container(close_btn).width(Length::FillPortion(1)).center_x(Length::FillPortion(1))
+                        ]
+                        .align_y(Alignment::Center)
+                        .spacing(10)
+                        .padding(10)
+                        .into()
+                    };
                     
-                    list = list.push(container(row_content));
+                    // Hover-friendly row surface
+                    list = list.push(
+                        container(row_content)
+                            .width(Length::Fill)
+                            .style(move |t| theme::list_item_style(t, false, false)),
+                    );
                     
                     if idx + 1 < len {
                         let separator = container(Space::new())
@@ -279,14 +358,12 @@ pub fn render<'a>(
             .width(Length::Fill)
             .into();
             
-            let col = column![page_title, list_content].spacing(20).width(Length::Fill).height(Length::Fill);
-
-            container(col)
+            let col = column![page_title, list_content]
+                .spacing(20)
                 .width(Length::Fill)
-                .max_width(1200.0)
-                .center_x(Length::Fill)
-                .padding(crate::ui::page_padding())
-                .into()
+                .height(Length::Fill);
+
+            crate::ui::page_body_fixed_with_pad(col.into(), false)
         }
     });
 

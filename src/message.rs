@@ -58,7 +58,11 @@ pub enum Message {
     ExportLogs,
     LogsExported(Result<String, String>),
     TriggerCoreDownload,
+    /// Force re-download even if core already exists.
+    ForceCoreDownload,
     CoreDownloaded(Result<(), String>),
+    LatencyTestUrlChanged(String),
+    LatencyTestTimeoutChanged(String),
     LatencyTestComplete,
     CoreVersionFetched(Result<String, String>),
     
@@ -96,4 +100,6 @@ pub enum Message {
     ClipboardContent(Option<String>),
     ImportLocalFile,
     LocalFilePicked(Option<String>),
+    ToggleConfigPreview,
+    ToggleProfileMore(String),
 }

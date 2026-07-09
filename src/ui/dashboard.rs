@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, svg, text, Space, responsive, scrollable, pick_list};
+use iced::widget::{button, column, container, row, svg, text, Space, responsive, pick_list};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
@@ -42,7 +42,7 @@ pub fn render<'a>(
     let history_cloned = speed_history.to_vec();
     
     let main_content = responsive(move |size| {
-        let is_compact = size.width < 900.0;
+        let is_compact = size.width < crate::ui::DASHBOARD_COMPACT_W;
         let theme = &theme_cloned;
         let current_speed = &speed_cloned;
         let speed_history = &history_cloned;
@@ -51,36 +51,40 @@ pub fn render<'a>(
         
         // 1. Core Status Card
         let status_indicator = if core_running {
-            row![
-                container(Space::new())
-                    .width(8)
-                    .height(8)
-                    .style(|_t| container::Style {
-                        background: Some(iced::Background::Color(theme::SUCCESS)),
-                        border: iced::Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
+            let dot = container(Space::new())
+                .width(8)
+                .height(8)
+                .style(|_t| container::Style {
+                    background: Some(iced::Background::Color(theme::SUCCESS)),
+                    border: iced::Border {
+                        radius: 4.0.into(),
                         ..Default::default()
-                    }),
-                text(tr(lang, "status_running")).color(theme::SUCCESS).size(14)
+                    },
+                    ..Default::default()
+                });
+            row![
+                container(dot)
+                    .padding(4)
+                    .style(|_t| theme::status_ring(theme::SUCCESS)),
+                text(tr(lang, "status_running")).color(theme::SUCCESS).size(theme::TYPE_BODY)
             ]
             .spacing(6)
             .align_y(Alignment::Center)
         } else {
+            // Resting "stopped" is neutral — reserve DANGER for failures
             row![
                 container(Space::new())
                     .width(8)
                     .height(8)
-                    .style(|_t| container::Style {
-                        background: Some(iced::Background::Color(theme::DANGER)),
+                    .style(move |_t| container::Style {
+                        background: Some(iced::Background::Color(text_muted)),
                         border: iced::Border {
                             radius: 4.0.into(),
                             ..Default::default()
                         },
                         ..Default::default()
                     }),
-                text(tr(lang, "status_stopped")).color(theme::DANGER).size(14)
+                text(tr(lang, "status_stopped")).color(text_muted).size(theme::TYPE_BODY)
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -92,16 +96,16 @@ pub fn render<'a>(
                     .spacing(6)
                     .align_y(Alignment::Center)
             )
-            .padding([6, 12])
+            .padding(theme::BTN_PAD_SM)
             .style(theme::button_danger)
             .on_press(Message::ToggleCore)
         } else {
             button(
-                row![icon('\u{E037}'), text(tr(lang, "btn_start_core")).size(12)]
+                row![icon('\u{E037}'), text(tr(lang, "btn_start_core")).size(theme::TYPE_BTN_SM)]
                     .spacing(6)
                     .align_y(Alignment::Center)
             )
-            .padding([6, 12])
+            .padding(theme::BTN_PAD_SM)
             .style(theme::button_primary)
             .on_press(Message::ToggleCore)
         };
@@ -438,22 +442,59 @@ pub fn render<'a>(
             .height(Length::Fill)
             .content_fit(iced::ContentFit::Fill);
             
-        let chart_card = container(
-            column![
-                text(tr(lang, "speed_history_chart")).color(text_muted).size(13),
-                container(chart_svg)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
+        let legend = row![
+            container(Space::new()).width(10).height(3).style(|_t| container::Style {
+                background: Some(iced::Background::Color(theme::ACCENT_BLUE)),
+                border: iced::Border { radius: 1.0.into(), ..Default::default() },
+                ..Default::default()
+            }),
+            text(tr(lang, "chart_legend_down")).color(text_muted).size(11),
+            Space::new().width(12),
+            container(Space::new()).width(10).height(3).style(|_t| container::Style {
+                background: Some(iced::Background::Color(theme::ACCENT_PURPLE)),
+                border: iced::Border { radius: 1.0.into(), ..Default::default() },
+                ..Default::default()
+            }),
+            text(tr(lang, "chart_legend_up")).color(text_muted).size(11),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+
+        let idle_chart = !core_running
+            || speed_history.iter().all(|&(u, d)| u == 0 && d == 0);
+        let chart_caption = if idle_chart {
+            Some(
+                text(tr(lang, "chart_waiting_traffic"))
+                    .color(theme::text_tertiary(theme))
+                    .size(theme::TYPE_CAPTION),
+            )
+        } else {
+            None
+        };
+
+        let mut chart_col = column![
+            row![
+                text(tr(lang, "speed_history_chart")).color(text_muted).size(theme::TYPE_SECTION).width(Length::Fill),
+                legend,
             ]
-            .spacing(10)
-            .height(Length::Fill)
-        )
-        .padding(20)
+            .align_y(Alignment::Center),
+            container(chart_svg)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        ]
+        .spacing(10)
+        .height(Length::Fill);
+        if let Some(cap) = chart_caption {
+            chart_col = chart_col.push(cap);
+        }
+
+        let chart_card = container(chart_col)
+        .padding(theme::CARD_PAD)
         .width(Length::Fill)
         .height(if is_compact { Length::Fixed(220.0) } else { Length::Fixed(240.0) })
         .style(theme::card_bg);
 
-        // Summary: current node + active connections
+        // Summary: current node + active connections (clickable → Proxies / Connections)
         let node_label = selected_node.unwrap_or_else(|| {
             if gui_config.active_profile_id.is_none() {
                 tr(lang, "dash_no_profile")
@@ -461,59 +502,78 @@ pub fn render<'a>(
                 tr(lang, "dash_no_node")
             }
         });
-        let summary_card = container(
-            row![
-                column![
-                    text(tr(lang, "dash_current_node")).color(text_muted).size(12),
-                    text(node_label).color(theme::text_primary(theme)).size(15).font(iced::Font {
+        let node_btn = button(
+            column![
+                text(tr(lang, "dash_current_node")).color(text_muted).size(12),
+                text(crate::ui::util::truncate_chars(node_label, 36))
+                    .color(theme::text_primary(theme))
+                    .size(15)
+                    .font(iced::Font {
                         weight: iced::font::Weight::Medium,
                         ..Default::default()
                     }),
-                ]
-                .spacing(4)
-                .width(Length::FillPortion(2)),
-                column![
-                    text(tr(lang, "dash_connections")).color(text_muted).size(12),
-                    text(format!("{}", active_connections))
-                        .color(theme::ACCENT_BLUE)
-                        .size(18)
-                        .font(iced::Font {
-                            weight: iced::font::Weight::Bold,
-                            family: iced::font::Family::Monospace,
-                            ..Default::default()
-                        }),
-                ]
-                .spacing(4)
-                .width(Length::FillPortion(1)),
             ]
+            .spacing(4)
+            .width(Length::Fill)
+        )
+        .padding(0)
+        .style(|t, s| {
+            let mut base = theme::button_secondary(t, s);
+            base.background = None;
+            base.border.width = 0.0;
+            base.shadow = iced::Shadow::default();
+            base
+        })
+        .on_press(Message::TabChanged(crate::state::Tab::Proxies))
+        .width(Length::FillPortion(2));
+
+        let conn_btn = button(
+            column![
+                text(tr(lang, "dash_connections")).color(text_muted).size(12),
+                text(format!("{}", active_connections))
+                    .color(theme::ACCENT_BLUE)
+                    .size(18)
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        family: iced::font::Family::Monospace,
+                        ..Default::default()
+                    }),
+            ]
+            .spacing(4)
+            .width(Length::Fill)
+        )
+        .padding(0)
+        .style(|t, s| {
+            let mut base = theme::button_secondary(t, s);
+            base.background = None;
+            base.border.width = 0.0;
+            base.shadow = iced::Shadow::default();
+            base
+        })
+        .on_press(Message::TabChanged(crate::state::Tab::Connections))
+        .width(Length::FillPortion(1));
+
+        let summary_card = container(
+            row![node_btn, conn_btn]
             .spacing(20)
             .align_y(Alignment::Center)
             .width(Length::Fill)
         )
-        .padding(20)
+        .padding(theme::CARD_PAD)
         .width(Length::Fill)
         .style(theme::card_bg);
 
         let empty_hint: Option<Element<'_, Message>> = if gui_config.active_profile_id.is_none() {
-            Some(
-                container(
-                    column![
-                        text(tr(lang, "empty_dashboard_title")).color(theme::text_primary(theme)).size(15),
-                        text(tr(lang, "empty_dashboard_desc")).color(text_muted).size(13),
-                        button(text(tr(lang, "btn_goto_profiles")).size(13))
-                            .padding([8, 16])
-                            .style(theme::button_primary)
-                            .on_press(Message::TabChanged(crate::state::Tab::Profiles)),
-                    ]
-                    .spacing(10)
-                    .align_x(Alignment::Center)
-                )
-                .padding(24)
-                .width(Length::Fill)
-                .center_x(Length::Fill)
-                .style(theme::status_card)
-                .into()
-            )
+            let cta = button(text(tr(lang, "btn_goto_profiles")).size(theme::TYPE_BTN_MD))
+                .padding(theme::BTN_PAD_MD)
+                .style(theme::button_primary)
+                .on_press(Message::TabChanged(crate::state::Tab::Profiles));
+            Some(crate::ui::empty_state(
+                tr(lang, "empty_dashboard_title"),
+                Some(tr(lang, "empty_dashboard_desc")),
+                Some(cta.into()),
+                theme,
+            ))
         } else {
             None
         };
@@ -527,26 +587,22 @@ pub fn render<'a>(
         .spacing(20)
         .width(Length::Fill);
 
+        if gui_config.tun_mode {
+            content_col = content_col.push(
+                container(text(tr(lang, "tun_admin_banner")).size(12).color(theme::WARNING))
+                    .padding(12)
+                    .width(Length::Fill)
+                    .style(|t| theme::tinted_banner(t, theme::WARNING)),
+            );
+        }
+
         if let Some(hint) = empty_hint {
             content_col = content_col.push(hint);
         }
         
         let header = page_header("tab_dashboard", lang, None, theme, is_compact);
         
-        let col = column![header, content_col].spacing(20).width(Length::Fill);
-
-        let inner = container(col)
-            .width(Length::Fill)
-            .max_width(1200.0)
-            .center_x(Length::Fill)
-            .padding(crate::ui::page_padding());
-
-        container(
-            scrollable(inner).height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        crate::ui::page_shell_with_pad(header, content_col.into(), is_compact)
     });
     
     main_content.into()
