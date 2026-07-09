@@ -524,7 +524,7 @@ pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
             
-            if port_u64 > 65535 {
+            if port_u64 == 0 || port_u64 > 65535 {
                 continue;
             }
             let port = port_u64 as u16;
@@ -574,7 +574,7 @@ pub fn parse_native_json_nodes(json_content: &str) -> Result<Vec<ProxyNode>, Str
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
                 
-            if port_u64 > 65535 {
+            if port_u64 == 0 || port_u64 > 65535 {
                 continue;
             }
             let port = port_u64 as u16;
@@ -600,8 +600,19 @@ pub fn validate_profile_content(content: &str) -> Result<(), String> {
             .map_err(|e| format!("Invalid JSON structure: {}", e))?;
         Ok(())
     } else {
-        let _ = parse_clash_yaml_nodes(content)
+        let normalized = normalize_profile_content(content);
+        // First validate the YAML itself — catches malformed indentation etc.
+        let _: serde_yaml::Value = serde_yaml::from_str(&normalized)
+            .map_err(|e| format!("Invalid YAML structure: {}", e))?;
+        // Then ensure at least one proxy node was actually parsed.
+        let nodes = parse_clash_yaml_nodes(content)
             .map_err(|e| format!("Invalid Clash configuration format: {}", e))?;
+        if nodes.is_empty() {
+            return Err(
+                "Profile contained no parseable proxy nodes (unsupported schemes or bad links)."
+                    .to_string(),
+            );
+        }
         Ok(())
     }
 }
@@ -698,7 +709,7 @@ pub fn convert_clash_to_singbox(
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
             
-        if port_u64 > 65535 {
+        if port_u64 == 0 || port_u64 > 65535 {
             continue;
         }
         let port = port_u64 as u16;
@@ -1209,6 +1220,171 @@ pub fn convert_clash_to_singbox(
     Ok(config)
 }
 
+/// Strip known-broken GitHub proxy frontends from remote rule-set URLs.
+/// Subscriptions often wrap GitHub with `gh-proxy.com`, which can return 403
+/// and crash the core on first rule-set init even when `sing-box check` passes.
+pub fn rewrite_remote_rule_set_url(url: &str) -> String {
+    const PREFIXES: &[&str] = &[
+        "https://gh-proxy.com/",
+        "http://gh-proxy.com/",
+        "https://mirror.ghproxy.com/",
+        "http://mirror.ghproxy.com/",
+        "https://ghproxy.com/",
+        "http://ghproxy.com/",
+        "https://ghproxy.net/",
+        "http://ghproxy.net/",
+        "https://gh.ddlc.top/",
+        "http://gh.ddlc.top/",
+    ];
+    let mut current = url.trim().to_string();
+    // Nested prefixes are uncommon but cheap to peel.
+    for _ in 0..3 {
+        let mut stripped = false;
+        for prefix in PREFIXES {
+            if let Some(rest) = current.strip_prefix(prefix) {
+                if rest.starts_with("http://") || rest.starts_with("https://") {
+                    current = rest.to_string();
+                    stripped = true;
+                    break;
+                }
+            }
+        }
+        if !stripped {
+            break;
+        }
+    }
+    current
+}
+
+/// Collect outbound tags present in the config.
+pub fn collect_outbound_tags(config: &serde_json::Value) -> Vec<String> {
+    config
+        .get("outbounds")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|o| o.get("tag").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Resolve a usable direct outbound tag for rule-set downloads.
+/// Prefers an existing `type: direct` outbound (tag `direct` / `DIRECT` first),
+/// otherwise inserts `{ "type": "direct", "tag": "direct" }` and returns `"direct"`.
+pub fn ensure_direct_outbound_tag(config: &mut serde_json::Value) -> String {
+    let mut preferred: Option<String> = None;
+    let mut any_direct: Option<String> = None;
+
+    if let Some(arr) = config.get("outbounds").and_then(|v| v.as_array()) {
+        for o in arr {
+            let typ = o.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if typ != "direct" {
+                continue;
+            }
+            let tag = match o.get("tag").and_then(|t| t.as_str()) {
+                Some(t) if !t.is_empty() => t.to_string(),
+                _ => continue,
+            };
+            if tag.eq_ignore_ascii_case("direct") {
+                preferred = Some(tag);
+                break;
+            }
+            if any_direct.is_none() {
+                any_direct = Some(tag);
+            }
+        }
+    }
+
+    if let Some(tag) = preferred.or(any_direct) {
+        return tag;
+    }
+
+    // No direct outbound in profile — inject a standard one (Clash path already has it).
+    const FALLBACK_TAG: &str = "direct";
+    let outbound = json!({ "type": "direct", "tag": FALLBACK_TAG });
+    match config.get_mut("outbounds") {
+        Some(serde_json::Value::Array(arr)) => arr.push(outbound),
+        _ => {
+            if let Some(root) = config.as_object_mut() {
+                root.insert("outbounds".to_string(), json!([outbound]));
+            }
+        }
+    }
+    FALLBACK_TAG.to_string()
+}
+
+/// Apply in-app startup mitigations to a generated sing-box config:
+/// - rewrite broken remote rule-set proxy URLs
+/// - set `download_detour` to a **real** direct outbound tag (profiles often use `DIRECT`)
+/// - pin `cache_file.path` under the app data directory
+pub fn mitigate_run_config(config: &mut serde_json::Value) {
+    // Resolve / inject direct outbound first so rule-set detours reference a real tag.
+    let direct_tag = ensure_direct_outbound_tag(config);
+    let outbound_tags = collect_outbound_tags(config);
+
+    // 1) Remote rule-set URL / detour fixes
+    if let Some(rule_sets) = config
+        .pointer_mut("/route/rule_set")
+        .and_then(|v| v.as_array_mut())
+    {
+        for entry in rule_sets.iter_mut() {
+            let Some(obj) = entry.as_object_mut() else {
+                continue;
+            };
+            let is_remote = obj
+                .get("type")
+                .and_then(|t| t.as_str())
+                .map(|t| t == "remote")
+                .unwrap_or(false);
+            if !is_remote {
+                continue;
+            }
+            if let Some(url) = obj.get("url").and_then(|u| u.as_str()) {
+                let rewritten = rewrite_remote_rule_set_url(url);
+                if rewritten != url {
+                    obj.insert("url".to_string(), json!(rewritten));
+                }
+            }
+            // Initial rule-set download must work before any proxy is up.
+            // Use an outbound tag that actually exists (native profiles often use "DIRECT").
+            let detour_ok = obj
+                .get("download_detour")
+                .and_then(|d| d.as_str())
+                .map(|d| outbound_tags.iter().any(|t| t == d))
+                .unwrap_or(false);
+            if !detour_ok {
+                obj.insert("download_detour".to_string(), json!(direct_tag.clone()));
+            }
+        }
+    }
+
+    // 2) Absolute cache_file path under app data dir
+    let cache_path = get_app_dir()
+        .join("cache.db")
+        .to_string_lossy()
+        .to_string();
+    let experimental = config
+        .as_object_mut()
+        .map(|root| {
+            root.entry("experimental")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .map(|exp| {
+                    let cache = exp
+                        .entry("cache_file")
+                        .or_insert_with(|| json!({ "enabled": true }));
+                    if let Some(cache_obj) = cache.as_object_mut() {
+                        cache_obj
+                            .entry("enabled")
+                            .or_insert_with(|| json!(true));
+                        cache_obj.insert("path".to_string(), json!(cache_path));
+                    }
+                });
+        });
+    let _ = experimental;
+}
+
 pub fn merge_native_json_profile(
     json_content: &str,
     gui_config: &GuiConfig,
@@ -1322,6 +1498,43 @@ pub fn merge_native_json_profile(
     Ok(config)
 }
 
+/// Read the `experimental.clash_api.secret` value (if any) from the on-disk
+/// `run_config.json` produced by `prepare_run_config`. Lets `api.rs` request
+/// handlers (proxies / connections / mode) attach the `Authorization: Bearer
+/// <secret>` header when a native profile was authored with a custom secret.
+pub fn get_clash_api_secret() -> String {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<(String, Option<String>)>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new((String::new(), None)));
+    let path = get_app_dir().join("run_config.json");
+    let mtime_key = match std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| format!("{}", d.as_nanos()))
+    {
+        Some(k) => k,
+        None => return String::new(),
+    };
+    if let Ok(mut g) = cache.lock() {
+        if g.0 == mtime_key {
+            return g.1.clone().unwrap_or_default();
+        }
+        let secret = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+            .and_then(|v| {
+                v.pointer("/experimental/clash_api/secret")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string())
+            });
+        *g = (mtime_key, secret.clone());
+        secret.unwrap_or_default()
+    } else {
+        String::new()
+    }
+}
+
 pub fn generate_preview_config(gui_config: &GuiConfig) -> String {
     let active_id = match &gui_config.active_profile_id {
         Some(id) => id,
@@ -1364,6 +1577,219 @@ mod tests {
         assert_eq!(d, Some(200));
         assert_eq!(t, Some(1000));
         assert_eq!(e, Some(1710000000));
+    }
+
+    #[test]
+    fn test_rewrite_remote_rule_set_url_strips_gh_proxy() {
+        let input = "https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/sing/geo/geoip/telegram.srs";
+        let out = rewrite_remote_rule_set_url(input);
+        assert_eq!(
+            out,
+            "https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/sing/geo/geoip/telegram.srs"
+        );
+        // Unproxied URLs are left alone.
+        assert_eq!(
+            rewrite_remote_rule_set_url("https://cdn.jsdelivr.net/gh/x@y/z.srs"),
+            "https://cdn.jsdelivr.net/gh/x@y/z.srs"
+        );
+    }
+
+    #[test]
+    fn test_mitigate_run_config_rewrites_rule_sets_and_cache_path() {
+        let mut config = json!({
+            "route": {
+                "rule_set": [
+                    {
+                        "type": "remote",
+                        "tag": "telegram-ip",
+                        "format": "binary",
+                        "url": "https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/sing/geo/geoip/telegram.srs"
+                    },
+                    {
+                        "type": "local",
+                        "tag": "local-rs",
+                        "path": "rules.srs"
+                    }
+                ]
+            },
+            "experimental": {
+                "cache_file": { "enabled": true, "store_fakeip": true }
+            }
+        });
+        mitigate_run_config(&mut config);
+        let url = config["route"]["rule_set"][0]["url"].as_str().unwrap();
+        assert!(
+            url.starts_with("https://github.com/"),
+            "expected github origin, got {url}"
+        );
+        assert!(!url.contains("gh-proxy.com"));
+        // No outbounds → inject type=direct tag=direct
+        assert_eq!(
+            config["route"]["rule_set"][0]["download_detour"].as_str(),
+            Some("direct")
+        );
+        assert!(
+            config["outbounds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|o| o.get("tag").and_then(|t| t.as_str()) == Some("direct")
+                    && o.get("type").and_then(|t| t.as_str()) == Some("direct")),
+            "should inject direct outbound"
+        );
+        // Local rule-sets are untouched.
+        assert_eq!(config["route"]["rule_set"][1]["tag"], "local-rs");
+        let path = config["experimental"]["cache_file"]["path"]
+            .as_str()
+            .expect("cache path set");
+        assert!(
+            path.ends_with("cache.db"),
+            "cache path should end with cache.db: {path}"
+        );
+        assert!(
+            path.contains("sing-box-gui"),
+            "cache path should live under app dir: {path}"
+        );
+    }
+
+    #[test]
+    fn test_mitigate_uses_existing_direct_outbound_tag() {
+        // Mirrors native subscription profiles that tag the direct outbound "DIRECT".
+        let mut config = json!({
+            "outbounds": [
+                { "type": "selector", "tag": "proxy", "outbounds": ["US"] },
+                { "type": "direct", "tag": "DIRECT" },
+                { "type": "vless", "tag": "US", "server": "1.2.3.4", "server_port": 443, "uuid": "00000000-0000-0000-0000-000000000000" }
+            ],
+            "route": {
+                "rule_set": [
+                    {
+                        "type": "remote",
+                        "tag": "telegram-ip",
+                        "format": "binary",
+                        "url": "https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/sing/geo/geoip/telegram.srs"
+                    }
+                ]
+            },
+            "experimental": {
+                "cache_file": { "enabled": true }
+            }
+        });
+        mitigate_run_config(&mut config);
+        assert_eq!(
+            config["route"]["rule_set"][0]["download_detour"].as_str(),
+            Some("DIRECT"),
+            "must use existing DIRECT tag, not lowercase 'direct'"
+        );
+        // Must not inject a second direct outbound when DIRECT already exists.
+        let direct_count = config["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| o.get("type").and_then(|t| t.as_str()) == Some("direct"))
+            .count();
+        assert_eq!(direct_count, 1);
+        // Bad hardcoded "direct" detour should be rewritten to DIRECT.
+        config["route"]["rule_set"][0]["download_detour"] = json!("direct");
+        mitigate_run_config(&mut config);
+        assert_eq!(
+            config["route"]["rule_set"][0]["download_detour"].as_str(),
+            Some("DIRECT")
+        );
+    }
+
+    #[test]
+    fn test_mitigate_full_path_matches_active_profile_shape() {
+        // Drive shipped mitigate_run_config on a config shaped like the user's
+        // active native profile (DIRECT outbound + gh-proxy rule-sets).
+        let appdata = std::env::var("APPDATA").unwrap_or_default();
+        let src = std::path::PathBuf::from(&appdata)
+            .join("sing-box-gui")
+            .join("run_config.json");
+        if !src.exists() {
+            // CI / machines without the user profile — unit shape tests above still cover logic.
+            return;
+        }
+        let raw = std::fs::read_to_string(&src).expect("read run_config");
+        let mut config: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse run_config");
+        mitigate_run_config(&mut config);
+
+        let detour = config["route"]["rule_set"][0]["download_detour"]
+            .as_str()
+            .expect("download_detour set");
+        let tags = collect_outbound_tags(&config);
+        assert!(
+            tags.iter().any(|t| t == detour),
+            "download_detour `{detour}` must exist in outbounds {tags:?}"
+        );
+        assert_ne!(
+            detour, "direct",
+            "active profile uses DIRECT; detour must not be the missing lowercase tag"
+        );
+        assert_eq!(detour, "DIRECT");
+
+        let url = config["route"]["rule_set"][0]["url"].as_str().unwrap_or("");
+        assert!(!url.contains("gh-proxy.com"), "url still proxied: {url}");
+
+        // Persist full mitigate output for start-verify (same JSON start_core would write).
+        let scratch = std::env::temp_dir().join("grok-goal-b63a7b864ef0").join("implementer");
+        let _ = std::fs::create_dir_all(&scratch);
+        let out_path = scratch.join("run_config_mitigated_full.json");
+        let pretty = serde_json::to_string_pretty(&config).unwrap();
+        std::fs::write(&out_path, &pretty).expect("write mitigated config");
+
+        // If managed core is present, require `sing-box check` + short `run` survival.
+        let core = std::path::PathBuf::from(&appdata)
+            .join("sing-box-gui")
+            .join("bin")
+            .join(if cfg!(windows) {
+                "sing-box.exe"
+            } else {
+                "sing-box"
+            });
+        if !core.exists() {
+            return;
+        }
+        let check = std::process::Command::new(&core)
+            .args(["check", "-c", &out_path.to_string_lossy()])
+            .output()
+            .expect("run check");
+        assert!(
+            check.status.success(),
+            "sing-box check failed: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+
+        let workdir = std::path::PathBuf::from(&appdata).join("sing-box-gui");
+        let mut child = std::process::Command::new(&core)
+            .args(["run", "-c", &out_path.to_string_lossy()])
+            .current_dir(&workdir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn sing-box run");
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        match child.try_wait() {
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            Ok(Some(status)) => {
+                let mut err = String::new();
+                if let Some(mut e) = child.stderr.take() {
+                    use std::io::Read;
+                    let _ = e.read_to_string(&mut err);
+                }
+                let tail = if err.len() > 2000 {
+                    &err[err.len() - 2000..]
+                } else {
+                    &err
+                };
+                panic!("core exited during startup with {status}; stderr tail:\n{tail}");
+            }
+            Err(e) => panic!("try_wait failed: {e}"),
+        }
     }
 
     #[test]
@@ -1476,5 +1902,46 @@ proxies:
                 .unwrap_or(false)
         }).unwrap();
         assert_eq!(proxy_rule.get("server").unwrap().as_str(), Some("dns_remote"));
+    }
+
+    #[test]
+    fn validate_profile_rejects_no_node_text() {
+        // Loose YAML / comments / plain text — no parseable proxy node lines.
+        let res = validate_profile_content("# just comments\nfoo: bar\n");
+        assert!(res.is_err(), "should reject content with zero nodes");
+        let msg = res.unwrap_err();
+        assert!(
+            msg.contains("no parseable proxy nodes") || msg.contains("Invalid"),
+            "msg={msg}"
+        );
+    }
+
+    #[test]
+    fn parse_skips_nodes_with_zero_port() {
+        // Two valid ss proxies + a fake one with port 0 → only 2 should be parsed.
+        let yaml = r#"
+proxies:
+  - name: "ok1"
+    type: ss
+    server: 1.1.1.1
+    port: 443
+    cipher: aes-256-gcm
+    password: "x"
+  - name: "ok2"
+    type: ss
+    server: 2.2.2.2
+    port: 0
+    cipher: aes-256-gcm
+    password: "y"
+  - name: "ok3"
+    type: ss
+    server: 3.3.3.3
+    port: 9999
+    cipher: aes-256-gcm
+    password: "z"
+"#;
+        let nodes = parse_clash_yaml_nodes(yaml).unwrap();
+        let names: Vec<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, ["ok1", "ok3"]);
     }
 }

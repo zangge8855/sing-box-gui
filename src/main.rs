@@ -12,7 +12,8 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
-#![windows_subsystem = "windows"]
+// Only hide the console window on Windows; leave stdio available on mac/linux.
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod state;
 mod message;
@@ -115,6 +116,8 @@ struct App {
     core_version: Option<String>,
     /// Seconds since last auto-update scan (Tick increments).
     auto_update_tick_counter: u32,
+    /// Counter used to throttle per-Tick authoritative liveness checks.
+    tick_authority_counter: u32,
     /// Settings: expand generated config preview.
     config_preview_expanded: bool,
     /// Profiles: which card shows secondary actions.
@@ -310,6 +313,7 @@ impl App {
             log_search: String::new(),
             core_version: None,
             auto_update_tick_counter: 0,
+            tick_authority_counter: 0,
             config_preview_expanded: false,
             profile_more_id: None,
             pending_auto_updates: std::collections::VecDeque::new(),
@@ -702,8 +706,12 @@ impl App {
             }
             Message::NewLogLine(line) => {
                 self.log_lines.push(line);
+                // When the GUI log window oversize its cap, drop the oldest 10%
+                // entries in a single drain (one memmove) to keep memory bounded
+                // without paying per-line overhead on every message.
                 if self.log_lines.len() > 1000 {
-                    self.log_lines.drain(0..100); // Amortized shifting cost optimization
+                    let drop_n = self.log_lines.len().saturating_sub(900);
+                    self.log_lines.drain(..drop_n);
                 }
                 // Follow tail when Logs tab is active
                 if self.logs_follow && self.current_tab == state::Tab::Logs {
@@ -1141,8 +1149,40 @@ impl App {
                 self.kick_pending_auto_update()
             }
             Message::Tick => {
-                self.core_running = core::is_core_running();
+                let was_running = self.core_running;
+                // Lock-free fast path avoids contending on CURRENT_PROCESS while
+                // `start_core` is mid-grace (holds the lock up to STARTUP_GRACE_MS).
+                // The cached flag is updated by every authoritative check below.
+                //
+                // Every ~5 Ticks (5s) we also run an authoritative check so that
+                // a core that died without the fast flag being refreshed is picked
+                // up and surfaced to the user via the unexpected-exit path.
+                self.core_running = if self.core_running && self.tick_authority_counter % 5 == 0 {
+                    core::is_core_running()
+                } else {
+                    core::is_core_running_fast()
+                };
                 self.core_installed = core::is_core_installed(&self.gui_config);
+                self.tick_authority_counter =
+                    self.tick_authority_counter.wrapping_add(1);
+
+                // Core died after a successful start — never silent "auto-stop".
+                if was_running && !self.core_running {
+                    if let Some(msg) = core::take_unexpected_core_exit() {
+                        self.log_lines.push(format!("[GUI] {}", msg));
+                        self.toast_error(msg);
+                        if self.gui_config.disable_proxy_on_core_stop && self.sys_proxy_enabled {
+                            let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                            self.sys_proxy_enabled = false;
+                            self.gui_config.system_proxy_enabled = false;
+                            let _ = config::save_gui_config(&self.gui_config);
+                        }
+                        if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
+                            let _ = cancel_tx.send(());
+                        }
+                        self.current_speed = Bandwidth::default();
+                    }
+                }
 
                 // Auto-dismiss toast
                 if let Some(ref mut toast) = self.toast {
@@ -1353,13 +1393,33 @@ impl App {
             Message::ToggleTun => {
                 self.gui_config.tun_mode = !self.gui_config.tun_mode;
                 let _ = config::save_gui_config(&self.gui_config);
+                // Admin-elevation sanity check: TUN inbound needs CAP_NET_ADMIN /
+                // the Windows wintun driver via an elevated process. Tell the user
+                // *now* instead of letting them discover it from a FATAL toast.
+                if self.gui_config.tun_mode && !is_running_elevated() {
+                    self.toast_info(if self.gui_config.language == state::Language::Zh {
+                        "TUN 模式需要管理员权限，内核可能启动失败。请以管理员身份重启本程序。"
+                    } else {
+                        "TUN mode requires Administrator privileges. Restart this app elevated to enable it."
+                    });
+                }
                 self.restart_core()
             }
             Message::ToggleAutostart => {
                 self.gui_config.start_on_boot = !self.gui_config.start_on_boot;
                 let _ = config::save_gui_config(&self.gui_config);
-                let _ = set_windows_autostart(self.gui_config.start_on_boot);
-                Task::none()
+                #[cfg(not(target_os = "windows"))]
+                {
+                    // No-op without an OS launch integration on mac/linux.
+                    Task::none()
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    if let Err(e) = set_windows_autostart(self.gui_config.start_on_boot) {
+                        self.toast_error(e);
+                    }
+                    Task::none()
+                }
             }
             Message::ToggleAutoStartCore => {
                 self.gui_config.auto_start_core = !self.gui_config.auto_start_core;
@@ -1483,7 +1543,32 @@ impl App {
                     self.core_install_msg = Some(err);
                     return Task::none();
                 }
-                
+
+                // Reject reserved (0..1024) and identical mixed/api ports —
+                // the latter would collide on 127.0.0.1:port and FATAL the core.
+                let mixed_p = mixed_parsed.as_ref().unwrap();
+                let api_p = api_parsed.as_ref().unwrap();
+                let reserved_msg = if self.gui_config.language == state::Language::Zh {
+                    "端口不能小于 1024 (系统保留端口)！".to_string()
+                } else {
+                    "Ports below 1024 are reserved, pick a higher number.".to_string()
+                };
+                if *mixed_p < 1024 || *api_p < 1024 {
+                    self.log_lines.push(format!("[GUI ERROR] {}", reserved_msg));
+                    self.core_install_msg = Some(reserved_msg);
+                    return Task::none();
+                }
+                if mixed_p == api_p {
+                    let err = if self.gui_config.language == state::Language::Zh {
+                        "混合代理端口和 Clash API 端口不能相同，否则内核启动会 FATAL！".to_string()
+                    } else {
+                        "Mixed proxy port and Clash API port must differ, otherwise the core will FATAL.".to_string()
+                    };
+                    self.log_lines.push(format!("[GUI ERROR] {}", err));
+                    self.core_install_msg = Some(err);
+                    return Task::none();
+                }
+
                 self.core_install_msg = None;
                 let trimmed_core = self.core_path_input_str.trim();
                 if trimmed_core.is_empty() {
@@ -1508,11 +1593,12 @@ impl App {
             Message::UpdateChecked(result) => {
                 match result {
                     Ok(tag_name) => {
-                        let current_version = format!("v{}", env!("CARGO_PKG_VERSION"));
-                        if tag_name.trim() == current_version.trim() {
-                            self.update_status = state::UpdateStatus::UpToDate;
-                        } else {
+                        let local_version = env!("CARGO_PKG_VERSION");
+                        if is_remote_version_newer(local_version, tag_name.trim()) {
                             self.update_status = state::UpdateStatus::NewVersion(tag_name);
+                        } else {
+                            // Same or lower remote tag, or both unreadable → up-to-date.
+                            self.update_status = state::UpdateStatus::UpToDate;
                         }
                     }
                     Err(e) => {
@@ -1522,18 +1608,9 @@ impl App {
                 Task::none()
             }
             Message::OpenUrl(url) => {
-                #[cfg(target_os = "windows")]
-                let _ = std::process::Command::new("cmd")
-                    .args(&["/c", "start", "", &url])
-                    .spawn();
-                #[cfg(target_os = "macos")]
-                let _ = std::process::Command::new("open")
-                    .arg(&url)
-                    .spawn();
-                #[cfg(target_os = "linux")]
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(&url)
-                    .spawn();
+                // `open::that` delegates to ShellExecuteW / open / xdg-open
+                // safely, avoiding cmd-shell injection on user-controlled URLs.
+                let _ = open::that(&url);
                 Task::none()
             }
         }
@@ -2013,42 +2090,63 @@ fn traffic_subscription() -> impl iced::futures::Stream<Item = Message> {
 fn tray_subscription() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(100, |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
         let (tx, mut rx) = tokio::sync::mpsc::channel(100);
-        
+        // Shared stop flag — set when the iced side drops, lets the two
+        // blocking `recv()` loops below exit instead of leaking threads.
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_menu = stop.clone();
+        let stop_tray = stop.clone();
+
         let tx_clone = tx.clone();
         std::thread::spawn(move || {
             let menu_channel = tray_icon::menu::MenuEvent::receiver();
-            loop {
-                if let Ok(event) = menu_channel.recv() {
-                    let _ = tx_clone.blocking_send(Message::TrayMenuClicked(event.id.0));
+            while !stop_menu.load(std::sync::atomic::Ordering::SeqCst) {
+                // Non-blocking poll with a short sleep so the stop flag is honored.
+                while let Ok(event) = menu_channel.try_recv() {
+                    // Drop on closed channel = iced subscription ended — stop polling.
+                    if tx_clone.blocking_send(Message::TrayMenuClicked(event.id.0)).is_err() {
+                        stop_menu.store(true, std::sync::atomic::Ordering::SeqCst);
+                        return;
+                    }
                 }
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
         });
 
         let tx_clone2 = tx.clone();
         std::thread::spawn(move || {
             let tray_channel = tray_icon::TrayIconEvent::receiver();
-            loop {
-                if let Ok(event) = tray_channel.recv() {
-                    match event {
-                        tray_icon::TrayIconEvent::Click { button, .. } => {
-                            if button == tray_icon::MouseButton::Left {
-                                let _ = tx_clone2.blocking_send(Message::TrayIconClicked);
-                            }
-                        }
-                        tray_icon::TrayIconEvent::DoubleClick { button, .. } => {
-                            if button == tray_icon::MouseButton::Left {
-                                let _ = tx_clone2.blocking_send(Message::TrayIconClicked);
-                            }
-                        }
-                        _ => {}
+            while !stop_tray.load(std::sync::atomic::Ordering::SeqCst) {
+                while let Ok(event) = tray_channel.try_recv() {
+                    let to_send = match event {
+                        tray_icon::TrayIconEvent::Click { button, .. }
+                            if button == tray_icon::MouseButton::Left =>
+                            Some(Message::TrayIconClicked),
+                        tray_icon::TrayIconEvent::DoubleClick { button, .. }
+                            if button == tray_icon::MouseButton::Left =>
+                            Some(Message::TrayIconClicked),
+                        _ => None,
+                    };
+                    if let Some(msg) = to_send
+                        && tx_clone2.blocking_send(msg).is_err()
+                    {
+                        stop_tray.store(true, std::sync::atomic::Ordering::SeqCst);
+                        return;
                     }
                 }
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
         });
-        
+
         while let Some(msg) = rx.recv().await {
-            let _ = output.send(msg).await;
+            // iced sender closed (subscription dropped); signal workers to exit.
+            if output.send(msg).await.is_err() {
+                stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                break;
+            }
         }
+        // The async task returns — and the two std threads observe the stop flag
+        // next time they check, normally within 50ms.
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
     })
 }
 
@@ -2308,6 +2406,28 @@ mod tests {
         // Keep main window settings aligned with shared tokens.
         assert!(ui::WINDOW_MIN_W < ui::SHELL_COMPACT_W);
     }
+
+    #[test]
+    fn normalize_version_tag_strips_v_and_drops_suffix() {
+        assert_eq!(normalize_version_tag("v2026.7.9"), vec![2026, 7, 9]);
+        assert_eq!(normalize_version_tag("2026.7.9"), vec![2026, 7, 9]);
+        // Non-numeric tail like "+beta" is dropped, the numeric head kept.
+        assert_eq!(normalize_version_tag("v1.2.3+beta"), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn is_remote_version_newer_compares_numerically() {
+        // Same version → not newer.
+        assert!(!is_remote_version_newer("2026.7.9", "v2026.7.9"));
+        // Remote strictly less → not newer.
+        assert!(!is_remote_version_newer("2026.7.9", "v2026.7.8"));
+        // Remote strictly greater → newer.
+        assert!(is_remote_version_newer("2026.7.9", "v2026.8.0"));
+        // Prefix-trim equality of the trailing v vs no-v must not false-positive.
+        assert!(!is_remote_version_newer("1.0.0", "v1.0.0"));
+        // Older per-component case.
+        assert!(is_remote_version_newer("1.0.0", "v2.0.0"));
+    }
 }
 
 fn set_windows_autostart(enable: bool) -> Result<(), String> {
@@ -2364,19 +2484,69 @@ fn detect_system_theme() -> bool {
     false // Default to dark mode (0)
 }
 
-fn open_path_in_system(path: &std::path::Path) {
+/// Cheap elevation check so TUN mode can warn the user *before* the core
+/// FATALs on permission denied / missing wintun privileges.
+fn is_running_elevated() -> bool {
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd")
-        .args(&["/c", "start", "", &path.to_string_lossy()])
-        .spawn();
-    #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open")
-        .arg(path)
-        .spawn();
-    #[cfg(target_os = "linux")]
-    let _ = std::process::Command::new("xdg-open")
-        .arg(path)
-        .spawn();
+    {
+        use std::ffi::c_void;
+        unsafe {
+            // Use OpenProcessToken + GetTokenInformation(TokenElevation).
+            #[allow(clippy::upper_case_acronyms)]
+            type BOOL = i32;
+            #[allow(clippy::upper_case_acronyms)]
+            type HANDLE = *mut c_void;
+            unsafe extern "system" {
+                fn GetCurrentProcess() -> HANDLE;
+                fn OpenProcessToken(
+                    process: HANDLE,
+                    access: u32,
+                    token: *mut HANDLE,
+                ) -> BOOL;
+                fn GetTokenInformation(
+                    token: HANDLE,
+                    class: u32,
+                    buf: *mut c_void,
+                    len: u32,
+                    ret_len: *mut u32,
+                ) -> BOOL;
+                fn CloseHandle(h: HANDLE) -> BOOL;
+            }
+            // TOKEN_QUERY = 0x0008 ; TokenElevation = 20
+            let mut token: HANDLE = std::ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), 0x0008, &mut token) == 0 {
+                return false;
+            }
+            let mut elevated: i32 = 0;
+            let mut ret = 0u32;
+            let ok = GetTokenInformation(
+                token,
+                20,
+                &mut elevated as *mut _ as *mut c_void,
+                std::mem::size_of::<i32>() as u32,
+                &mut ret,
+            );
+            CloseHandle(token);
+            ok != 0 && elevated != 0
+        }
+    }
+    #[cfg(unix)]
+    {
+        // On unix a process is "elevated" enough for TUN if its effective uid
+        // is 0 (CAP_NET_ADMIN) or it has the NET_ADMIN capability via file caps.
+        // We approximate with euid==0 — covers the typical sudo install case.
+        unsafe { libc::geteuid() == 0 }
+    }
+    #[cfg(not(any(target_os = "windows", unix)))]
+    {
+        true // assume elevated where we cannot check
+    }
+}
+
+fn open_path_in_system(path: &std::path::Path) {
+    // Use the `open` crate rather than shelling out to `cmd /c start`, which
+    // mishandles paths containing spaces or shell metacharacters like `&`.
+    let _ = open::that(path);
 }
 
 async fn check_app_update() -> Result<String, String> {
@@ -2384,27 +2554,67 @@ async fn check_app_update() -> Result<String, String> {
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
-        
+
     let res = client.get("https://api.github.com/repos/zangge8855/sing-box-gui/releases/latest")
         .header("User-Agent", "sing-box-gui")
         .send()
         .await
         .map_err(|e| format!("Network request failed: {}", e))?;
-        
-    if !res.status().is_success() {
-        return Err(format!("Server returned error status: {}", res.status()));
+
+    // 404 from /releases/latest = the repo has published *no* GitHub release yet.
+    // Surface this as a friendly, non-error status instead of scaring the user.
+    let status = res.status();
+    if status.as_u16() == 404 {
+        return Err("No GitHub release published yet".to_string());
     }
-    
+    if !status.is_success() {
+        return Err(format!("Server returned error status: {}", status));
+    }
+
     #[derive(serde::Deserialize)]
     struct GithubRelease {
         tag_name: String,
     }
-    
+
     let release: GithubRelease = res.json()
         .await
         .map_err(|e| format!("Failed to parse JSON: {}", e))?;
-        
+
     Ok(release.tag_name)
+}
+
+/// Normalize a version-like string into comparable dot-separated numeric tokens
+/// so we can compare `v2026.7.9` vs `2026.7.9` etc. without false positives.
+fn normalize_version_tag(tag: &str) -> Vec<u64> {
+    tag.trim()
+        .trim_start_matches('v')
+        .split('.')
+        .filter_map(|p| p.split(|c: char| !c.is_ascii_digit()).next())
+        .filter(|p| !p.is_empty())
+        .filter_map(|p| p.parse::<u64>().ok())
+        .collect()
+}
+
+/// Returns true when `remote_tag` is *strictly* newer than `local_pkg_version`
+/// using dotted numeric comparison. Falls back to string inequality when
+/// neither side parses at all.
+fn is_remote_version_newer(local_pkg_version: &str, remote_tag: &str) -> bool {
+    let local = normalize_version_tag(&format!("v{}", local_pkg_version));
+    let remote = normalize_version_tag(remote_tag);
+    if local.is_empty() || remote.is_empty() {
+        return remote_tag.trim().trim_start_matches('v')
+            != local_pkg_version.trim().trim_start_matches('v');
+    }
+    for (l, r) in local.iter().zip(remote.iter()) {
+        match r.cmp(l) {
+            std::cmp::Ordering::Greater => return true,
+            std::cmp::Ordering::Less => return false,
+            std::cmp::Ordering::Equal => continue,
+        }
+    }
+    // Equal up to the shared length — longer remote (e.g. 2026.7.9 vs 2026.7)
+    // means newer if the trailing components are non-zero.
+    remote.len() > local.len()
 }
 
 fn main() -> iced::Result {

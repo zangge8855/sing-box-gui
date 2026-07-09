@@ -52,27 +52,48 @@ pub struct Toast {
 }
 
 impl Toast {
+    /// Seconds to show a toast: scale with message length so long errors stay
+    /// on screen long enough to read; clamped to [3, 20].
+    fn duration_for(msg: &str) -> u8 {
+        let base: u8 = if msg.len() < 80 {
+            3
+        } else if msg.len() < 240 {
+            6
+        } else {
+            10
+        };
+        // Extra second per ~25 chars in long messages, capped at 20
+        let extra = (msg.len() as u32 / 25).min(10) as u8;
+        base.saturating_add(extra).min(20).max(3)
+    }
+
     pub fn success(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let remaining_secs = Self::duration_for(&message);
         Self {
-            message: message.into(),
+            message,
             kind: ToastKind::Success,
-            remaining_secs: 3,
+            remaining_secs,
         }
     }
 
     pub fn error(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let remaining_secs = Self::duration_for(&message).max(5);
         Self {
-            message: message.into(),
+            message,
             kind: ToastKind::Error,
-            remaining_secs: 5,
+            remaining_secs,
         }
     }
 
     pub fn info(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let remaining_secs = Self::duration_for(&message);
         Self {
-            message: message.into(),
+            message,
             kind: ToastKind::Info,
-            remaining_secs: 3,
+            remaining_secs,
         }
     }
 }
@@ -303,4 +324,33 @@ pub enum UpdateStatus {
     UpToDate,
     NewVersion(String),
     Error(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toast_duration_scales_with_length_and_clamps() {
+        // Short message resolves to the minimum (3 seconds).
+        assert_eq!(Toast::success("ok").remaining_secs, 3);
+        assert_eq!(Toast::info("ok").remaining_secs, 3);
+        // Errors clamp to at least 5 seconds.
+        assert!(Toast::error("err").remaining_secs >= 5);
+        // A very long error stays clamped to the 20-second ceiling even for huge strings.
+        let long = "FATAL ".repeat(50);
+        let long_toast = Toast::error(long.clone());
+        assert!(long_toast.remaining_secs <= 20);
+        assert!(long_toast.remaining_secs >= 5);
+        // Success / info never exceed the clamp either.
+        let long_success = "ok ".repeat(200);
+        assert!(Toast::success(long_success).remaining_secs <= 20);
+    }
+
+    #[test]
+    fn routing_modes_have_clash_strings() {
+        assert_eq!(RoutingMode::Rule.as_clash_mode(), "Rule");
+        assert_eq!(RoutingMode::Global.as_clash_mode(), "Global");
+        assert_eq!(RoutingMode::Direct.as_clash_mode(), "Direct");
+    }
 }

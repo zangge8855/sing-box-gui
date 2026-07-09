@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tokio::sync::mpsc::UnboundedSender;
 use std::sync::OnceLock;
 
@@ -11,6 +12,23 @@ fn get_client() -> &'static reqwest::Client {
             .build()
             .unwrap_or_default()
     })
+}
+
+/// Look up `experimental.clash_api.secret` from the on-disk run configuration
+/// and attach `Authorization: Bearer <secret>` to the request when present.
+/// Native sing-box profiles often run with a non-empty secret; the generated
+/// Clash profile keeps it empty so requests succeed either way.
+fn with_secret(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    let secret = crate::config::get_clash_api_secret();
+    if secret.is_empty() {
+        return builder;
+    }
+    let Ok(value) = HeaderValue::from_str(&format!("Bearer {}", secret)) else {
+        return builder;
+    };
+    let mut headers = HeaderMap::new();
+    headers.insert(HeaderName::from_static("authorization"), value);
+    builder.headers(headers)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -125,7 +143,7 @@ pub struct ConnectionsResponse {
 pub async fn fetch_proxies(api_port: u16) -> Result<ProxiesResponse, String> {
     let url = format!("http://127.0.0.1:{}/proxies", api_port);
     let client = get_client();
-    let res = client.get(&url)
+    let res = with_secret(client.get(&url))
         .send()
         .await
         .map_err(|e| format!("Failed to fetch proxies: {}", e))?;
@@ -145,7 +163,7 @@ pub async fn select_proxy(api_port: u16, selector: &str, node_tag: &str) -> Resu
         "name": node_tag
     });
     
-    let res = client.put(&url)
+    let res = with_secret(client.put(&url))
         .json(&body)
         .send()
         .await
@@ -178,7 +196,7 @@ pub async fn test_node_latency(
         timeout_ms
     );
     let client = get_client();
-    let res = client.get(&url)
+    let res = with_secret(client.get(&url))
         .send()
         .await
         .map_err(|e| format!("Latency test request failed: {}", e))?;
@@ -196,7 +214,7 @@ pub async fn test_node_latency(
 pub async fn fetch_connections(api_port: u16) -> Result<ConnectionsResponse, String> {
     let url = format!("http://127.0.0.1:{}/connections", api_port);
     let client = get_client();
-    let res = client.get(&url)
+    let res = with_secret(client.get(&url))
         .send()
         .await
         .map_err(|e| format!("Failed to fetch connections: {}", e))?;
@@ -211,7 +229,7 @@ pub async fn fetch_connections(api_port: u16) -> Result<ConnectionsResponse, Str
 pub async fn close_connection(api_port: u16, id: &str) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{}/connections/{}", api_port, id);
     let client = get_client();
-    let res = client.delete(&url)
+    let res = with_secret(client.delete(&url))
         .send()
         .await
         .map_err(|e| format!("Failed to close connection: {}", e))?;
@@ -228,8 +246,7 @@ pub async fn set_mode(api_port: u16, mode: &str) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{}/configs", api_port);
     let client = get_client();
     let body = serde_json::json!({ "mode": mode });
-    let res = client
-        .patch(&url)
+    let res = with_secret(client.patch(&url))
         .json(&body)
         .send()
         .await
@@ -246,8 +263,7 @@ pub async fn set_mode(api_port: u16, mode: &str) -> Result<(), String> {
 pub async fn close_all_connections(api_port: u16) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{}/connections", api_port);
     let client = get_client();
-    let res = client
-        .delete(&url)
+    let res = with_secret(client.delete(&url))
         .send()
         .await
         .map_err(|e| format!("Failed to close all connections: {}", e))?;
@@ -287,7 +303,7 @@ pub fn spawn_traffic_monitor(
                 _ = &mut cancel_rx => {
                     break;
                 }
-                res_future = client.get(&url).send() => {
+                res_future = with_secret(client.get(&url)).send() => {
                     if let Ok(mut res) = res_future {
                         let mut line_buffer = String::new();
                         loop {

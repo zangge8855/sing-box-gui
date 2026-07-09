@@ -25,9 +25,17 @@ jobs:
       with:
         toolchain: stable
         targets: x86_64-pc-windows-msvc, aarch64-pc-windows-msvc
+        components: clippy
 
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
+
+    - name: Run unit tests
+      run: cargo test --quiet
+
+    - name: Run clippy (warnings reported, not fatal)
+      run: cargo clippy --quiet
+      continue-on-error: true
 
     - name: Build x86_64 Binary
       run: cargo build --release --target x86_64-pc-windows-msvc
