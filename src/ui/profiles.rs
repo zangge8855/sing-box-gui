@@ -148,19 +148,7 @@ pub fn render<'a>(
                 )
                 .padding(12)
                 .width(Length::Fill)
-                .style(|theme| container::Style {
-                    background: Some(iced::Background::Color(if theme::is_dark(theme) {
-                        iced::Color::from_rgba(0.94, 0.27, 0.27, 0.1)
-                    } else {
-                        iced::Color::from_rgba(0.94, 0.27, 0.27, 0.05)
-                    })),
-                    border: iced::Border {
-                        color: theme::DANGER,
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..Default::default()
-                })
+                .style(|t| theme::tinted_banner(t, theme::DANGER))
             )
         } else {
             None

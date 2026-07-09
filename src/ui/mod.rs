@@ -15,17 +15,17 @@ use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::ui::theme as ui_theme;
 
-// Unified page padding: top 25, right 24, bottom 30, left 24
+// Unified page padding — generous breathing room for premium layout
 pub fn page_padding() -> iced::Padding {
     iced::Padding {
-        top: 25.0,
-        right: 24.0,
-        bottom: 30.0,
-        left: 24.0,
+        top: 28.0,
+        right: 28.0,
+        bottom: 32.0,
+        left: 28.0,
     }
 }
 
-// Unified page header: title (size 24, primary color) on the left, optional
+// Unified page header: title (size 22, semibold primary) on the left, optional
 // actions on the right, separated by a fill space.
 pub fn page_header<'a>(
     title_key: &'static str,
@@ -36,7 +36,11 @@ pub fn page_header<'a>(
 ) -> Element<'a, Message> {
     let text_primary = ui_theme::text_primary(theme);
     let title = text(crate::ui::i18n::tr(lang, title_key))
-        .size(24)
+        .size(22)
+        .font(iced::Font {
+            weight: iced::font::Weight::Semibold,
+            ..Default::default()
+        })
         .color(text_primary);
 
     let content: Element<'a, Message> = if is_compact {

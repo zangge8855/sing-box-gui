@@ -499,17 +499,7 @@ pub fn render<'a>(
                     .width(Length::Fill)
                 )
                 .padding(15)
-                .style(move |t| {
-                    let base = theme::status_card(t);
-                    container::Style {
-                        background: Some(iced::Background::Color(if theme::is_dark(t) {
-                            iced::Color::from_rgb(0.08, 0.08, 0.1)
-                        } else {
-                            iced::Color::from_rgb(0.95, 0.95, 0.97)
-                        })),
-                        ..base
-                    }
-                })
+                .style(theme::console_bg)
             ]
             .spacing(20)
         )

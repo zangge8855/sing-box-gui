@@ -297,21 +297,7 @@ pub fn render<'a>(
                                 })
                         )
                         .padding([2, 6])
-                        .style(move |t| {
-                            let bg_color = if theme::is_dark(t) {
-                                Color::from_rgb(0.14, 0.17, 0.22)
-                            } else {
-                                Color::from_rgb(0.92, 0.94, 0.97)
-                            };
-                            container::Style {
-                                background: Some(iced::Background::Color(bg_color)),
-                                border: iced::Border {
-                                    radius: 4.0.into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            }
-                        });
+                        .style(theme::badge_bg);
                         
                         let card_content = container(
                             column![
@@ -430,12 +416,8 @@ pub fn render<'a>(
                 let divider = container(iced::widget::Space::new())
                     .width(1)
                     .height(Length::Fill)
-                    .style(|theme| container::Style {
-                        background: Some(iced::Background::Color(if theme::is_dark(theme) {
-                            theme::BORDER_DARK
-                        } else {
-                            theme::BORDER_LIGHT
-                        })),
+                    .style(|t| container::Style {
+                        background: Some(iced::Background::Color(theme::border_color(t))),
                         ..Default::default()
                     });
                     

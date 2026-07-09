@@ -41,41 +41,17 @@ pub fn render<'a>(toast: &'a Toast, theme: &iced::Theme) -> Element<'a, Message>
     container(body)
         .width(Length::Fixed(360.0))
         .style(move |t| {
-            let dark = theme::is_dark(t);
-            let bg = match toast.kind {
-                ToastKind::Success => {
-                    if dark {
-                        iced::Color::from_rgba(0.06, 0.73, 0.51, 0.22)
-                    } else {
-                        iced::Color::from_rgba(0.06, 0.73, 0.51, 0.14)
-                    }
-                }
-                ToastKind::Error => {
-                    if dark {
-                        iced::Color::from_rgba(0.94, 0.27, 0.27, 0.22)
-                    } else {
-                        iced::Color::from_rgba(0.94, 0.27, 0.27, 0.12)
-                    }
-                }
-                ToastKind::Info => {
-                    if dark {
-                        iced::Color::from_rgba(0.23, 0.51, 0.96, 0.22)
-                    } else {
-                        iced::Color::from_rgba(0.23, 0.51, 0.96, 0.12)
-                    }
-                }
-            };
-            let mut s = theme::card_bg(t);
-            s.background = Some(iced::Background::Color(if dark {
-                theme::CARD_DARK
-            } else {
-                theme::CARD_LIGHT_BG
-            }));
-            // overlay tint via border accent; solid card for readability
-            let _ = bg;
+            let mut s = theme::tinted_banner(t, accent);
+            // Solid elevated surface for readability, keep accent border
+            s.background = Some(iced::Background::Color(theme::card_surface(t)));
             s.border.color = accent;
             s.border.width = 1.5;
-            s.border.radius = 10.0.into();
+            s.border.radius = theme::RADIUS_MD.into();
+            s.shadow = iced::Shadow {
+                color: theme::with_alpha(accent, 0.22),
+                offset: iced::Vector::new(0.0, 6.0),
+                blur_radius: 16.0,
+            };
             s
         })
         .into()

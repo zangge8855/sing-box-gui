@@ -132,34 +132,10 @@ pub fn render<'a>(
                             row![
                                 container(text(&conn.metadata.network).size(9).color(theme::ACCENT_GREEN))
                                     .padding([2, 6])
-                                    .style(|t| container::Style {
-                                        background: Some(iced::Background::Color(if theme::is_dark(t) {
-                                            iced::Color::from_rgba(0.2, 0.8, 0.2, 0.1)
-                                        } else {
-                                            iced::Color::from_rgba(0.2, 0.8, 0.2, 0.05)
-                                        })),
-                                        border: iced::Border {
-                                            color: theme::ACCENT_GREEN,
-                                            width: 1.0,
-                                            radius: 4.0.into(),
-                                        },
-                                        ..Default::default()
-                                    }),
+                                    .style(|t| theme::tinted_banner(t, theme::ACCENT_GREEN)),
                                 container(text(&conn.rule).size(9).color(theme::ACCENT_PURPLE))
                                     .padding([2, 6])
-                                    .style(|t| container::Style {
-                                        background: Some(iced::Background::Color(if theme::is_dark(t) {
-                                            iced::Color::from_rgba(0.55, 0.36, 0.96, 0.1)
-                                        } else {
-                                            iced::Color::from_rgba(0.55, 0.36, 0.96, 0.05)
-                                        })),
-                                        border: iced::Border {
-                                            color: theme::ACCENT_PURPLE,
-                                            width: 1.0,
-                                            radius: 4.0.into(),
-                                        },
-                                        ..Default::default()
-                                    }),
+                                    .style(|t| theme::tinted_banner(t, theme::ACCENT_PURPLE)),
                             ]
                             .spacing(8)
                             .align_y(Alignment::Center),
@@ -271,12 +247,8 @@ pub fn render<'a>(
                         let separator = container(Space::new())
                             .height(1)
                             .width(Length::Fill)
-                            .style(|theme| container::Style {
-                                background: Some(iced::Background::Color(if theme::is_dark(theme) {
-                                    theme::BORDER_DARK
-                                } else {
-                                    theme::BORDER_LIGHT
-                                })),
+                            .style(|t| container::Style {
+                                background: Some(iced::Background::Color(theme::border_color(t))),
                                 ..Default::default()
                             });
                         list = list.push(separator);
@@ -286,14 +258,10 @@ pub fn render<'a>(
             
             let header_styled = container(header)
                 .padding([12, 10])
-                .style(|theme| container::Style {
-                    background: Some(iced::Background::Color(if theme::is_dark(theme) {
-                        theme::CARD_LIGHT
-                    } else {
-                        theme::SIDEBAR_BG_LIGHT
-                    })),
+                .style(|t| container::Style {
+                    background: Some(iced::Background::Color(theme::elevated_surface(t))),
                     border: iced::Border {
-                        color: if theme::is_dark(theme) { theme::BORDER_DARK } else { theme::BORDER_LIGHT },
+                        color: theme::border_color(t),
                         width: 1.0,
                         radius: 0.0.into(),
                     },
