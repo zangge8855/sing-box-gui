@@ -486,7 +486,7 @@ pub fn render<'a>(
                 }
                 grid_rows = grid_rows.push(current_row);
             }
-            scrollable(grid_rows).height(Length::Fill).into()
+            scrollable(grid_rows).style(theme::scrollbar_style).height(Length::Fill).into()
         };
         
         let mut main_layout_col = column![

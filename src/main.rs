@@ -1858,6 +1858,13 @@ impl App {
                             container(logo_rounded(logo_handle.clone(), 36.0))
                             .width(Length::Fill)
                             .center_x(Length::Fill),
+                            container(iced::widget::Space::new())
+                                .height(1)
+                                .width(Length::Fill)
+                                .style(|t| container::Style {
+                                    background: Some(iced::Background::Color(ui::theme::border_color(t))),
+                                    ..Default::default()
+                                }),
                             column![
                                 make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
                                 make_tab_btn(Tab::Proxies, '\u{EA0B}', "tab_proxies"),
@@ -1867,24 +1874,35 @@ impl App {
                                 make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
                                 make_tab_btn(Tab::Settings, '\u{E8B8}', "tab_settings"),
                             ]
-                            .spacing(10)
+                            .spacing(6)
                             .width(Length::Fill)
                         ]
-                        .spacing(24)
+                        .spacing(16)
                         .width(Length::Fill),
                         iced::widget::Space::new().height(Length::Fill),
-                        container(iced::widget::Space::new())
-                            .width(8)
-                            .height(8)
-                            .center_x(Length::Fill)
-                            .style(move |_t| container::Style {
-                                background: Some(iced::Background::Color(status_dot_color)),
-                                border: iced::Border {
-                                    radius: 4.0.into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            }),
+                        container(
+                            {
+                                let dot = container(iced::widget::Space::new())
+                                    .width(8)
+                                    .height(8)
+                                    .style(move |_t| container::Style {
+                                        background: Some(iced::Background::Color(status_dot_color)),
+                                        border: iced::Border {
+                                            radius: 4.0.into(),
+                                            ..Default::default()
+                                        },
+                                        ..Default::default()
+                                    });
+                                if core_running {
+                                    container(dot)
+                                        .padding(4)
+                                        .style(move |_t| ui::theme::status_ring(status_dot_color))
+                                } else {
+                                    container(dot).padding(4)
+                                }
+                            }
+                        )
+                        .center_x(Length::Fill)
                     ]
                     .width(Length::Fill)
                     .align_x(Alignment::Center)
@@ -1919,6 +1937,13 @@ impl App {
                             ]
                             .spacing(10)
                             .align_y(Alignment::Center),
+                            container(iced::widget::Space::new())
+                                .height(1)
+                                .width(Length::Fill)
+                                .style(|t| container::Style {
+                                    background: Some(iced::Background::Color(ui::theme::border_color(t))),
+                                    ..Default::default()
+                                }),
                             column![
                                 make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
                                 make_tab_btn(Tab::Proxies, '\u{EA0B}', "tab_proxies"),
@@ -1928,44 +1953,28 @@ impl App {
                                 make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
                                 make_tab_btn(Tab::Settings, '\u{E8B8}', "tab_settings"),
                             ]
-                            .spacing(10)
+                            .spacing(6)
                             .width(Length::Fill)
                         ]
-                        .spacing(28)
+                        .spacing(16)
                         .width(Length::Fill),
                         iced::widget::Space::new().height(Length::Fill),
                         row![
-                            {
-                                let dot = container(iced::widget::Space::new())
-                                    .width(8)
-                                    .height(8)
-                                    .style(move |_t| container::Style {
-                                        background: Some(iced::Background::Color(status_dot_color)),
-                                        border: iced::Border {
-                                            radius: 4.0.into(),
-                                            ..Default::default()
-                                        },
-                                        ..Default::default()
-                                    });
+                            ui::status_dot(
+                                status_dot_color,
+                                core_running,
                                 if core_running {
-                                    container(dot)
-                                        .padding(4)
-                                        .style(move |_t| ui::theme::status_ring(status_dot_color))
+                                    ui::i18n::tr(lang, "status_running")
                                 } else {
-                                    container(dot).padding(4)
-                                }
-                            },
-                            text(if core_running {
-                                ui::i18n::tr(lang, "status_running")
-                            } else {
-                                ui::i18n::tr(lang, "status_stopped")
-                            })
-                            .size(ui::theme::TYPE_CAPTION)
-                            .color(if core_running {
-                                ui::theme::SUCCESS
-                            } else {
-                                text_muted
-                            }),
+                                    ui::i18n::tr(lang, "status_stopped")
+                                },
+                                if core_running {
+                                    ui::theme::SUCCESS
+                                } else {
+                                    text_muted
+                                },
+                                ui::theme::TYPE_CAPTION
+                            ),
                             iced::widget::Space::new().width(Length::Fill),
                             text(format!("v{}", env!("CARGO_PKG_VERSION")))
                                 .size(ui::theme::TYPE_CAPTION)

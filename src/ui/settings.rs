@@ -39,6 +39,7 @@ pub fn render<'a>(
             let switch_el: Element<'_, Message> = toggler(is_on)
                 .on_toggle(move |_| msg.clone())
                 .size(20)
+                .style(theme::toggler_style)
                 .into();
                 
             let r: Element<'_, Message> = row![label_el, switch_el]
@@ -574,6 +575,7 @@ pub fn render<'a>(
                                 .size(12)
                                 .color(text_primary)
                         )
+                        .style(theme::scrollbar_style)
                         .height(Length::Fixed(280.0))
                         .width(Length::Fill)
                     )

@@ -469,7 +469,7 @@ pub fn button_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
     move |theme: &iced::Theme, status: button::Status| {
         let dark = is_dark(theme);
         let bg = if is_active {
-            with_alpha(ACCENT_PURPLE, if dark { 0.16 } else { 0.12 })
+            with_alpha(ACCENT_PURPLE, if dark { 0.20 } else { 0.15 })
         } else {
             match status {
                 button::Status::Hovered => {
@@ -551,6 +551,20 @@ pub fn list_item_style(theme: &iced::Theme, is_selected: bool, is_hovered: bool)
     }
 }
 
+pub fn list_item_zebra(theme: &iced::Theme, is_selected: bool, is_hovered: bool, is_zebra: bool) -> container::Style {
+    let mut style = list_item_style(theme, is_selected, is_hovered);
+    if !is_selected && !is_hovered && is_zebra {
+        let dark = is_dark(theme);
+        let bg = if dark {
+            Color::from_rgb(0.08, 0.09, 0.11)
+        } else {
+            Color::from_rgb(0.955, 0.96, 0.975)
+        };
+        style.background = Some(Background::Color(bg));
+    }
+    style
+}
+
 pub fn console_bg(theme: &iced::Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(console_surface(theme))),
@@ -629,7 +643,101 @@ pub fn pick_list(theme: &iced::Theme, status: iced_pick_list::Status) -> iced_pi
     }
 }
 
+pub fn scrollbar_style(theme: &iced::Theme, _status: iced::widget::scrollable::Status) -> iced::widget::scrollable::Style {
+    use iced::widget::scrollable::{Rail, Scroller};
+    let dark = is_dark(theme);
+    let rail_bg = if dark {
+        Color::from_rgba(1.0, 1.0, 1.0, 0.02)
+    } else {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.02)
+    };
+    let scroller_color = if dark {
+        Color::from_rgba(1.0, 1.0, 1.0, 0.25)
+    } else {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.25)
+    };
+    iced::widget::scrollable::Style {
+        container: container::Style::default(),
+        vertical_rail: Rail {
+            background: Some(Background::Color(rail_bg)),
+            border: Border {
+                radius: 3.0.into(),
+                width: 0.0,
+                color: Color::TRANSPARENT,
+            },
+            scroller: Scroller {
+                background: Background::Color(scroller_color),
+                border: Border {
+                    radius: 3.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+            },
+        },
+        horizontal_rail: Rail {
+            background: Some(Background::Color(rail_bg)),
+            border: Border {
+                radius: 3.0.into(),
+                width: 0.0,
+                color: Color::TRANSPARENT,
+            },
+            scroller: Scroller {
+                background: Background::Color(scroller_color),
+                border: Border {
+                    radius: 3.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+            },
+        },
+        gap: None,
+        auto_scroll: iced::widget::scrollable::AutoScroll {
+            background: Background::Color(Color::TRANSPARENT),
+            border: Border::default(),
+            shadow: Shadow::default(),
+            icon: Color::TRANSPARENT,
+        },
+    }
+}
+
+pub fn toggler_style(theme: &iced::Theme, status: iced::widget::toggler::Status) -> iced::widget::toggler::Style {
+    let dark = is_dark(theme);
+    let is_toggled = match status {
+        iced::widget::toggler::Status::Active { is_toggled } => is_toggled,
+        iced::widget::toggler::Status::Hovered { is_toggled } => is_toggled,
+        iced::widget::toggler::Status::Disabled { is_toggled } => is_toggled,
+    };
+    if is_toggled {
+        iced::widget::toggler::Style {
+            background: Background::Color(ACCENT_PURPLE),
+            background_border_color: Color::TRANSPARENT,
+            background_border_width: 0.0,
+            foreground: Background::Color(Color::WHITE),
+            foreground_border_color: Color::TRANSPARENT,
+            foreground_border_width: 0.0,
+            text_color: Some(text_primary(theme)),
+            border_radius: Some(10.0.into()),
+            padding_ratio: 1.0,
+        }
+    } else {
+        let bg_color = if dark { Color::from_rgb(0.18, 0.20, 0.25) } else { Color::from_rgb(0.85, 0.86, 0.90) };
+        let fg_color = if dark { Color::from_rgb(0.40, 0.43, 0.50) } else { Color::from_rgb(0.60, 0.62, 0.68) };
+        iced::widget::toggler::Style {
+            background: Background::Color(bg_color),
+            background_border_color: Color::TRANSPARENT,
+            background_border_width: 0.0,
+            foreground: Background::Color(fg_color),
+            foreground_border_color: Color::TRANSPARENT,
+            foreground_border_width: 0.0,
+            text_color: Some(text_primary(theme)),
+            border_radius: Some(10.0.into()),
+            padding_ratio: 1.0,
+        }
+    }
+}
+
 // ── Contrast / palette unit tests ────────────────────────────────────────────
+
 
 #[cfg(test)]
 mod tests {

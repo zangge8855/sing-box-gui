@@ -189,7 +189,7 @@ pub fn render<'a>(
                     list = list.push(card);
                 }
             }
-            let col = column![page_title, scrollable(list).height(Length::Fill)]
+            let col = column![page_title, scrollable(list).style(theme::scrollbar_style).height(Length::Fill)]
                 .spacing(20)
                 .width(Length::Fill)
                 .height(Length::Fill);
@@ -197,15 +197,25 @@ pub fn render<'a>(
         } else {
             // Desktop: mid-width 5-col (host, net+rule, chains, traffic, close)
             //          wide 7-col table
+            let make_hdr_text = |s: &'static str| {
+                text(tr(lang, s))
+                    .color(text_muted)
+                    .size(13)
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Semibold,
+                        ..Default::default()
+                    })
+            };
+
             let header: Element<'_, Message> = if is_wide {
                 row![
-                    text(tr(lang, "host")).width(Length::FillPortion(3)).color(text_muted).size(13),
-                    text(tr(lang, "col_process")).width(Length::FillPortion(2)).color(text_muted).size(13),
-                    text(tr(lang, "network")).width(Length::FillPortion(1)).color(text_muted).size(13),
-                    text(tr(lang, "chains")).width(Length::FillPortion(2)).color(text_muted).size(13),
-                    text(tr(lang, "rule")).width(Length::FillPortion(1)).color(text_muted).size(13),
-                    text(tr(lang, "download")).width(Length::FillPortion(1)).color(text_muted).size(13),
-                    text(tr(lang, "upload")).width(Length::FillPortion(1)).color(text_muted).size(13),
+                    make_hdr_text("host").width(Length::FillPortion(3)),
+                    make_hdr_text("col_process").width(Length::FillPortion(2)),
+                    make_hdr_text("network").width(Length::FillPortion(1)),
+                    make_hdr_text("chains").width(Length::FillPortion(2)),
+                    make_hdr_text("rule").width(Length::FillPortion(1)),
+                    make_hdr_text("download").width(Length::FillPortion(1)),
+                    make_hdr_text("upload").width(Length::FillPortion(1)),
                     Space::new().width(Length::FillPortion(1))
                 ]
                 .spacing(10)
@@ -213,11 +223,18 @@ pub fn render<'a>(
                 .into()
             } else {
                 row![
-                    text(tr(lang, "host")).width(Length::FillPortion(3)).color(text_muted).size(13),
-                    text(tr(lang, "col_process")).width(Length::FillPortion(2)).color(text_muted).size(13),
-                    text(tr(lang, "network")).width(Length::FillPortion(2)).color(text_muted).size(13),
-                    text(tr(lang, "chains")).width(Length::FillPortion(2)).color(text_muted).size(13),
-                    text("↓ / ↑").width(Length::FillPortion(2)).color(text_muted).size(13),
+                    make_hdr_text("host").width(Length::FillPortion(3)),
+                    make_hdr_text("col_process").width(Length::FillPortion(2)),
+                    make_hdr_text("network").width(Length::FillPortion(2)),
+                    make_hdr_text("chains").width(Length::FillPortion(2)),
+                    text("↓ / ↑")
+                        .color(text_muted)
+                        .size(13)
+                        .font(iced::Font {
+                            weight: iced::font::Weight::Semibold,
+                            ..Default::default()
+                        })
+                        .width(Length::FillPortion(2)),
                     Space::new().width(Length::FillPortion(1))
                 ]
                 .spacing(10)
@@ -315,11 +332,11 @@ pub fn render<'a>(
                         .into()
                     };
                     
-                    // Hover-friendly row surface
+                    // Hover-friendly row surface with zebra pattern
                     list = list.push(
                         container(row_content)
                             .width(Length::Fill)
-                            .style(move |t| theme::list_item_style(t, false, false)),
+                            .style(move |t| theme::list_item_zebra(t, false, false, idx % 2 == 1)),
                     );
                     
                     if idx + 1 < len {
@@ -346,11 +363,11 @@ pub fn render<'a>(
                     },
                     ..Default::default()
                 });
-
+ 
             let list_content: Element<'_, Message> = container(
                 column![
                     header_styled,
-                    scrollable(list).height(Length::Fill)
+                    scrollable(list).style(theme::scrollbar_style).height(Length::Fill)
                 ]
             )
             .style(theme::card_bg)

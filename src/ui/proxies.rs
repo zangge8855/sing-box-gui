@@ -130,7 +130,7 @@ pub fn render<'a>(
                 }
                 
                 container(
-                    scrollable(groups_row).direction(scrollable::Direction::Horizontal(Default::default()))
+                    scrollable(groups_row).style(theme::scrollbar_style).direction(scrollable::Direction::Horizontal(Default::default()))
                 )
                 .width(Length::Fill)
             } else {
@@ -166,7 +166,7 @@ pub fn render<'a>(
                 }
                 
                 container(
-                    scrollable(groups_col).height(Length::Fill)
+                    scrollable(groups_col).style(theme::scrollbar_style).height(Length::Fill)
                 )
                 .width(Length::Fixed(180.0))
                 .height(Length::Fill)
@@ -380,7 +380,7 @@ pub fn render<'a>(
                         }
                         grid_rows = grid_rows.push(current_row);
                     }
-                    scrollable(grid_rows).height(Length::Fill).into()
+                    scrollable(grid_rows).style(theme::scrollbar_style).height(Length::Fill).into()
                 }
             } else {
                 container(
@@ -622,7 +622,7 @@ pub fn render<'a>(
                 grid_rows = grid_rows.push(current_row);
             }
             
-            let grid_content: Element<'_, Message> = scrollable(grid_rows).height(Length::Fill).into();
+            let grid_content: Element<'_, Message> = scrollable(grid_rows).style(theme::scrollbar_style).height(Length::Fill).into();
             
             let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
             

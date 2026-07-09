@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, row, svg, text, Space, responsive, pick_list};
-use iced::{Alignment, Element, Length};
+use iced::{Alignment, Element, Length, Color};
 use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
 use crate::ui::theme;
@@ -49,46 +49,36 @@ pub fn render<'a>(
         
         let text_muted = theme::text_muted(theme);
         
-        // 1. Core Status Card
-        let status_indicator = if core_running {
-            let dot = container(Space::new())
-                .width(8)
-                .height(8)
-                .style(|_t| container::Style {
-                    background: Some(iced::Background::Color(theme::SUCCESS)),
-                    border: iced::Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
+        let make_icon_badge = |unicode: char, color: iced::Color| {
+            container(
+                text(unicode.to_string())
+                    .font(iced::Font::with_name("Material Icons"))
+                    .size(16)
+                    .color(color)
+            )
+            .padding(6)
+            .style(move |t| container::Style {
+                background: Some(iced::Background::Color(theme::with_alpha(color, if theme::is_dark(t) { 0.16 } else { 0.12 }))),
+                border: iced::Border {
+                    radius: theme::RADIUS_SM.into(),
                     ..Default::default()
-                });
-            row![
-                container(dot)
-                    .padding(4)
-                    .style(|_t| theme::status_ring(theme::SUCCESS)),
-                text(tr(lang, "status_running")).color(theme::SUCCESS).size(theme::TYPE_BODY)
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-        } else {
-            // Resting "stopped" is neutral — reserve DANGER for failures
-            row![
-                container(Space::new())
-                    .width(8)
-                    .height(8)
-                    .style(move |_t| container::Style {
-                        background: Some(iced::Background::Color(text_muted)),
-                        border: iced::Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }),
-                text(tr(lang, "status_stopped")).color(text_muted).size(theme::TYPE_BODY)
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
+                },
+                ..Default::default()
+            })
         };
+
+        // 1. Core Status Card
+        let status_indicator = crate::ui::status_dot(
+            if core_running { theme::SUCCESS } else { text_muted },
+            core_running,
+            if core_running {
+                tr(lang, "status_running")
+            } else {
+                tr(lang, "status_stopped")
+            },
+            if core_running { theme::SUCCESS } else { text_muted },
+            theme::TYPE_BODY,
+        );
         
         let core_control_btn = if core_running {
             button(
@@ -113,7 +103,7 @@ pub fn render<'a>(
         let core_status_card = container(
             column![
                 row![
-                    icon('\u{E322}').color(theme::ACCENT_PURPLE),
+                    make_icon_badge('\u{E322}', theme::ACCENT_PURPLE),
                     text(tr(lang, "singbox_core")).color(text_muted).size(13)
                 ]
                 .spacing(8)
@@ -134,41 +124,17 @@ pub fn render<'a>(
         .style(theme::card_bg);
 
         // 2. System Proxy Card
-        let sys_proxy_indicator = if sys_proxy_enabled {
-            row![
-                container(Space::new())
-                    .width(8)
-                    .height(8)
-                    .style(|_t| container::Style {
-                        background: Some(iced::Background::Color(theme::SUCCESS)),
-                        border: iced::Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }),
-                text(tr(lang, "enabled")).color(theme::SUCCESS).size(14)
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-        } else {
-            row![
-                container(Space::new())
-                    .width(8)
-                    .height(8)
-                    .style(move |_t| container::Style {
-                        background: Some(iced::Background::Color(text_muted)),
-                        border: iced::Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }),
-                text(tr(lang, "disabled")).color(text_muted).size(14)
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-        };
+        let sys_proxy_indicator = crate::ui::status_dot(
+            if sys_proxy_enabled { theme::SUCCESS } else { text_muted },
+            sys_proxy_enabled,
+            if sys_proxy_enabled {
+                tr(lang, "enabled")
+            } else {
+                tr(lang, "disabled")
+            },
+            if sys_proxy_enabled { theme::SUCCESS } else { text_muted },
+            14.0,
+        );
         
         let sys_proxy_btn = button(
             row![
@@ -185,7 +151,7 @@ pub fn render<'a>(
         let proxy_status_card = container(
             column![
                 row![
-                    icon('\u{E32A}').color(theme::ACCENT_BLUE),
+                    make_icon_badge('\u{E32A}', theme::ACCENT_BLUE),
                     text(tr(lang, "system_proxy")).color(text_muted).size(13)
                 ]
                 .spacing(8)
@@ -209,10 +175,10 @@ pub fn render<'a>(
         let download_card = container(
             column![
                 row![
-                    icon('\u{E5DB}').color(theme::ACCENT_BLUE),
+                    make_icon_badge('\u{E5DB}', theme::ACCENT_BLUE),
                     text(tr(lang, "download")).color(text_muted).size(13)
                 ]
-                .spacing(6)
+                .spacing(8)
                 .align_y(Alignment::Center),
                 
                 row![
@@ -242,10 +208,10 @@ pub fn render<'a>(
         let upload_card = container(
             column![
                 row![
-                    icon('\u{E5D8}').color(theme::ACCENT_PURPLE),
+                    make_icon_badge('\u{E5D8}', theme::ACCENT_PURPLE),
                     text(tr(lang, "upload")).color(text_muted).size(13)
                 ]
-                .spacing(6)
+                .spacing(8)
                 .align_y(Alignment::Center),
                 
                 row![
@@ -300,7 +266,7 @@ pub fn render<'a>(
         let routing_mode_card = container(
             column![
                 row![
-                    icon('\u{E8B8}').color(theme::ACCENT_BLUE),
+                    make_icon_badge('\u{E8B8}', theme::ACCENT_BLUE),
                     text(tr(lang, "active_mode")).color(text_muted).size(13),
                     Space::new().width(Length::Fill),
                     text(port_text).color(text_muted).size(12)
@@ -443,19 +409,19 @@ pub fn render<'a>(
             .content_fit(iced::ContentFit::Fill);
             
         let legend = row![
-            container(Space::new()).width(10).height(3).style(|_t| container::Style {
+            container(Space::new()).width(12).height(4).style(|_t| container::Style {
                 background: Some(iced::Background::Color(theme::ACCENT_BLUE)),
-                border: iced::Border { radius: 1.0.into(), ..Default::default() },
+                border: iced::Border { radius: 1.5.into(), ..Default::default() },
                 ..Default::default()
             }),
-            text(tr(lang, "chart_legend_down")).color(text_muted).size(11),
+            text(tr(lang, "chart_legend_down")).color(text_muted).size(12),
             Space::new().width(12),
-            container(Space::new()).width(10).height(3).style(|_t| container::Style {
+            container(Space::new()).width(12).height(4).style(|_t| container::Style {
                 background: Some(iced::Background::Color(theme::ACCENT_PURPLE)),
-                border: iced::Border { radius: 1.0.into(), ..Default::default() },
+                border: iced::Border { radius: 1.5.into(), ..Default::default() },
                 ..Default::default()
             }),
-            text(tr(lang, "chart_legend_up")).color(text_muted).size(11),
+            text(tr(lang, "chart_legend_up")).color(text_muted).size(12),
         ]
         .spacing(6)
         .align_y(Alignment::Center);
@@ -516,11 +482,24 @@ pub fn render<'a>(
             .spacing(4)
             .width(Length::Fill)
         )
-        .padding(0)
-        .style(|t, s| {
+        .padding([8, 12])
+        .style(move |t, s| {
             let mut base = theme::button_secondary(t, s);
-            base.background = None;
-            base.border.width = 0.0;
+            if matches!(s, button::Status::Hovered | button::Status::Pressed) {
+                let dark = theme::is_dark(t);
+                let bg_color = if dark {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.04)
+                } else {
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.03)
+                };
+                base.background = Some(iced::Background::Color(bg_color));
+                base.border.color = theme::border_color(t);
+                base.border.width = 1.0;
+            } else {
+                base.background = None;
+                base.border.width = 0.0;
+            }
+            base.border.radius = theme::RADIUS_MD.into();
             base.shadow = iced::Shadow::default();
             base
         })
@@ -542,11 +521,24 @@ pub fn render<'a>(
             .spacing(4)
             .width(Length::Fill)
         )
-        .padding(0)
-        .style(|t, s| {
+        .padding([8, 12])
+        .style(move |t, s| {
             let mut base = theme::button_secondary(t, s);
-            base.background = None;
-            base.border.width = 0.0;
+            if matches!(s, button::Status::Hovered | button::Status::Pressed) {
+                let dark = theme::is_dark(t);
+                let bg_color = if dark {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.04)
+                } else {
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.03)
+                };
+                base.background = Some(iced::Background::Color(bg_color));
+                base.border.color = theme::border_color(t);
+                base.border.width = 1.0;
+            } else {
+                base.background = None;
+                base.border.width = 0.0;
+            }
+            base.border.radius = theme::RADIUS_MD.into();
             base.shadow = iced::Shadow::default();
             base
         })

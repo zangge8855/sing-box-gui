@@ -107,6 +107,7 @@ pub fn render<'a>(
             
             logs_col = logs_col.push(
                 text(line.clone())
+                    .font(iced::Font::MONOSPACE)
                     .color(line_color)
                     .size(12)
                     .width(Length::Fill)
@@ -153,6 +154,7 @@ pub fn render<'a>(
             container(
                 scrollable(logs_col)
                     .id(get_logs_scrollable_id().clone())
+                    .style(theme::scrollbar_style)
                     .height(Length::Fill)
                     .width(Length::Fill)
             )

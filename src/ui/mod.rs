@@ -177,7 +177,7 @@ pub fn page_shell_with_pad<'a>(
         .center_x(Length::Fill)
         .padding(page_pad(is_compact));
 
-    container(scrollable(inner).height(Length::Fill))
+    container(scrollable(inner).style(ui_theme::scrollbar_style).height(Length::Fill))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -300,3 +300,41 @@ pub fn material_icon(unicode: char) -> text::Text<'static> {
         .font(iced::Font::with_name("Material Icons"))
         .size(16)
 }
+
+/// Shared status dot component (used in dashboard and sidebar)
+pub fn status_dot<'a, Message: Clone + 'a>(
+    color: iced::Color,
+    is_active: bool,
+    label: &'a str,
+    text_color: iced::Color,
+    text_size: f32,
+) -> Element<'a, Message> {
+    let dot = container(Space::new())
+        .width(8)
+        .height(8)
+        .style(move |_t| container::Style {
+            background: Some(iced::Background::Color(color)),
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+    let dot_wrapper = if is_active {
+        container(dot)
+            .padding(4)
+            .style(move |_t| ui_theme::status_ring(color))
+    } else {
+        container(dot).padding(4)
+    };
+
+    row![
+        dot_wrapper,
+        text(label).color(text_color).size(text_size)
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
+    .into()
+}
+
