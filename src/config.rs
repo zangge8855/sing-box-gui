@@ -4,9 +4,10 @@ use serde_json::json;
 use crate::state::{GuiConfig, ProxyNode};
 
 pub fn get_app_dir() -> PathBuf {
-    let base = std::env::var("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
+    let base = dirs::data_dir()
+        .or_else(|| dirs::config_dir())
+        .or_else(|| std::env::var("APPDATA").ok().map(PathBuf::from))
+        .unwrap_or_else(|| {
             std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
         });
     let dir = base.join("sing-box-gui");
@@ -14,6 +15,30 @@ pub fn get_app_dir() -> PathBuf {
     let _ = fs::create_dir_all(dir.join("profiles"));
     let _ = fs::create_dir_all(dir.join("bin"));
     dir
+}
+
+/// Parse Clash subscription-userinfo header values.
+/// Example: `upload=123; download=456; total=789; expire=1710000000`
+pub fn parse_subscription_userinfo(header: &str) -> (Option<u64>, Option<u64>, Option<u64>, Option<i64>) {
+    let mut upload = None;
+    let mut download = None;
+    let mut total = None;
+    let mut expire = None;
+    for part in header.split(';') {
+        let part = part.trim();
+        if let Some((k, v)) = part.split_once('=') {
+            let k = k.trim().to_lowercase();
+            let v = v.trim();
+            match k.as_str() {
+                "upload" => upload = v.parse().ok(),
+                "download" => download = v.parse().ok(),
+                "total" => total = v.parse().ok(),
+                "expire" => expire = v.parse().ok(),
+                _ => {}
+            }
+        }
+    }
+    (upload, download, total, expire)
 }
 
 pub fn get_config_path() -> PathBuf {
@@ -1175,7 +1200,8 @@ pub fn convert_clash_to_singbox(
         "experimental": {
             "clash_api": {
                 "external_controller": format!("127.0.0.1:{}", gui_config.api_port),
-                "secret": ""
+                "secret": "",
+                "default_mode": gui_config.routing_mode.as_clash_mode()
             }
         }
     });
@@ -1266,6 +1292,7 @@ pub fn merge_native_json_profile(
     }
     
     // 2. Clash API / experimental settings setup
+    let default_mode = gui_config.routing_mode.as_clash_mode();
     let experimental = config_obj.get_mut("experimental")
         .and_then(|v| v.as_object_mut());
         
@@ -1273,18 +1300,21 @@ pub fn merge_native_json_profile(
         if let Some(clash_api_val) = exp_obj.get_mut("clash_api") {
             if let Some(clash_api_obj) = clash_api_val.as_object_mut() {
                 clash_api_obj.insert("external_controller".to_string(), json!(format!("127.0.0.1:{}", gui_config.api_port)));
+                clash_api_obj.insert("default_mode".to_string(), json!(default_mode));
             }
         } else {
             exp_obj.insert("clash_api".to_string(), json!({
                 "external_controller": format!("127.0.0.1:{}", gui_config.api_port),
-                "secret": ""
+                "secret": "",
+                "default_mode": default_mode
             }));
         }
     } else {
         config_obj.insert("experimental".to_string(), json!({
             "clash_api": {
                 "external_controller": format!("127.0.0.1:{}", gui_config.api_port),
-                "secret": ""
+                "secret": "",
+                "default_mode": default_mode
             }
         }));
     }
@@ -1323,6 +1353,40 @@ pub fn generate_preview_config(gui_config: &GuiConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::RoutingMode;
+
+    #[test]
+    fn test_parse_subscription_userinfo() {
+        let (u, d, t, e) = parse_subscription_userinfo(
+            "upload=100; download=200; total=1000; expire=1710000000",
+        );
+        assert_eq!(u, Some(100));
+        assert_eq!(d, Some(200));
+        assert_eq!(t, Some(1000));
+        assert_eq!(e, Some(1710000000));
+    }
+
+    #[test]
+    fn test_default_mode_in_generated_config() {
+        let mut gui_config = GuiConfig::default();
+        gui_config.routing_mode = RoutingMode::Global;
+        let clash_yaml = r#"
+proxies:
+  - name: "test-node"
+    type: ss
+    server: 1.2.3.4
+    port: 443
+    cipher: aes-256-gcm
+    password: "pass"
+"#;
+        let res = convert_clash_to_singbox(clash_yaml, &gui_config).unwrap();
+        let mode = res
+            .get("experimental")
+            .and_then(|e| e.get("clash_api"))
+            .and_then(|c| c.get("default_mode"))
+            .and_then(|m| m.as_str());
+        assert_eq!(mode, Some("Global"));
+    }
 
     #[test]
     fn test_parse_clash_yaml() {

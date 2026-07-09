@@ -11,8 +11,10 @@ pub fn render<'a>(
     api_port_str: &'a str,
     dns_local_str: &'a str,
     dns_remote_str: &'a str,
+    core_path_str: &'a str,
     core_installed: bool,
     install_message: Option<&'a str>,
+    core_version: Option<&'a str>,
     update_status: &'a UpdateStatus,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
@@ -53,15 +55,16 @@ pub fn render<'a>(
         let settings_card = container(
             column![
                 text(tr(lang, "sys_integration")).color(text_muted).size(13),
-                make_toggle_row("tun_mode_label", gui_config.tun_mode, Message::ToggleTun),
-                make_toggle_row("autostart_label", gui_config.start_on_boot, Message::ToggleAutostart),
-                make_toggle_row("close_core_on_exit_label", gui_config.close_core_on_exit, Message::ToggleCloseCoreOnExit),
-                make_toggle_row("auto_start_core_label", gui_config.auto_start_core, Message::ToggleAutoStartCore),
-                make_toggle_row("auto_sys_proxy_label", gui_config.auto_sys_proxy, Message::ToggleAutoSysProxy),
-                make_toggle_row("tcp_fast_open_label", gui_config.tcp_fast_open, Message::ToggleTcpFastOpen),
-                make_toggle_row("tcp_multipath_label", gui_config.tcp_multipath, Message::ToggleTcpMultipath),
+                column![make_toggle_row("tun_mode_label", gui_config.tun_mode, Message::ToggleTun), text(tr(lang, "help_tun_mode")).color(text_muted).size(11)].spacing(4),
+                column![make_toggle_row("autostart_label", gui_config.start_on_boot, Message::ToggleAutostart), text(tr(lang, "help_autostart")).color(text_muted).size(11)].spacing(4),
+                column![make_toggle_row("close_core_on_exit_label", gui_config.close_core_on_exit, Message::ToggleCloseCoreOnExit), text(tr(lang, "help_close_core")).color(text_muted).size(11)].spacing(4),
+                column![make_toggle_row("auto_start_core_label", gui_config.auto_start_core, Message::ToggleAutoStartCore), text(tr(lang, "help_auto_start_core")).color(text_muted).size(11)].spacing(4),
+                column![make_toggle_row("auto_sys_proxy_label", gui_config.auto_sys_proxy, Message::ToggleAutoSysProxy), text(tr(lang, "help_auto_sys_proxy")).color(text_muted).size(11)].spacing(4),
+                column![make_toggle_row("tcp_fast_open_label", gui_config.tcp_fast_open, Message::ToggleTcpFastOpen), text(tr(lang, "help_tcp_fast_open")).color(text_muted).size(11)].spacing(4),
+                column![make_toggle_row("tcp_multipath_label", gui_config.tcp_multipath, Message::ToggleTcpMultipath), text(tr(lang, "help_tcp_multipath")).color(text_muted).size(11)].spacing(4),
+                column![make_toggle_row("disable_proxy_on_stop_label", gui_config.disable_proxy_on_core_stop, Message::ToggleDisableProxyOnCoreStop), text(tr(lang, "help_disable_proxy_on_stop")).color(text_muted).size(11)].spacing(4),
             ]
-            .spacing(20)
+            .spacing(16)
         )
         .padding(25)
         .width(Length::Fill)
@@ -132,7 +135,11 @@ pub fn render<'a>(
                 ports_row,
                 text(tr(lang, "dns_servers")).color(text_muted).size(13),
                 dns_row,
-                make_toggle_row("fake_ip_label", gui_config.fake_ip, Message::ToggleFakeIp),
+                column![
+                    make_toggle_row("fake_ip_label", gui_config.fake_ip, Message::ToggleFakeIp),
+                    text(tr(lang, "help_fake_ip")).color(text_muted).size(11)
+                ]
+                .spacing(4),
             ]
             .spacing(20)
         )
@@ -205,10 +212,46 @@ pub fn render<'a>(
             .style(theme::card_bg);
         
         // Core Management Card
+        let interval_options = vec![
+            IntervalOption { hours: 0, label: tr(lang, "auto_update_off") },
+            IntervalOption { hours: 6, label: tr(lang, "auto_update_6h") },
+            IntervalOption { hours: 12, label: tr(lang, "auto_update_12h") },
+            IntervalOption { hours: 24, label: tr(lang, "auto_update_24h") },
+        ];
+        let selected_interval = interval_options
+            .iter()
+            .find(|o| o.hours == gui_config.auto_update_interval_hours)
+            .cloned()
+            .or_else(|| interval_options.first().cloned());
+        let interval_picker = pick_list(
+            interval_options,
+            selected_interval,
+            |opt| Message::AutoUpdateIntervalChanged(opt.hours)
+        )
+        .width(Length::Fill)
+        .padding(8)
+        .style(theme::pick_list);
+
+        let auto_update_block = column![
+            text(tr(lang, "auto_update_interval")).color(text_muted).size(12),
+            text(tr(lang, "help_auto_update")).color(text_muted).size(11),
+            interval_picker,
+        ]
+        .spacing(6)
+        .width(Length::Fill);
+
+        let version_label = if let Some(v) = core_version {
+            format!("{}: {}", tr(lang, "core_version_label"), v)
+        } else if core_installed {
+            tr(lang, "core_ver_stable").to_string()
+        } else {
+            String::new()
+        };
+
         let core_downloader = if core_installed {
             row![
                 text(tr(lang, "core_installed_status")).color(theme::SUCCESS).size(13).width(Length::Fill),
-                text(tr(lang, "core_ver_stable")).color(text_muted).size(11)
+                text(version_label).color(text_muted).size(11)
             ]
             .width(Length::Fill)
             .spacing(5)
@@ -251,10 +294,32 @@ pub fn render<'a>(
         .style(theme::button_secondary)
         .on_press(Message::OpenDataDir);
 
+        let core_path_input = text_input(tr(lang, "placeholder_core_path"), core_path_str)
+            .on_input(Message::CorePathChanged)
+            .on_submit(Message::SaveSettings)
+            .padding(10)
+            .style(theme::input_field);
+
+        let clear_core_path_btn = button(text(tr(lang, "btn_clear_core_path")).size(12))
+            .padding([8, 12])
+            .style(theme::button_secondary)
+            .on_press(Message::ClearCorePath);
+
+        let core_path_row = column![
+            text(tr(lang, "core_path_label")).color(text_muted).size(12),
+            text(tr(lang, "help_core_path")).color(text_muted).size(11),
+            core_path_input.width(Length::Fill),
+            clear_core_path_btn,
+        ]
+        .spacing(6)
+        .width(Length::Fill);
+
         let core_mgmt_card = container(
             column![
                 text(tr(lang, "core_components")).color(text_muted).size(13),
                 core_downloader,
+                core_path_row,
+                auto_update_block,
                 open_dir_btn,
                 install_status_row
             ]
@@ -503,6 +568,18 @@ pub struct ThemeOption {
 }
 
 impl std::fmt::Display for ThemeOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntervalOption {
+    pub hours: u32,
+    pub label: &'static str,
+}
+
+impl std::fmt::Display for IntervalOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.label)
     }

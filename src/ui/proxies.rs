@@ -13,6 +13,7 @@ pub fn render<'a>(
     search_query: &'a str,
     proxy_groups: &'a std::collections::HashMap<String, crate::api::ProxyInfo>,
     selected_group: &'a str,
+    core_running: bool,
     theme: &'a iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -26,6 +27,11 @@ pub fn render<'a>(
             button(text(tr(lang, "testing_latency")).size(14))
                 .padding([8, 16])
                 .style(theme::button_secondary)
+        } else if !core_running {
+            button(text(tr(lang, "test_latency")).size(14))
+                .padding([8, 16])
+                .style(theme::button_secondary)
+                .on_press(Message::StartLatencyTest)
         } else {
             button(text(tr(lang, "test_latency")).size(14))
                 .padding([8, 16])
@@ -172,7 +178,7 @@ pub fn render<'a>(
             
             let right_pane_content: Element<'a, Message> = if let Some(ref sub_nodes) = group_info_cloned.all {
                 let is_selector = group_info_cloned.proxy_type.to_lowercase() == "selector";
-                let filtered_sub_nodes: Vec<&String> = if search_query_cloned.trim().is_empty() {
+                let mut filtered_sub_nodes: Vec<&String> = if search_query_cloned.trim().is_empty() {
                     sub_nodes.iter().collect()
                 } else {
                     let q = search_query_cloned.to_lowercase();
@@ -180,6 +186,32 @@ pub fn render<'a>(
                         .filter(|n| n.to_lowercase().contains(&q))
                         .collect()
                 };
+
+                // Sort by latency ascending; missing/timeout last, then name
+                filtered_sub_nodes.sort_by(|a, b| {
+                    let lat = |name: &str| -> Option<u64> {
+                        if let Some(n_info) = proxy_groups_cloned.get(name) {
+                            if let Some(ref hist) = n_info.history {
+                                if let Some(last) = hist.last() {
+                                    if let Some(d) = last.get("delay").and_then(|d| d.as_u64()) {
+                                        if d < 9999 {
+                                            return Some(d);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        nodes_cloned.iter().find(|n| n.name == name).and_then(|n| {
+                            n.latency.filter(|&ms| ms < 9999)
+                        })
+                    };
+                    match (lat(a), lat(b)) {
+                        (Some(la), Some(lb)) => la.cmp(&lb).then_with(|| a.cmp(b)),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => a.cmp(b),
+                    }
+                });
 
                 if filtered_sub_nodes.is_empty() {
                     container(
@@ -445,7 +477,7 @@ pub fn render<'a>(
             return page_shell_fixed(header, content);
         }
         
-        let filtered_nodes: Vec<&ProxyNode> = if search_query.trim().is_empty() {
+        let mut filtered_nodes: Vec<&ProxyNode> = if search_query.trim().is_empty() {
             nodes.iter().collect()
         } else {
             let q = search_query.to_lowercase();
@@ -453,6 +485,15 @@ pub fn render<'a>(
                 .filter(|n| n.name.to_lowercase().contains(&q) || n.server.to_lowercase().contains(&q))
                 .collect()
         };
+
+        filtered_nodes.sort_by(|a, b| {
+            match (a.latency.filter(|&ms| ms < 9999), b.latency.filter(|&ms| ms < 9999)) {
+                (Some(la), Some(lb)) => la.cmp(&lb).then_with(|| a.name.cmp(&b.name)),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.name.cmp(&b.name),
+            }
+        });
         
         if filtered_nodes.is_empty() {
             let content: Element<'a, Message> = container(

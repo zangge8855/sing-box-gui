@@ -169,6 +169,56 @@ pub async fn close_connection(api_port: u16, id: &str) -> Result<(), String> {
     }
 }
 
+/// Switch Clash-compatible routing mode (Rule / Global / Direct).
+pub async fn set_mode(api_port: u16, mode: &str) -> Result<(), String> {
+    let url = format!("http://127.0.0.1:{}/configs", api_port);
+    let client = get_client();
+    let body = serde_json::json!({ "mode": mode });
+    let res = client
+        .patch(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to set mode: {}", e))?;
+
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Server returned status code: {}", res.status()))
+    }
+}
+
+/// Close all active connections via Clash API (DELETE /connections).
+pub async fn close_all_connections(api_port: u16) -> Result<(), String> {
+    let url = format!("http://127.0.0.1:{}/connections", api_port);
+    let client = get_client();
+    let res = client
+        .delete(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to close all connections: {}", e))?;
+
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        // Fallback: close one by one
+        match fetch_connections(api_port).await {
+            Ok(resp) => {
+                let conns = resp.connections.unwrap_or_default();
+                for conn in &conns {
+                    let _ = close_connection(api_port, &conn.id).await;
+                }
+                Ok(())
+            }
+            Err(e) => Err(format!(
+                "Close-all failed (status {}) and fallback failed: {}",
+                res.status(),
+                e
+            )),
+        }
+    }
+}
+
 pub fn spawn_traffic_monitor(
     api_port: u16,
     sender: UnboundedSender<TrafficInfo>,

@@ -285,3 +285,27 @@ pub fn is_core_running() -> bool {
         false
     }
 }
+
+/// Run `sing-box version` and return the first line of stdout.
+pub fn get_core_version(gui_config: &GuiConfig) -> Result<String, String> {
+    let path = get_core_path(gui_config);
+    if !path.exists() {
+        return Err("Core not installed".to_string());
+    }
+    let mut cmd = Command::new(&path);
+    cmd.arg("version");
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to run core version: {}", e))?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let first = text.lines().next().unwrap_or("unknown").trim().to_string();
+    if first.is_empty() {
+        Err("Empty version output".to_string())
+    } else {
+        Ok(first)
+    }
+}

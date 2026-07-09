@@ -25,6 +25,58 @@ impl Default for RoutingMode {
     }
 }
 
+impl RoutingMode {
+    /// Clash-compatible mode string for sing-box clash_api /configs.
+    pub fn as_clash_mode(&self) -> &'static str {
+        match self {
+            RoutingMode::Rule => "Rule",
+            RoutingMode::Global => "Global",
+            RoutingMode::Direct => "Direct",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastKind {
+    Success,
+    Error,
+    Info,
+}
+
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub kind: ToastKind,
+    /// Seconds remaining before auto-dismiss (Tick decrements).
+    pub remaining_secs: u8,
+}
+
+impl Toast {
+    pub fn success(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            kind: ToastKind::Success,
+            remaining_secs: 3,
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            kind: ToastKind::Error,
+            remaining_secs: 5,
+        }
+    }
+
+    pub fn info(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            kind: ToastKind::Info,
+            remaining_secs: 3,
+        }
+    }
+}
+
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +87,75 @@ pub struct Profile {
     pub file_path: String,
     pub is_subscription: bool,
     pub updated_at: String,
+    /// Bytes uploaded (from subscription-userinfo), if known.
+    #[serde(default)]
+    pub traffic_upload: Option<u64>,
+    #[serde(default)]
+    pub traffic_download: Option<u64>,
+    #[serde(default)]
+    pub traffic_total: Option<u64>,
+    /// Unix timestamp expire, if known.
+    #[serde(default)]
+    pub expire_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RuleField {
+    BypassDomains,
+    ProxyDomains,
+    BypassIps,
+    ProxyIps,
+}
+
+impl RuleField {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RuleField::BypassDomains => "bypass_domains",
+            RuleField::ProxyDomains => "proxy_domains",
+            RuleField::BypassIps => "bypass_ips",
+            RuleField::ProxyIps => "proxy_ips",
+        }
+    }
+
+    pub fn is_ip(self) -> bool {
+        matches!(self, RuleField::BypassIps | RuleField::ProxyIps)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogFilter {
+    #[default]
+    All,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogFilter {
+    pub fn matches(self, line: &str) -> bool {
+        let u = line.to_uppercase();
+        match self {
+            LogFilter::All => true,
+            LogFilter::Error => {
+                u.contains("ERROR") || u.contains("FATAL") || u.contains("FAILED")
+            }
+            LogFilter::Warn => {
+                u.contains("WARN")
+                    || u.contains("WARNING")
+                    || u.contains("ERROR")
+                    || u.contains("FATAL")
+                    || u.contains("FAILED")
+            }
+            LogFilter::Info => {
+                u.contains("INFO")
+                    || u.contains("WARN")
+                    || u.contains("WARNING")
+                    || u.contains("ERROR")
+                    || u.contains("FATAL")
+                    || u.contains("FAILED")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -78,6 +199,16 @@ pub struct GuiConfig {
     pub custom_bypass_ips: Vec<String>,
     #[serde(default)]
     pub custom_proxy_ips: Vec<String>,
+    /// Auto-update subscriptions every N hours (0 = disabled).
+    #[serde(default)]
+    pub auto_update_interval_hours: u32,
+    /// When stopping the core, also disable system proxy (default true).
+    #[serde(default = "default_true")]
+    pub disable_proxy_on_core_stop: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -128,6 +259,8 @@ impl Default for GuiConfig {
             custom_proxy_domains: Vec::new(),
             custom_bypass_ips: Vec::new(),
             custom_proxy_ips: Vec::new(),
+            auto_update_interval_hours: 0,
+            disable_proxy_on_core_stop: true,
         }
     }
 }

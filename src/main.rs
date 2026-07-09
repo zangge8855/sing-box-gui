@@ -26,7 +26,7 @@ use std::sync::{Mutex, OnceLock};
 use tokio::sync::mpsc;
 use iced::{Alignment, Element, Length, Subscription, Task, Font};
 use iced::widget::{button, column, container, row, text, responsive};
-use state::{Bandwidth, GuiConfig, Profile, ProxyNode, Tab};
+use state::{Bandwidth, GuiConfig, Profile, ProxyNode, Tab, Toast};
 use message::Message;
 use futures::SinkExt;
 
@@ -107,6 +107,14 @@ struct App {
     last_core_running: bool,
     last_sys_proxy_enabled: bool,
     last_routing_mode: state::RoutingMode,
+
+    toast: Option<Toast>,
+    core_path_input_str: String,
+    log_filter: state::LogFilter,
+    log_search: String,
+    core_version: Option<String>,
+    /// Seconds since last auto-update scan (Tick increments).
+    auto_update_tick_counter: u32,
 }
 
 impl App {
@@ -190,6 +198,9 @@ impl App {
                 .ok()
         });
 
+        let initial_routing_mode = gui_config.routing_mode;
+        let core_path_input_str = gui_config.core_path.clone().unwrap_or_default();
+
         let mut app = Self {
             current_tab: Tab::Dashboard,
             gui_config,
@@ -241,7 +252,13 @@ impl App {
             
             last_core_running: false,
             last_sys_proxy_enabled: false,
-            last_routing_mode: state::RoutingMode::Rule,
+            last_routing_mode: initial_routing_mode,
+            toast: None,
+            core_path_input_str,
+            log_filter: state::LogFilter::All,
+            log_search: String::new(),
+            core_version: None,
+            auto_update_tick_counter: 0,
         };
         
         // Force initialization of log and traffic streams on startup
@@ -258,12 +275,21 @@ impl App {
         // Initial tray menu synchronization
         app.update_tray_menu();
         
-        let mut startup_task = Task::none();
+        let mut tasks = Vec::new();
         if app.gui_config.auto_start_core && app.gui_config.active_profile_id.is_some() && app.core_installed {
-            startup_task = Task::done(Message::ToggleCore);
+            tasks.push(Task::done(Message::ToggleCore));
+        }
+        if app.core_installed {
+            let cfg = app.gui_config.clone();
+            tasks.push(Task::perform(async move {
+                tokio::task::spawn_blocking(move || core::get_core_version(&cfg))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| r)
+            }, Message::CoreVersionFetched));
         }
         
-        (app, startup_task)
+        (app, Task::batch(tasks))
     }
     
     fn reload_active_nodes(&mut self) {
@@ -336,6 +362,22 @@ impl App {
         } else {
             Task::none()
         }
+    }
+
+    fn show_toast(&mut self, toast: Toast) {
+        self.toast = Some(toast);
+    }
+
+    fn toast_success(&mut self, msg: impl Into<String>) {
+        self.show_toast(Toast::success(msg));
+    }
+
+    fn toast_error(&mut self, msg: impl Into<String>) {
+        self.show_toast(Toast::error(msg));
+    }
+
+    fn toast_info(&mut self, msg: impl Into<String>) {
+        self.show_toast(Toast::info(msg));
     }
     
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -460,45 +502,42 @@ impl App {
                 Task::none()
             }
             Message::RulesInputChanged { field, value } => {
-                match field.as_str() {
-                    "bypass_domains" => self.bypass_domain_input = value,
-                    "proxy_domains" => self.proxy_domain_input = value,
-                    "bypass_ips" => self.bypass_ip_input = value,
-                    "proxy_ips" => self.proxy_ip_input = value,
-                    _ => {}
+                match field {
+                    state::RuleField::BypassDomains => self.bypass_domain_input = value,
+                    state::RuleField::ProxyDomains => self.proxy_domain_input = value,
+                    state::RuleField::BypassIps => self.bypass_ip_input = value,
+                    state::RuleField::ProxyIps => self.proxy_ip_input = value,
                 }
                 Task::none()
             }
             Message::AddRule { field } => {
-                let (val, list) = match field.as_str() {
-                    "bypass_domains" => (&mut self.bypass_domain_input, &mut self.gui_config.custom_bypass_domains),
-                    "proxy_domains" => (&mut self.proxy_domain_input, &mut self.gui_config.custom_proxy_domains),
-                    "bypass_ips" => (&mut self.bypass_ip_input, &mut self.gui_config.custom_bypass_ips),
-                    "proxy_ips" => (&mut self.proxy_ip_input, &mut self.gui_config.custom_proxy_ips),
-                    _ => return Task::none(),
+                let (val, list) = match field {
+                    state::RuleField::BypassDomains => (&mut self.bypass_domain_input, &mut self.gui_config.custom_bypass_domains),
+                    state::RuleField::ProxyDomains => (&mut self.proxy_domain_input, &mut self.gui_config.custom_proxy_domains),
+                    state::RuleField::BypassIps => (&mut self.bypass_ip_input, &mut self.gui_config.custom_bypass_ips),
+                    state::RuleField::ProxyIps => (&mut self.proxy_ip_input, &mut self.gui_config.custom_proxy_ips),
                 };
                 let trimmed = val.trim().to_string();
                 if !trimmed.is_empty() && !list.contains(&trimmed) {
                     list.push(trimmed.clone());
                     val.clear();
                     let _ = config::save_gui_config(&self.gui_config);
-                    self.log_lines.push(format!("[GUI] Added custom rule to {}: {}", field, trimmed));
+                    self.log_lines.push(format!("[GUI] Added custom rule to {}: {}", field.as_str(), trimmed));
                     return self.restart_core();
                 }
                 Task::none()
             }
             Message::RemoveRule { field, index } => {
-                let list = match field.as_str() {
-                    "bypass_domains" => &mut self.gui_config.custom_bypass_domains,
-                    "proxy_domains" => &mut self.gui_config.custom_proxy_domains,
-                    "bypass_ips" => &mut self.gui_config.custom_bypass_ips,
-                    "proxy_ips" => &mut self.gui_config.custom_proxy_ips,
-                    _ => return Task::none(),
+                let list = match field {
+                    state::RuleField::BypassDomains => &mut self.gui_config.custom_bypass_domains,
+                    state::RuleField::ProxyDomains => &mut self.gui_config.custom_proxy_domains,
+                    state::RuleField::BypassIps => &mut self.gui_config.custom_bypass_ips,
+                    state::RuleField::ProxyIps => &mut self.gui_config.custom_proxy_ips,
                 };
                 if index < list.len() {
                     let removed = list.remove(index);
                     let _ = config::save_gui_config(&self.gui_config);
-                    self.log_lines.push(format!("[GUI] Removed custom rule from {}: {}", field, removed));
+                    self.log_lines.push(format!("[GUI] Removed custom rule from {}: {}", field.as_str(), removed));
                     return self.restart_core();
                 }
                 Task::none()
@@ -531,10 +570,12 @@ impl App {
                         let _ = cancel_tx.send(());
                     }
                     
-                    // Turn off system proxy automatically
-                    if self.sys_proxy_enabled {
+                    // Turn off system proxy when configured to do so
+                    if self.gui_config.disable_proxy_on_core_stop && self.sys_proxy_enabled {
                         let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
                         self.sys_proxy_enabled = false;
+                        self.gui_config.system_proxy_enabled = false;
+                        let _ = config::save_gui_config(&self.gui_config);
                     }
                     self.log_lines.push("[GUI] sing-box core stopped.".to_string());
                     self.current_speed = Bandwidth::default();
@@ -603,6 +644,96 @@ impl App {
                 self.log_lines.clear();
                 Task::none()
             }
+            Message::LogFilterChanged(filter) => {
+                self.log_filter = filter;
+                Task::none()
+            }
+            Message::LogSearchChanged(q) => {
+                self.log_search = q;
+                Task::none()
+            }
+            Message::ExportLogs => {
+                let lines = self.log_lines.clone();
+                Task::perform(async move {
+                    let path = config::get_app_dir().join(format!(
+                        "logs_export_{}.txt",
+                        chrono::Local::now().format("%Y%m%d_%H%M%S")
+                    ));
+                    std::fs::write(&path, lines.join("\n"))
+                        .map(|_| path.to_string_lossy().to_string())
+                        .map_err(|e| e.to_string())
+                }, Message::LogsExported)
+            }
+            Message::LogsExported(Ok(path)) => {
+                self.log_lines.push(format!("[GUI] Logs exported to {}", path));
+                self.toast_success(if self.gui_config.language == state::Language::Zh {
+                    format!("日志已导出: {}", path)
+                } else {
+                    format!("Logs exported: {}", path)
+                });
+                open_path_in_system(std::path::Path::new(&path));
+                Task::none()
+            }
+            Message::LogsExported(Err(e)) => {
+                self.toast_error(e);
+                Task::none()
+            }
+            Message::CoreVersionFetched(Ok(ver)) => {
+                self.core_version = Some(ver);
+                Task::none()
+            }
+            Message::CoreVersionFetched(Err(_)) => {
+                self.core_version = None;
+                Task::none()
+            }
+            Message::AutoUpdateIntervalChanged(hours) => {
+                self.gui_config.auto_update_interval_hours = hours;
+                let _ = config::save_gui_config(&self.gui_config);
+                Task::none()
+            }
+            Message::ToggleDisableProxyOnCoreStop => {
+                self.gui_config.disable_proxy_on_core_stop = !self.gui_config.disable_proxy_on_core_stop;
+                let _ = config::save_gui_config(&self.gui_config);
+                Task::none()
+            }
+            Message::ImportFromClipboard => {
+                iced::clipboard::read().map(Message::ClipboardContent)
+            }
+            Message::ClipboardContent(Some(text)) => {
+                let text = text.trim().to_string();
+                if text.is_empty() {
+                    self.toast_info(if self.gui_config.language == state::Language::Zh {
+                        "剪贴板为空"
+                    } else {
+                        "Clipboard is empty"
+                    });
+                    return Task::none();
+                }
+                self.url_input = text;
+                Task::done(Message::DownloadSubscription)
+            }
+            Message::ClipboardContent(None) => {
+                self.toast_info(if self.gui_config.language == state::Language::Zh {
+                    "无法读取剪贴板"
+                } else {
+                    "Could not read clipboard"
+                });
+                Task::none()
+            }
+            Message::ImportLocalFile => {
+                Task::perform(async move {
+                    rfd::AsyncFileDialog::new()
+                        .add_filter("Config", &["yaml", "yml", "json", "txt"])
+                        .pick_file()
+                        .await
+                        .map(|f| f.path().to_string_lossy().to_string())
+                }, Message::LocalFilePicked)
+            }
+            Message::LocalFilePicked(Some(path)) => {
+                self.url_input = path;
+                Task::done(Message::DownloadSubscription)
+            }
+            Message::LocalFilePicked(None) => Task::none(),
             Message::TriggerCoreDownload => {
                 let log_tx = get_log_tx();
                 self.log_lines.push("[GUI] Starting sing-box core download...".to_string());
@@ -617,10 +748,23 @@ impl App {
                         self.core_installed = true;
                         self.core_install_msg = None;
                         self.log_lines.push("[GUI] sing-box core downloaded and installed successfully.".to_string());
+                        self.toast_success(if self.gui_config.language == state::Language::Zh {
+                            "内核下载安装成功"
+                        } else {
+                            "Core downloaded successfully"
+                        });
+                        let cfg = self.gui_config.clone();
+                        return Task::perform(async move {
+                            tokio::task::spawn_blocking(move || core::get_core_version(&cfg))
+                                .await
+                                .map_err(|e| e.to_string())
+                                .and_then(|r| r)
+                        }, Message::CoreVersionFetched);
                     }
                     Err(e) => {
                         self.core_install_msg = Some(e.clone());
                         self.log_lines.push(format!("[GUI ERROR] Failed to download core: {}", e));
+                        self.toast_error(e);
                     }
                 }
                 Task::none()
@@ -661,18 +805,41 @@ impl App {
                 self.profile_error = None;
                 let url = self.url_input.clone();
                 
-                Task::perform(download_profile(url), |res| {
-                    match res {
-                        Ok((id, _name)) => Message::SubscriptionDownloaded { id, error: None },
-                        Err(e) => Message::SubscriptionDownloaded { id: String::new(), error: Some(e) },
-                    }
+                Task::perform(download_profile(url), |res| match res {
+                    Ok(r) => Message::SubscriptionDownloaded {
+                        id: r.id,
+                        error: None,
+                        traffic_upload: r.traffic_upload,
+                        traffic_download: r.traffic_download,
+                        traffic_total: r.traffic_total,
+                        expire_at: r.expire_at,
+                        display_name: r.display_name,
+                    },
+                    Err(e) => Message::SubscriptionDownloaded {
+                        id: String::new(),
+                        error: Some(e),
+                        traffic_upload: None,
+                        traffic_download: None,
+                        traffic_total: None,
+                        expire_at: None,
+                        display_name: None,
+                    },
                 })
             }
-            Message::SubscriptionDownloaded { id, error } => {
+            Message::SubscriptionDownloaded {
+                id,
+                error,
+                traffic_upload,
+                traffic_download,
+                traffic_total,
+                expire_at,
+                display_name,
+            } => {
                 self.downloading = false;
                 if let Some(err) = error {
                     self.profile_error = Some(err.clone());
                     self.log_lines.push(format!("[GUI] Download failed: {}", err));
+                    self.toast_error(err);
                 } else {
                     self.profile_error = None;
                     self.url_input.clear();
@@ -680,15 +847,46 @@ impl App {
                     // Reload profiles list safely without overwriting other in-memory settings
                     let loaded = config::load_gui_config();
                     self.gui_config.subscriptions = loaded.subscriptions;
+
+                    // Refresh metadata for the profile that was just written
+                    if !id.is_empty() {
+                        if let Some(p) = self.gui_config.subscriptions.iter_mut().find(|p| p.id == id) {
+                            p.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                            if traffic_upload.is_some() {
+                                p.traffic_upload = traffic_upload;
+                            }
+                            if traffic_download.is_some() {
+                                p.traffic_download = traffic_download;
+                            }
+                            if traffic_total.is_some() {
+                                p.traffic_total = traffic_total;
+                            }
+                            if expire_at.is_some() {
+                                p.expire_at = expire_at;
+                            }
+                            if let Some(ref name) = display_name {
+                                if !name.is_empty() {
+                                    p.name = name.clone();
+                                }
+                            }
+                        }
+                        let _ = config::save_gui_config(&self.gui_config);
+                    }
+
                     self.sync_input_buffers();
                     
                     // If no active profile, select this one
-                    if self.gui_config.active_profile_id.is_none() {
+                    if self.gui_config.active_profile_id.is_none() && !id.is_empty() {
                         self.gui_config.active_profile_id = Some(id.clone());
                         let _ = config::save_gui_config(&self.gui_config);
                         self.reload_active_nodes();
                     }
                     self.log_lines.push("[GUI] Subscription downloaded successfully.".to_string());
+                    self.toast_success(if self.gui_config.language == state::Language::Zh {
+                        "订阅下载/更新成功"
+                    } else {
+                        "Subscription downloaded successfully"
+                    });
                 }
                 Task::none()
             }
@@ -698,15 +896,23 @@ impl App {
                 let _ = config::save_gui_config(&self.gui_config);
                 self.reload_active_nodes();
                 self.log_lines.push("[GUI] Active profile updated.".to_string());
+                self.toast_success(if self.gui_config.language == state::Language::Zh {
+                    "已切换活动订阅"
+                } else {
+                    "Active profile updated"
+                });
                 return self.restart_core();
             }
-            Message::DeleteProfile(id) => {
-                if id.starts_with("confirm:") {
-                    let real_id = id.trim_start_matches("confirm:").to_string();
-                    self.confirm_delete_profile_id = Some(real_id);
-                    Task::none()
-                } else {
-                    self.confirm_delete_profile_id = None;
+            Message::RequestDeleteProfile(id) => {
+                self.confirm_delete_profile_id = Some(id);
+                Task::none()
+            }
+            Message::CancelDeleteProfile => {
+                self.confirm_delete_profile_id = None;
+                Task::none()
+            }
+            Message::ConfirmDeleteProfile => {
+                if let Some(id) = self.confirm_delete_profile_id.take() {
                     let path = config::get_profile_path(&id);
                     let _ = std::fs::remove_file(path);
                     
@@ -717,8 +923,13 @@ impl App {
                     }
                     let _ = config::save_gui_config(&self.gui_config);
                     self.log_lines.push("[GUI] Profile deleted.".to_string());
-                    Task::none()
+                    self.toast_success(if self.gui_config.language == state::Language::Zh {
+                        "订阅已删除"
+                    } else {
+                        "Profile deleted"
+                    });
                 }
+                Task::none()
             }
             Message::SelectNode(tag) => {
                 if !self.core_running {
@@ -751,7 +962,20 @@ impl App {
                 Task::none()
             }
             Message::StartLatencyTest => {
+                if !self.core_running {
+                    self.toast_info(if self.gui_config.language == state::Language::Zh {
+                        "请先启动内核再测速"
+                    } else {
+                        "Start the core before testing latency"
+                    });
+                    return Task::none();
+                }
                 if self.active_profile_nodes.is_empty() {
+                    self.toast_info(if self.gui_config.language == state::Language::Zh {
+                        "当前没有可测速的节点"
+                    } else {
+                        "No nodes available for latency test"
+                    });
                     return Task::none();
                 }
                 self.latency_testing = true;
@@ -782,6 +1006,11 @@ impl App {
             }
             Message::LatencyTestComplete => {
                 self.latency_testing = false;
+                self.toast_success(if self.gui_config.language == state::Language::Zh {
+                    "延迟测试完成"
+                } else {
+                    "Latency test complete"
+                });
                 Task::none()
             }
             Message::UpdateSubscription(id) => {
@@ -795,38 +1024,70 @@ impl App {
                     self.log_lines.push(format!("[GUI] Updating subscription: {}", url));
                     
                     Task::perform(async move {
-                        let client = reqwest::Client::new();
-                        let res = client.get(&url)
-                            .header("User-Agent", "clash")
-                            .send()
-                            .await
-                            .map_err(|e| format!("Download failed: {}", e))?;
-                        if !res.status().is_success() {
-                            return Err(format!("Server returned: {}", res.status()));
-                        }
-                        let content = res.text().await
-                            .map_err(|e| format!("Read failed: {}", e))?;
-                        let _ = crate::config::validate_profile_content(&content)
-                            .map_err(|e| format!("Invalid config: {}", e))?;
-                        let path = crate::config::get_profile_path(&id_clone);
-                        std::fs::write(&path, &content)
-                            .map_err(|e| format!("Save failed: {}", e))?;
-                        Ok::<String, String>(id_clone)
+                        fetch_and_save_subscription(url, id_clone).await
                     }, |res| match res {
-                        Ok(id) => Message::SubscriptionDownloaded { id, error: None },
-                        Err(e) => Message::SubscriptionDownloaded { id: String::new(), error: Some(e) },
+                        Ok(r) => Message::SubscriptionDownloaded {
+                            id: r.id,
+                            error: None,
+                            traffic_upload: r.traffic_upload,
+                            traffic_download: r.traffic_download,
+                            traffic_total: r.traffic_total,
+                            expire_at: r.expire_at,
+                            display_name: r.display_name,
+                        },
+                        Err(e) => Message::SubscriptionDownloaded {
+                            id: String::new(),
+                            error: Some(e),
+                            traffic_upload: None,
+                            traffic_download: None,
+                            traffic_total: None,
+                            expire_at: None,
+                            display_name: None,
+                        },
                     })
                 } else {
                     self.log_lines.push("[GUI] Subscription not found.".to_string());
                     Task::none()
                 }
             }
+            Message::AutoUpdateDue(ids) => {
+                if ids.is_empty() || self.downloading {
+                    return Task::none();
+                }
+                // Chain first due update (others will be picked next scan)
+                if let Some(id) = ids.into_iter().next() {
+                    Task::done(Message::UpdateSubscription(id))
+                } else {
+                    Task::none()
+                }
+            }
             Message::Tick => {
                 self.core_running = core::is_core_running();
                 self.core_installed = core::is_core_installed(&self.gui_config);
-                self.confirm_delete_profile_id = None; // Reset delete confirmation timeout
-                
+
+                // Auto-dismiss toast
+                if let Some(ref mut toast) = self.toast {
+                    if toast.remaining_secs > 0 {
+                        toast.remaining_secs -= 1;
+                    }
+                    if toast.remaining_secs == 0 {
+                        self.toast = None;
+                    }
+                }
+
+                // Auto-update scan every 60 seconds
+                self.auto_update_tick_counter = self.auto_update_tick_counter.saturating_add(1);
                 let mut tasks = Vec::new();
+                if self.auto_update_tick_counter >= 60 {
+                    self.auto_update_tick_counter = 0;
+                    let hours = self.gui_config.auto_update_interval_hours;
+                    if hours > 0 && !self.downloading {
+                        let due = collect_due_subscription_ids(&self.gui_config, hours);
+                        if !due.is_empty() {
+                            tasks.push(Task::done(Message::AutoUpdateDue(due)));
+                        }
+                    }
+                }
                 
                 // Periodically fetch active node and connection totals from Clash API if core is running
                 if self.core_running {
@@ -880,12 +1141,82 @@ impl App {
             }
             Message::ConnectionClosed(Err(e)) => {
                 self.log_lines.push(format!("[GUI] Failed to close connection: {}", e));
+                self.toast_error(e);
+                Task::none()
+            }
+            Message::CloseAllConnections => {
+                if !self.core_running {
+                    self.toast_info(if self.gui_config.language == state::Language::Zh {
+                        "内核未运行"
+                    } else {
+                        "Core is not running"
+                    });
+                    return Task::none();
+                }
+                let api_port = self.gui_config.api_port;
+                Task::perform(async move {
+                    api::close_all_connections(api_port).await
+                }, Message::AllConnectionsClosed)
+            }
+            Message::AllConnectionsClosed(Ok(())) => {
+                self.active_connections.clear();
+                self.log_lines.push("[GUI] Closed all connections.".to_string());
+                self.toast_success(if self.gui_config.language == state::Language::Zh {
+                    "已关闭全部连接"
+                } else {
+                    "All connections closed"
+                });
+                Task::none()
+            }
+            Message::AllConnectionsClosed(Err(e)) => {
+                self.log_lines.push(format!("[GUI] Failed to close all connections: {}", e));
+                self.toast_error(e);
                 Task::none()
             }
             Message::RoutingModeChanged(mode) => {
                 self.gui_config.routing_mode = mode;
                 let _ = config::save_gui_config(&self.gui_config);
-                return self.restart_core();
+                let mode_label = mode.as_clash_mode();
+                if self.core_running {
+                    let api_port = self.gui_config.api_port;
+                    let mode_str = mode_label.to_string();
+                    Task::perform(async move {
+                        api::set_mode(api_port, &mode_str).await.map(|_| mode_str)
+                    }, Message::ModeSet)
+                } else {
+                    self.log_lines.push(format!(
+                        "[GUI] Routing mode set to {} (will apply on next core start).",
+                        mode_label
+                    ));
+                    self.toast_success(if self.gui_config.language == state::Language::Zh {
+                        format!("路由模式已设为 {}（下次启动生效）", mode_label)
+                    } else {
+                        format!("Routing mode set to {} (applies on next start)", mode_label)
+                    });
+                    Task::none()
+                }
+            }
+            Message::ModeSet(Ok(mode)) => {
+                self.log_lines.push(format!("[GUI] Routing mode switched to {}.", mode));
+                self.toast_success(if self.gui_config.language == state::Language::Zh {
+                    format!("路由模式已切换为 {}", mode)
+                } else {
+                    format!("Routing mode: {}", mode)
+                });
+                Task::none()
+            }
+            Message::ModeSet(Err(e)) => {
+                self.log_lines.push(format!("[GUI] Failed to set routing mode: {}", e));
+                self.toast_error(if self.gui_config.language == state::Language::Zh {
+                    format!("切换路由模式失败: {}", e)
+                } else {
+                    format!("Failed to set mode: {}", e)
+                });
+                Task::none()
+            }
+            Message::DismissToast => {
+                self.toast = None;
+                Task::none()
             }
             
             // New type-safe configuration messages
@@ -915,6 +1246,29 @@ impl App {
             Message::DnsRemoteChanged(val) => {
                 self.dns_server_remote_input_str = val.clone();
                 self.gui_config.dns_server_remote = val;
+                Task::none()
+            }
+            Message::CorePathChanged(val) => {
+                self.core_path_input_str = val.clone();
+                let trimmed = val.trim();
+                if trimmed.is_empty() {
+                    self.gui_config.core_path = None;
+                } else {
+                    self.gui_config.core_path = Some(trimmed.to_string());
+                }
+                self.core_installed = core::is_core_installed(&self.gui_config);
+                Task::none()
+            }
+            Message::ClearCorePath => {
+                self.core_path_input_str.clear();
+                self.gui_config.core_path = None;
+                self.core_installed = core::is_core_installed(&self.gui_config);
+                let _ = config::save_gui_config(&self.gui_config);
+                self.toast_info(if self.gui_config.language == state::Language::Zh {
+                    "已恢复默认内核路径"
+                } else {
+                    "Restored default core path"
+                });
                 Task::none()
             }
             Message::ToggleTun => {
@@ -1040,8 +1394,20 @@ impl App {
                 }
                 
                 self.core_install_msg = None;
+                let trimmed_core = self.core_path_input_str.trim();
+                if trimmed_core.is_empty() {
+                    self.gui_config.core_path = None;
+                } else {
+                    self.gui_config.core_path = Some(trimmed_core.to_string());
+                }
+                self.core_installed = core::is_core_installed(&self.gui_config);
                 let _ = config::save_gui_config(&self.gui_config);
                 self.log_lines.push("[GUI] Settings saved and applied successfully.".to_string());
+                self.toast_success(if self.gui_config.language == state::Language::Zh {
+                    "设置已保存并应用"
+                } else {
+                    "Settings saved and applied"
+                });
                 self.restart_core()
             }
             Message::CheckUpdate => {
@@ -1123,6 +1489,13 @@ impl App {
         let editing_profile_id_ref = self.editing_profile_id.as_deref();
         let editing_profile_name_ref = &self.editing_profile_name;
         let editing_profile_url_ref = &self.editing_profile_url;
+        let core_path_input_str_ref = &self.core_path_input_str;
+        let toast_ref = self.toast.as_ref();
+        let log_filter = self.log_filter;
+        let log_search_ref = &self.log_search;
+        let core_version_ref = self.core_version.as_deref();
+        let active_connections_count = self.active_connections.len();
+        let selected_node_for_dash = self.selected_node_tag.as_deref();
 
         let main_content = responsive(move |size| {
             let theme = theme_ref;
@@ -1139,6 +1512,8 @@ impl App {
                     speed_history_ref,
                     total_uploaded,
                     total_downloaded,
+                    selected_node_for_dash,
+                    active_connections_count,
                     theme,
                 ),
                 Tab::Proxies => ui::proxies::render(
@@ -1149,6 +1524,7 @@ impl App {
                     node_search_ref,
                     proxy_groups_ref,
                     selected_group_ref,
+                    core_running,
                     theme,
                 ),
                 Tab::Profiles => ui::profiles::render(
@@ -1176,15 +1552,23 @@ impl App {
                     connections_search_ref,
                     theme,
                 ),
-                Tab::Logs => ui::logs::render(gui_config_ref, log_lines_ref, theme),
+                Tab::Logs => ui::logs::render(
+                    gui_config_ref,
+                    log_lines_ref,
+                    log_filter,
+                    log_search_ref,
+                    theme,
+                ),
                 Tab::Settings => ui::settings::render(
                     gui_config_ref,
                     mixed_port_input_str_ref,
                     api_port_input_str_ref,
                     dns_server_local_input_str_ref,
                     dns_server_remote_input_str_ref,
+                    core_path_input_str_ref,
                     core_installed,
                     core_install_msg_ref,
+                    core_version_ref,
                     update_status_ref,
                     theme,
                 ),
@@ -1245,19 +1629,27 @@ impl App {
                     .on_press(Message::TabChanged(tab))
             };
 
+            let logo_handle = iced::widget::image::Handle::from_bytes(
+                include_bytes!("../assets/logo.jpg").as_slice()
+            );
+            let status_dot_color = if core_running {
+                ui::theme::SUCCESS
+            } else {
+                ui::theme::DANGER
+            };
+
             let sidebar = if is_compact {
                 container(
                     column![
                         column![
-                            text("S")
-                                .size(24)
-                                .font(Font {
-                                    weight: iced::font::Weight::Bold,
-                                    ..Default::default()
-                                })
-                                .color(ui::theme::ACCENT_PURPLE)
-                                .width(Length::Fill)
-                                .align_x(Alignment::Center),
+                            container(
+                                iced::widget::image(logo_handle.clone())
+                                    .width(36)
+                                    .height(36)
+                                    .content_fit(iced::ContentFit::Cover)
+                            )
+                            .width(Length::Fill)
+                            .center_x(Length::Fill),
                             column![
                                 make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
                                 make_tab_btn(Tab::Proxies, '\u{EA0B}', "tab_proxies"),
@@ -1273,8 +1665,21 @@ impl App {
                         .spacing(24)
                         .width(Length::Fill),
                         iced::widget::Space::new().height(Length::Fill),
+                        container(iced::widget::Space::new())
+                            .width(8)
+                            .height(8)
+                            .center_x(Length::Fill)
+                            .style(move |_t| container::Style {
+                                background: Some(iced::Background::Color(status_dot_color)),
+                                border: iced::Border {
+                                    radius: 4.0.into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            }),
                     ]
                     .width(Length::Fill)
+                    .align_x(Alignment::Center)
                 )
                 .width(Length::Fixed(64.0))
                 .height(Length::Fill)
@@ -1285,23 +1690,30 @@ impl App {
                     column![
                         column![
                             row![
-                                text("sing-box")
-                                    .size(24)
-                                    .font(Font {
-                                        weight: iced::font::Weight::Bold,
-                                        ..Default::default()
-                                    })
-                                    .color(ui::theme::ACCENT_PURPLE),
-                                text("GUI")
-                                    .size(12)
-                                    .font(Font {
-                                        weight: iced::font::Weight::Light,
-                                        ..Default::default()
-                                    })
-                                    .color(ui::theme::ACCENT_BLUE),
+                                iced::widget::image(logo_handle)
+                                    .width(32)
+                                    .height(32)
+                                    .content_fit(iced::ContentFit::Cover),
+                                column![
+                                    text("sing-box")
+                                        .size(20)
+                                        .font(Font {
+                                            weight: iced::font::Weight::Bold,
+                                            ..Default::default()
+                                        })
+                                        .color(ui::theme::ACCENT_PURPLE),
+                                    text("GUI")
+                                        .size(11)
+                                        .font(Font {
+                                            weight: iced::font::Weight::Light,
+                                            ..Default::default()
+                                        })
+                                        .color(ui::theme::ACCENT_BLUE),
+                                ]
+                                .spacing(0)
                             ]
-                            .spacing(6)
-                            .align_y(Alignment::End),
+                            .spacing(10)
+                            .align_y(Alignment::Center),
                             column![
                                 make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
                                 make_tab_btn(Tab::Proxies, '\u{EA0B}', "tab_proxies"),
@@ -1314,12 +1726,35 @@ impl App {
                             .spacing(10)
                             .width(Length::Fill)
                         ]
-                        .spacing(36)
+                        .spacing(28)
                         .width(Length::Fill),
                         iced::widget::Space::new().height(Length::Fill),
-                        text(format!("v{}", env!("CARGO_PKG_VERSION")))
-                            .size(12)
-                            .color(text_muted)
+                        row![
+                            container(iced::widget::Space::new())
+                                .width(8)
+                                .height(8)
+                                .style(move |_t| container::Style {
+                                    background: Some(iced::Background::Color(status_dot_color)),
+                                    border: iced::Border {
+                                        radius: 4.0.into(),
+                                        ..Default::default()
+                                    },
+                                    ..Default::default()
+                                }),
+                            text(if core_running {
+                                ui::i18n::tr(lang, "status_running")
+                            } else {
+                                ui::i18n::tr(lang, "status_stopped")
+                            })
+                            .size(11)
+                            .color(text_muted),
+                            iced::widget::Space::new().width(Length::Fill),
+                            text(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                .size(11)
+                                .color(text_muted)
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center)
                     ]
                 )
                 .width(Length::Fixed(240.0))
@@ -1328,7 +1763,35 @@ impl App {
                 .style(ui::theme::sidebar_bg)
             };
 
-            let main_layout = container(content)
+            let main_body = if let Some(toast) = toast_ref {
+                let toast_el = ui::toast::render(toast, theme);
+                iced::widget::stack![
+                    container(content)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                    container(
+                        column![
+                            row![
+                                iced::widget::Space::new().width(Length::Fill),
+                                toast_el,
+                            ]
+                            .padding([16, 20])
+                        ]
+                        .width(Length::Fill)
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::Start)
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+            } else {
+                content
+            };
+
+            let main_layout = container(main_body)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(ui::theme::main_bg);
@@ -1465,49 +1928,37 @@ fn load_icon_safe() -> Option<tray_icon::Icon> {
     }
 }
 
-// Download subscription configuration task implementation
-async fn download_profile(url: String) -> Result<(String, String), String> {
-    let content = if std::path::Path::new(&url).exists() {
-        std::fs::read_to_string(&url)
-            .map_err(|e| format!("Failed to read local file: {}", e))?
-    } else {
-        let client = reqwest::Client::new();
-        let res = client.get(&url)
-            .header("User-Agent", "clash")
-            .send()
-            .await
-            .map_err(|e| format!("Download request failed: {}", e))?;
-            
-        if !res.status().is_success() {
-            return Err(format!("Download failed with status: {}", res.status()));
-        }
-        
-        res.text()
-            .await
-            .map_err(|e| format!("Failed to read content: {}", e))?
-    };
-        
-    // Verify profile content is valid (either Sing-Box JSON or Clash YAML)
+struct ProfileFetchResult {
+    id: String,
+    display_name: Option<String>,
+    traffic_upload: Option<u64>,
+    traffic_download: Option<u64>,
+    traffic_total: Option<u64>,
+    expire_at: Option<i64>,
+}
+
+/// Download or open a profile URL/path, save under a new id, register in gui config.
+async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
+    let (content, meta) = load_profile_content(&url).await?;
     config::validate_profile_content(&content)?;
-        
-    // Generate an ID and Name
+
     let id = chrono::Utc::now().timestamp_millis().to_string();
-    let name = if std::path::Path::new(&url).exists() {
-        std::path::Path::new(&url)
-            .file_name()
-            .and_then(|f| f.to_str())
-            .unwrap_or("Local_Config")
-            .to_string()
-    } else {
-        format!("Sub_{}", &id[id.len()-6..])
-    };
-    
-    // Save raw YAML/JSON to profile directory
+    let name = meta.display_name.clone().unwrap_or_else(|| {
+        if std::path::Path::new(&url).exists() {
+            std::path::Path::new(&url)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("Local_Config")
+                .to_string()
+        } else {
+            format!("Sub_{}", &id[id.len().saturating_sub(6)..])
+        }
+    });
+
     let path = config::get_profile_path(&id);
     std::fs::write(&path, &content)
         .map_err(|e| format!("Failed to save profile: {}", e))?;
-        
-    // Add to configurations registry list
+
     let mut config = config::load_gui_config();
     config.subscriptions.push(Profile {
         id: id.clone(),
@@ -1516,10 +1967,138 @@ async fn download_profile(url: String) -> Result<(String, String), String> {
         file_path: path.to_string_lossy().to_string(),
         is_subscription: true,
         updated_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        traffic_upload: meta.traffic_upload,
+        traffic_download: meta.traffic_download,
+        traffic_total: meta.traffic_total,
+        expire_at: meta.expire_at,
     });
-    
     let _ = config::save_gui_config(&config);
-    Ok((id, name))
+
+    Ok(ProfileFetchResult {
+        id,
+        display_name: Some(name),
+        traffic_upload: meta.traffic_upload,
+        traffic_download: meta.traffic_download,
+        traffic_total: meta.traffic_total,
+        expire_at: meta.expire_at,
+    })
+}
+
+/// Update an existing profile id from its URL.
+async fn fetch_and_save_subscription(url: String, id: String) -> Result<ProfileFetchResult, String> {
+    let (content, meta) = load_profile_content(&url).await?;
+    config::validate_profile_content(&content)?;
+    let path = config::get_profile_path(&id);
+    std::fs::write(&path, &content)
+        .map_err(|e| format!("Save failed: {}", e))?;
+    Ok(ProfileFetchResult {
+        id,
+        display_name: meta.display_name,
+        traffic_upload: meta.traffic_upload,
+        traffic_download: meta.traffic_download,
+        traffic_total: meta.traffic_total,
+        expire_at: meta.expire_at,
+    })
+}
+
+struct ProfileContentMeta {
+    display_name: Option<String>,
+    traffic_upload: Option<u64>,
+    traffic_download: Option<u64>,
+    traffic_total: Option<u64>,
+    expire_at: Option<i64>,
+}
+
+async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta), String> {
+    let mut meta = ProfileContentMeta {
+        display_name: None,
+        traffic_upload: None,
+        traffic_download: None,
+        traffic_total: None,
+        expire_at: None,
+    };
+
+    if std::path::Path::new(url).exists() {
+        let content = std::fs::read_to_string(url)
+            .map_err(|e| format!("Failed to read local file: {}", e))?;
+        return Ok((content, meta));
+    }
+
+    let client = reqwest::Client::new();
+    let res = client
+        .get(url)
+        .header("User-Agent", "clash")
+        .send()
+        .await
+        .map_err(|e| format!("Download request failed: {}", e))?;
+
+    if !res.status().is_success() {
+        return Err(format!("Download failed with status: {}", res.status()));
+    }
+
+    if let Some(userinfo) = res.headers().get("subscription-userinfo") {
+        if let Ok(s) = userinfo.to_str() {
+            let (u, d, t, e) = config::parse_subscription_userinfo(s);
+            meta.traffic_upload = u;
+            meta.traffic_download = d;
+            meta.traffic_total = t;
+            meta.expire_at = e;
+        }
+    }
+
+    // Content-Disposition filename or content-disposition profile name
+    if let Some(cd) = res.headers().get(reqwest::header::CONTENT_DISPOSITION) {
+        if let Ok(s) = cd.to_str() {
+            if let Some(name) = parse_content_disposition_filename(s) {
+                meta.display_name = Some(name);
+            }
+        }
+    }
+
+    let content = res
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read content: {}", e))?;
+    Ok((content, meta))
+}
+
+fn parse_content_disposition_filename(header: &str) -> Option<String> {
+    // filename="xxx" or filename*=UTF-8''xxx
+    for part in header.split(';') {
+        let part = part.trim();
+        if let Some(rest) = part.strip_prefix("filename*=") {
+            let rest = rest.trim_matches('"');
+            if let Some(encoded) = rest.split("''").nth(1) {
+                return Some(urlencoding::decode(encoded).ok()?.into_owned());
+            }
+        }
+        if let Some(rest) = part.strip_prefix("filename=") {
+            return Some(rest.trim_matches('"').to_string());
+        }
+    }
+    None
+}
+
+fn collect_due_subscription_ids(gui_config: &GuiConfig, hours: u32) -> Vec<String> {
+    let threshold = chrono::Duration::hours(hours as i64);
+    let now = chrono::Local::now();
+    let mut due = Vec::new();
+    for p in &gui_config.subscriptions {
+        if p.url.is_empty() || std::path::Path::new(&p.url).exists() {
+            continue; // skip pure local files without remote URL
+        }
+        if p.url.starts_with("http://") || p.url.starts_with("https://") {
+            let stale = chrono::NaiveDateTime::parse_from_str(&p.updated_at, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .and_then(|ndt| ndt.and_local_timezone(chrono::Local).single())
+                .map(|dt| now.signed_duration_since(dt) >= threshold)
+                .unwrap_or(true);
+            if stale {
+                due.push(p.id.clone());
+            }
+        }
+    }
+    due
 }
 
 fn set_windows_autostart(enable: bool) -> Result<(), String> {

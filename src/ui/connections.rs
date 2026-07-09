@@ -4,18 +4,7 @@ use crate::message::Message;
 use crate::ui::theme;
 use crate::api::Connection;
 use crate::ui::page_header;
-
-fn format_size(bytes: u64) -> String {
-    if bytes < 1024 {
-        format!("{} B", bytes)
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else if bytes < 1024 * 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    }
-}
+use crate::ui::util::format_size;
 
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
@@ -56,6 +45,34 @@ pub fn render<'a>(
                 .collect()
         };
         
+        let search_input = text_input(tr(lang, "placeholder_connections_search"), &query_str)
+            .on_input(Message::ConnectionsSearchChanged)
+            .padding(8)
+            .width(if is_compact { Length::Fill } else { Length::Fixed(280.0) })
+            .style(theme::input_field);
+
+        let close_all_btn = button(text(tr(lang, "close_all_conn")).size(13))
+            .padding([8, 14])
+            .style(theme::button_danger)
+            .on_press(Message::CloseAllConnections);
+
+        let header_actions: Element<'_, Message> = if is_compact {
+            column![
+                search_input.width(Length::Fill),
+                close_all_btn.width(Length::Fill)
+            ]
+            .spacing(8)
+            .width(Length::Fill)
+            .into()
+        } else {
+            row![search_input, close_all_btn]
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .into()
+        };
+
+        let page_title = page_header("tab_connections", lang, Some(header_actions), theme, is_compact);
+
         if is_compact {
             // Mobile / Compact Layout: List of clean Connection Cards
             let mut list = column!().spacing(12);
@@ -167,7 +184,16 @@ pub fn render<'a>(
                     list = list.push(card);
                 }
             }
-            scrollable(list).height(Length::Fill).into()
+            let col = column![page_title, scrollable(list).height(Length::Fill)]
+                .spacing(20)
+                .width(Length::Fill)
+                .height(Length::Fill);
+            container(col)
+                .width(Length::Fill)
+                .max_width(1200.0)
+                .center_x(Length::Fill)
+                .padding(crate::ui::page_padding())
+                .into()
         } else {
             // Desktop Layout: 7-Column clean aligned table
             let header = row![
@@ -285,15 +311,7 @@ pub fn render<'a>(
             .width(Length::Fill)
             .into();
             
-            let search_input = text_input(tr(lang, "placeholder_connections_search"), search_query)
-                .on_input(Message::ConnectionsSearchChanged)
-                .padding(8)
-                .width(if is_compact { Length::Fill } else { Length::Fixed(280.0) })
-                .style(theme::input_field);
-
-            let header = page_header("tab_connections", lang, Some(search_input.into()), theme, is_compact);
-            
-            let col = column![header, list_content].spacing(20).width(Length::Fill).height(Length::Fill);
+            let col = column![page_title, list_content].spacing(20).width(Length::Fill).height(Length::Fill);
 
             container(col)
                 .width(Length::Fill)

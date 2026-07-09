@@ -7,6 +7,8 @@ pub mod settings;
 pub mod i18n;
 pub mod connections;
 pub mod rules;
+pub mod toast;
+pub mod util;
 
 use iced::widget::{column, container, row, text, Space};
 use iced::{Alignment, Element, Length};

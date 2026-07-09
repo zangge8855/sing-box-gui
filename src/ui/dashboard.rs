@@ -4,6 +4,7 @@ use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
 use crate::ui::theme;
 use crate::ui::page_header;
+use crate::ui::util::{format_size_precise as format_size, format_speed};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoutingModeOption {
@@ -20,22 +21,6 @@ fn icon(unicode: char) -> text::Text<'static> {
     text(unicode.to_string()).font(iced::Font::with_name("Material Icons")).size(16)
 }
 
-fn format_size(bytes: u64) -> String {
-    if bytes < 1024 {
-        format!("{:.2} B", bytes as f64)
-    } else if bytes < 1024 * 1024 {
-        format!("{:.2} KB", bytes as f64 / 1024.0)
-    } else if bytes < 1024 * 1024 * 1024 {
-        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    }
-}
-
-fn format_speed(bytes: u64) -> String {
-    format!("{}/s", format_size(bytes))
-}
-
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
     core_running: bool,
@@ -44,6 +29,8 @@ pub fn render<'a>(
     speed_history: &[(u64, u64)],
     total_uploaded: u64,
     total_downloaded: u64,
+    selected_node: Option<&'a str>,
+    active_connections: usize,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -466,13 +453,83 @@ pub fn render<'a>(
         .height(if is_compact { Length::Fixed(220.0) } else { Length::Fixed(240.0) })
         .style(theme::card_bg);
 
-        let content_col = column![
+        // Summary: current node + active connections
+        let node_label = selected_node.unwrap_or_else(|| {
+            if gui_config.active_profile_id.is_none() {
+                tr(lang, "dash_no_profile")
+            } else {
+                tr(lang, "dash_no_node")
+            }
+        });
+        let summary_card = container(
+            row![
+                column![
+                    text(tr(lang, "dash_current_node")).color(text_muted).size(12),
+                    text(node_label).color(theme::text_primary(theme)).size(15).font(iced::Font {
+                        weight: iced::font::Weight::Medium,
+                        ..Default::default()
+                    }),
+                ]
+                .spacing(4)
+                .width(Length::FillPortion(2)),
+                column![
+                    text(tr(lang, "dash_connections")).color(text_muted).size(12),
+                    text(format!("{}", active_connections))
+                        .color(theme::ACCENT_BLUE)
+                        .size(18)
+                        .font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            family: iced::font::Family::Monospace,
+                            ..Default::default()
+                        }),
+                ]
+                .spacing(4)
+                .width(Length::FillPortion(1)),
+            ]
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .style(theme::card_bg);
+
+        let empty_hint: Option<Element<'_, Message>> = if gui_config.active_profile_id.is_none() {
+            Some(
+                container(
+                    column![
+                        text(tr(lang, "empty_dashboard_title")).color(theme::text_primary(theme)).size(15),
+                        text(tr(lang, "empty_dashboard_desc")).color(text_muted).size(13),
+                        button(text(tr(lang, "btn_goto_profiles")).size(13))
+                            .padding([8, 16])
+                            .style(theme::button_primary)
+                            .on_press(Message::TabChanged(crate::state::Tab::Profiles)),
+                    ]
+                    .spacing(10)
+                    .align_x(Alignment::Center)
+                )
+                .padding(24)
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+                .style(theme::status_card)
+                .into()
+            )
+        } else {
+            None
+        };
+
+        let mut content_col = column![
             control_row,
+            summary_card,
             traffic_row,
             chart_card
         ]
         .spacing(20)
         .width(Length::Fill);
+
+        if let Some(hint) = empty_hint {
+            content_col = content_col.push(hint);
+        }
         
         let header = page_header("tab_dashboard", lang, None, theme, is_compact);
         

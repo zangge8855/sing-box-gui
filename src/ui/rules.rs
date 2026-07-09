@@ -1,7 +1,7 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, responsive};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
-use crate::state::GuiConfig;
+use crate::state::{GuiConfig, RuleField};
 use crate::ui::theme;
 use crate::ui::page_header;
 
@@ -22,11 +22,26 @@ pub fn render<'a>(
         let is_compact = size.width < 800.0;
         let theme = &theme_cloned;
         let text_primary = theme::text_primary(theme);
+        let text_muted = theme::text_muted(theme);
+
+        let builtin_banner = container(
+            column![
+                text(tr(lang, "rules_builtin_title")).color(text_primary).size(14).font(iced::Font {
+                    weight: iced::font::Weight::Bold,
+                    ..Default::default()
+                }),
+                text(tr(lang, "rules_builtin_desc")).color(text_muted).size(12),
+            ]
+            .spacing(6)
+        )
+        .padding(16)
+        .width(Length::Fill)
+        .style(theme::status_card);
 
         let make_rule_section = |
             title_key: &'static str,
             input_value: &'a str,
-            field_name: &'static str,
+            field: RuleField,
             items: &'a [String],
         | {
             let mut list_col = Column::new().spacing(6);
@@ -36,7 +51,7 @@ pub fn render<'a>(
                     .style(theme::button_danger)
                     .padding([3, 6])
                     .on_press(Message::RemoveRule {
-                        field: field_name.to_string(),
+                        field,
                         index: idx,
                     });
                     
@@ -69,7 +84,7 @@ pub fn render<'a>(
                     .into()
             };
             
-            let placeholder = if field_name.contains("ip") {
+            let placeholder = if field.is_ip() {
                 tr(lang, "placeholder_ip")
             } else {
                 tr(lang, "placeholder_domain")
@@ -77,21 +92,17 @@ pub fn render<'a>(
             
             let input_box = text_input(placeholder, input_value)
                 .on_input(move |s| Message::RulesInputChanged {
-                    field: field_name.to_string(),
+                    field,
                     value: s,
                 })
-                .on_submit(Message::AddRule {
-                    field: field_name.to_string(),
-                })
+                .on_submit(Message::AddRule { field })
                 .padding(10)
                 .style(theme::input_field);
                 
             let add_btn = button(text("+").size(16))
                 .style(theme::button_primary)
                 .padding([9, 14])
-                .on_press(Message::AddRule {
-                    field: field_name.to_string(),
-                });
+                .on_press(Message::AddRule { field });
                 
             container(
                 column![
@@ -113,13 +124,13 @@ pub fn render<'a>(
             make_rule_section(
                 "rules_bypass_domains",
                 bypass_domain_input,
-                "bypass_domains",
+                RuleField::BypassDomains,
                 &gui_config.custom_bypass_domains,
             ),
             make_rule_section(
                 "rules_bypass_ips",
                 bypass_ip_input,
-                "bypass_ips",
+                RuleField::BypassIps,
                 &gui_config.custom_bypass_ips,
             )
         ]
@@ -130,13 +141,13 @@ pub fn render<'a>(
             make_rule_section(
                 "rules_proxy_domains",
                 proxy_domain_input,
-                "proxy_domains",
+                RuleField::ProxyDomains,
                 &gui_config.custom_proxy_domains,
             ),
             make_rule_section(
                 "rules_proxy_ips",
                 proxy_ip_input,
-                "proxy_ips",
+                RuleField::ProxyIps,
                 &gui_config.custom_proxy_ips,
             )
         ]
@@ -151,7 +162,7 @@ pub fn render<'a>(
         
         let header = page_header("tab_rules", lang, None, theme, is_compact);
         
-        let col = column![header, rules_layout].spacing(20).width(Length::Fill);
+        let col = column![header, builtin_banner, rules_layout].spacing(20).width(Length::Fill);
 
         let inner = container(col)
             .width(Length::Fill)

@@ -66,6 +66,24 @@ pub fn render<'a>(
         .padding([12, 24])
         .style(theme::button_secondary)
         .on_press(Message::OpenProfilesFolder);
+
+        let clipboard_btn = button(
+            text(tr(lang, "btn_import_clipboard"))
+                .size(14)
+                .align_x(Alignment::Center)
+        )
+        .padding([12, 16])
+        .style(theme::button_secondary)
+        .on_press(Message::ImportFromClipboard);
+
+        let file_btn = button(
+            text(tr(lang, "btn_import_file"))
+                .size(14)
+                .align_x(Alignment::Center)
+        )
+        .padding([12, 16])
+        .style(theme::button_secondary)
+        .on_press(Message::ImportLocalFile);
         
         let form_layout: Element<'a, Message> = if is_compact {
             column![
@@ -74,20 +92,37 @@ pub fn render<'a>(
                     download_btn.width(Length::Fill),
                     open_folder_btn.width(Length::Fill)
                 ]
-                .spacing(15)
+                .spacing(12)
+                .width(Length::Fill),
+                row![
+                    clipboard_btn.width(Length::Fill),
+                    file_btn.width(Length::Fill)
+                ]
+                .spacing(12)
                 .width(Length::Fill)
             ]
             .spacing(12)
             .width(Length::Fill)
             .into()
         } else {
-            row![
-                input,
-                download_btn,
-                open_folder_btn
+            column![
+                row![
+                    input,
+                    download_btn,
+                    open_folder_btn
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
+                row![
+                    clipboard_btn,
+                    file_btn,
+                    iced::widget::Space::new().width(Length::Fill),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center)
             ]
-            .spacing(15)
-            .align_y(Alignment::Center)
+            .spacing(10)
             .width(Length::Fill)
             .into()
         };
@@ -134,12 +169,31 @@ pub fn render<'a>(
         // Grid system for profiles list (Responsive Grid)
         let grid_content: Element<'a, Message> = if gui_config.subscriptions.is_empty() {
             container(
-                text(tr(lang, "no_profiles"))
-                    .color(text_muted)
-                    .size(14)
+                column![
+                    text(tr(lang, "no_profiles"))
+                        .color(text_muted)
+                        .size(14),
+                    text(tr(lang, "empty_profiles_hint"))
+                        .color(theme::text_tertiary(theme))
+                        .size(12),
+                    row![
+                        button(text(tr(lang, "btn_import_clipboard")).size(13))
+                            .padding([8, 14])
+                            .style(theme::button_primary)
+                            .on_press(Message::ImportFromClipboard),
+                        button(text(tr(lang, "btn_import_file")).size(13))
+                            .padding([8, 14])
+                            .style(theme::button_secondary)
+                            .on_press(Message::ImportLocalFile),
+                    ]
+                    .spacing(10)
+                ]
+                .spacing(12)
+                .align_x(Alignment::Center)
             )
-            .padding(25)
+            .padding(40)
             .width(Length::Fill)
+            .center_x(Length::Fill)
             .style(theme::card_bg)
             .into()
         } else {
@@ -159,16 +213,26 @@ pub fn render<'a>(
                         .on_press(Message::UpdateSubscription(profile.id.clone()))
                 };
           
-                let delete_btn = if confirm_delete_id == Some(profile.id.as_str()) {
-                    button(text(tr(lang, "confirm_delete_profile")).size(12))
-                        .padding([5, 10])
-                        .style(theme::button_danger)
-                        .on_press(Message::DeleteProfile(profile.id.clone()))
+                let delete_actions: Element<'a, Message> = if confirm_delete_id == Some(profile.id.as_str()) {
+                    row![
+                        button(text(tr(lang, "btn_confirm_delete")).size(12))
+                            .padding([5, 10])
+                            .style(theme::button_danger)
+                            .on_press(Message::ConfirmDeleteProfile),
+                        button(text(tr(lang, "btn_cancel")).size(12))
+                            .padding([5, 10])
+                            .style(theme::button_secondary)
+                            .on_press(Message::CancelDeleteProfile),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .into()
                 } else {
                     button(text(tr(lang, "btn_delete")).size(12))
                         .padding([5, 10])
                         .style(theme::button_secondary)
-                        .on_press(Message::DeleteProfile(format!("confirm:{}", profile.id)))
+                        .on_press(Message::RequestDeleteProfile(profile.id.clone()))
+                        .into()
                 };
                     
                 let edit_btn = button(text(tr(lang, "btn_edit")).size(12))
@@ -209,7 +273,7 @@ pub fn render<'a>(
                     .push(update_btn)
                     .push(edit_url_btn)
                     .push(edit_btn)
-                    .push(delete_btn);
+                    .push(delete_actions);
                     
                 let masked_url = mask_sensitive_url(&profile.url);
                 let display_url = if masked_url.chars().count() > 40 {
@@ -272,20 +336,51 @@ pub fn render<'a>(
                         .width(Length::Fill)
                         .style(theme::card_selected)
                 } else {
+                    let traffic_line = match (profile.traffic_upload, profile.traffic_download) {
+                        (Some(u), Some(d)) => {
+                            let total = profile.traffic_total.unwrap_or(0);
+                            Some(text(crate::ui::util::format_traffic_usage(u, d, total))
+                                .color(theme::ACCENT_BLUE)
+                                .size(11))
+                        }
+                        _ => None,
+                    };
+
+                    let expire_line = profile.expire_at.and_then(|ts| {
+                        chrono::DateTime::from_timestamp(ts, 0).map(|dt| {
+                            text(format!(
+                                "{}: {}",
+                                tr(lang, "expire_at_label"),
+                                dt.with_timezone(&chrono::Local).format("%Y-%m-%d")
+                            ))
+                            .color(text_muted)
+                            .size(11)
+                        })
+                    });
+
+                    let mut meta_col = column![
+                        text(&profile.name)
+                            .color(text_primary)
+                            .size(15)
+                            .font(iced::Font {
+                                weight: iced::font::Weight::Bold,
+                                ..Default::default()
+                            }),
+                        text(display_url).color(text_muted).size(12),
+                        text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(text_muted).size(11),
+                    ]
+                    .spacing(6)
+                    .width(Length::Fill);
+
+                    if let Some(t) = traffic_line {
+                        meta_col = meta_col.push(t);
+                    }
+                    if let Some(e) = expire_line {
+                        meta_col = meta_col.push(e);
+                    }
+
                     let card_layout = column![
-                        column![
-                            text(&profile.name)
-                                .color(text_primary)
-                                .size(15)
-                                .font(iced::Font {
-                                    weight: iced::font::Weight::Bold,
-                                    ..Default::default()
-                                }),
-                            text(display_url).color(text_muted).size(12),
-                            text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(text_muted).size(11),
-                        ]
-                        .spacing(6)
-                        .width(Length::Fill),
+                        meta_col,
                         row![
                             badge_or_spacer,
                             iced::widget::Space::new().width(Length::Fill),
