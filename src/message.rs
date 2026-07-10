@@ -102,4 +102,5 @@ pub enum Message {
     LocalFilePicked(Option<String>),
     ToggleConfigPreview,
     ToggleProfileMore(String),
+    CoreLivenessChecked(bool),
 }

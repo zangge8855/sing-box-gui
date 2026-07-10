@@ -1149,40 +1149,13 @@ impl App {
                 self.kick_pending_auto_update()
             }
             Message::Tick => {
-                let was_running = self.core_running;
                 // Lock-free fast path avoids contending on CURRENT_PROCESS while
                 // `start_core` is mid-grace (holds the lock up to STARTUP_GRACE_MS).
-                // The cached flag is updated by every authoritative check below.
-                //
-                // Every ~5 Ticks (5s) we also run an authoritative check so that
-                // a core that died without the fast flag being refreshed is picked
-                // up and surfaced to the user via the unexpected-exit path.
-                self.core_running = if self.core_running && self.tick_authority_counter % 5 == 0 {
-                    core::is_core_running()
-                } else {
-                    core::is_core_running_fast()
-                };
-                self.core_installed = core::is_core_installed(&self.gui_config);
+                self.core_running = core::is_core_running_fast();
+                
+                let check_authoritative = self.core_running && self.tick_authority_counter % 5 == 0;
                 self.tick_authority_counter =
                     self.tick_authority_counter.wrapping_add(1);
-
-                // Core died after a successful start — never silent "auto-stop".
-                if was_running && !self.core_running {
-                    if let Some(msg) = core::take_unexpected_core_exit() {
-                        self.log_lines.push(format!("[GUI] {}", msg));
-                        self.toast_error(msg);
-                        if self.gui_config.disable_proxy_on_core_stop && self.sys_proxy_enabled {
-                            let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
-                            self.sys_proxy_enabled = false;
-                            self.gui_config.system_proxy_enabled = false;
-                            let _ = config::save_gui_config(&self.gui_config);
-                        }
-                        if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
-                            let _ = cancel_tx.send(());
-                        }
-                        self.current_speed = Bandwidth::default();
-                    }
-                }
 
                 // Auto-dismiss toast
                 if let Some(ref mut toast) = self.toast {
@@ -1219,7 +1192,35 @@ impl App {
                     
                     tasks.push(Task::done(Message::FetchConnections));
                 }
+
+                if check_authoritative {
+                    tasks.push(Task::perform(async move {
+                        tokio::task::spawn_blocking(core::is_core_running).await.unwrap_or(false)
+                    }, Message::CoreLivenessChecked));
+                }
+
                 Task::batch(tasks)
+            }
+            Message::CoreLivenessChecked(running) => {
+                let was_running = self.core_running;
+                self.core_running = running;
+                if was_running && !self.core_running {
+                    if let Some(msg) = core::take_unexpected_core_exit() {
+                        self.log_lines.push(format!("[GUI] {}", msg));
+                        self.toast_error(msg);
+                        if self.gui_config.disable_proxy_on_core_stop && self.sys_proxy_enabled {
+                            let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                            self.sys_proxy_enabled = false;
+                            self.gui_config.system_proxy_enabled = false;
+                            let _ = config::save_gui_config(&self.gui_config);
+                        }
+                        if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
+                            let _ = cancel_tx.send(());
+                        }
+                        self.current_speed = Bandwidth::default();
+                    }
+                }
+                Task::none()
             }
             Message::FetchConnections => {
                 if self.core_running {
