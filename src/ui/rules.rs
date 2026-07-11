@@ -48,7 +48,7 @@ pub fn render<'a>(
             
             for (idx, item) in items.iter().enumerate() {
                 let del_btn = button(
-                    text("\u{E5CD}".to_string())
+                    text(crate::ui::icons::ICON_DELETE.to_string())
                         .font(iced::Font::with_name("Material Icons"))
                         .size(crate::ui::ICON_SIZE),
                 )
@@ -105,7 +105,7 @@ pub fn render<'a>(
                 .style(theme::input_field);
                 
             let add_btn = button(
-                text("\u{E145}".to_string())
+                text(crate::ui::icons::ICON_ADD.to_string())
                     .font(iced::Font::with_name("Material Icons"))
                     .size(crate::ui::ICON_SIZE_LG),
             )

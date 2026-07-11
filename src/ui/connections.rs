@@ -67,78 +67,39 @@ pub fn render<'a>(
         };
         
         // Sort connections
-        match connections_sort {
-            crate::state::ConnectionSort::None => {}
-            crate::state::ConnectionSort::Host => {
-                filtered_connections.sort_by(|a, b| {
+        filtered_connections.sort_by(|a, b| {
+            let ord = match connections_sort {
+                crate::state::ConnectionSort::None => std::cmp::Ordering::Equal,
+                crate::state::ConnectionSort::Host => {
                     let ha = if !a.metadata.host.is_empty() { &a.metadata.host } else { &a.metadata.destination_ip };
                     let hb = if !b.metadata.host.is_empty() { &b.metadata.host } else { &b.metadata.destination_ip };
-                    if connections_sort_desc {
-                        hb.to_lowercase().cmp(&ha.to_lowercase())
-                    } else {
-                        ha.to_lowercase().cmp(&hb.to_lowercase())
-                    }
-                });
-            }
-            crate::state::ConnectionSort::Process => {
-                filtered_connections.sort_by(|a, b| {
+                    ha.to_lowercase().cmp(&hb.to_lowercase())
+                }
+                crate::state::ConnectionSort::Process => {
                     let pa = a.metadata.process_display().unwrap_or_default();
                     let pb = b.metadata.process_display().unwrap_or_default();
-                    if connections_sort_desc {
-                        pb.to_lowercase().cmp(&pa.to_lowercase())
-                    } else {
-                        pa.to_lowercase().cmp(&pb.to_lowercase())
-                    }
-                });
-            }
-            crate::state::ConnectionSort::Network => {
-                filtered_connections.sort_by(|a, b| {
-                    if connections_sort_desc {
-                        b.metadata.network.to_lowercase().cmp(&a.metadata.network.to_lowercase())
-                    } else {
-                        a.metadata.network.to_lowercase().cmp(&b.metadata.network.to_lowercase())
-                    }
-                });
-            }
-            crate::state::ConnectionSort::Chains => {
-                filtered_connections.sort_by(|a, b| {
+                    pa.to_lowercase().cmp(&pb.to_lowercase())
+                }
+                crate::state::ConnectionSort::Network => {
+                    a.metadata.network.to_lowercase().cmp(&b.metadata.network.to_lowercase())
+                }
+                crate::state::ConnectionSort::Chains => {
                     let ca = a.chains.join(" ➔ ");
                     let cb = b.chains.join(" ➔ ");
-                    if connections_sort_desc {
-                        cb.to_lowercase().cmp(&ca.to_lowercase())
-                    } else {
-                        ca.to_lowercase().cmp(&cb.to_lowercase())
-                    }
-                });
-            }
-            crate::state::ConnectionSort::Rule => {
-                filtered_connections.sort_by(|a, b| {
-                    if connections_sort_desc {
-                        b.rule.to_lowercase().cmp(&a.rule.to_lowercase())
-                    } else {
-                        a.rule.to_lowercase().cmp(&b.rule.to_lowercase())
-                    }
-                });
-            }
-            crate::state::ConnectionSort::Download => {
-                filtered_connections.sort_by(|a, b| {
-                    if connections_sort_desc {
-                        b.download.cmp(&a.download)
-                    } else {
-                        a.download.cmp(&b.download)
-                    }
-                });
-            }
-            crate::state::ConnectionSort::Upload => {
-                filtered_connections.sort_by(|a, b| {
-                    if connections_sort_desc {
-                        b.upload.cmp(&a.upload)
-                    } else {
-                        a.upload.cmp(&b.upload)
-                    }
-                });
-            }
-        }
+                    ca.to_lowercase().cmp(&cb.to_lowercase())
+                }
+                crate::state::ConnectionSort::Rule => {
+                    a.rule.to_lowercase().cmp(&b.rule.to_lowercase())
+                }
+                crate::state::ConnectionSort::Download => {
+                    a.download.cmp(&b.download)
+                }
+                crate::state::ConnectionSort::Upload => {
+                    a.upload.cmp(&b.upload)
+                }
+            };
+            if connections_sort_desc { ord.reverse() } else { ord }
+        });
         
         let search_input = text_input(tr(lang, "placeholder_connections_search"), &query_str)
             .on_input(Message::ConnectionsSearchChanged)

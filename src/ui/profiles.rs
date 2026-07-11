@@ -345,7 +345,7 @@ pub fn render<'a>(
                                             .style(move |_t| container::Style {
                                                 background: Some(iced::Background::Color(bar_color)),
                                                 border: iced::Border {
-                                                    radius: 3.0.into(),
+                                                    radius: theme::RADIUS_MICRO.into(),
                                                     ..Default::default()
                                                 },
                                                 ..Default::default()
@@ -361,7 +361,7 @@ pub fn render<'a>(
                                 .style(|t| container::Style {
                                     background: Some(iced::Background::Color(theme::input_surface(t))),
                                     border: iced::Border {
-                                        radius: 3.0.into(),
+                                        radius: theme::RADIUS_MICRO.into(),
                                         ..Default::default()
                                     },
                                     ..Default::default()

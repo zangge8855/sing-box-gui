@@ -411,7 +411,7 @@ pub fn render<'a>(
                                 };
                                 button::Style {
                                     background: base.background,
-                                    text_color: if theme::is_dark(t) { theme::TEXT_PRIMARY } else { theme::TEXT_PRIMARY_LIGHT },
+                                    text_color: if theme::is_dark(t) { theme::TEXT_PRIMARY_DARK } else { theme::TEXT_PRIMARY_LIGHT },
                                     border: iced::Border {
                                         color: border_color,
                                         width: base.border.width,
@@ -666,7 +666,7 @@ pub fn render<'a>(
                         };
                         button::Style {
                             background: base.background,
-                            text_color: if theme::is_dark(_theme) { theme::TEXT_PRIMARY } else { theme::TEXT_PRIMARY_LIGHT },
+                            text_color: if theme::is_dark(_theme) { theme::TEXT_PRIMARY_DARK } else { theme::TEXT_PRIMARY_LIGHT },
                             border: iced::Border {
                                 color: border_color,
                                 width: base.border.width,

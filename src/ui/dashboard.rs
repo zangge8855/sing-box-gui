@@ -93,7 +93,7 @@ pub fn render<'a>(
         let core_control_btn = if core_busy {
             button(
                 row![
-                    icon('\u{E863}'),
+                    icon(crate::ui::icons::ICON_UPDATE),
                     text(if core_starting {
                         tr(lang, "status_starting")
                     } else {
@@ -109,7 +109,7 @@ pub fn render<'a>(
             // No on_press — disabled while transitioning
         } else if core_running {
             button(
-                row![icon('\u{E047}'), text(tr(lang, "btn_stop_core")).size(theme::TYPE_BTN_SM)]
+                row![icon(crate::ui::icons::ICON_STOP), text(tr(lang, "btn_stop_core")).size(theme::TYPE_BTN_SM)]
                     .spacing(crate::ui::SP_8)
                     .align_y(Alignment::Center)
             )
@@ -118,7 +118,7 @@ pub fn render<'a>(
             .on_press(Message::ToggleCore)
         } else {
             button(
-                row![icon('\u{E037}'), text(tr(lang, "btn_start_core")).size(theme::TYPE_BTN_SM)]
+                row![icon(crate::ui::icons::ICON_START), text(tr(lang, "btn_start_core")).size(theme::TYPE_BTN_SM)]
                     .spacing(crate::ui::SP_8)
                     .align_y(Alignment::Center)
             )
@@ -129,7 +129,7 @@ pub fn render<'a>(
 
         let mut core_card_col = column![
             row![
-                make_icon_badge('\u{E322}', theme::ACCENT_PURPLE),
+                make_icon_badge(crate::ui::icons::ICON_VPN, theme::ACCENT_PURPLE),
                 text(tr(lang, "singbox_core")).color(text_muted).size(theme::TYPE_SECTION)
             ]
             .spacing(crate::ui::SP_8)
@@ -172,7 +172,7 @@ pub fn render<'a>(
         
         let sys_proxy_btn = button(
             row![
-                icon(if sys_proxy_enabled { '\u{E047}' } else { '\u{E037}' }),
+                icon(if sys_proxy_enabled { crate::ui::icons::ICON_STOP } else { crate::ui::icons::ICON_START }),
                 text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") }).size(theme::TYPE_BTN_SM)
             ]
             .spacing(crate::ui::SP_8)
@@ -185,7 +185,7 @@ pub fn render<'a>(
         let proxy_status_card = container(
             column![
                 row![
-                    make_icon_badge('\u{E32A}', theme::ACCENT_BLUE),
+                    make_icon_badge(crate::ui::icons::ICON_SPEED, theme::ACCENT_BLUE),
                     text(tr(lang, "system_proxy")).color(text_muted).size(theme::TYPE_SECTION)
                 ]
                 .spacing(crate::ui::SP_8)
@@ -209,7 +209,7 @@ pub fn render<'a>(
         let download_card = container(
             column![
                 row![
-                    make_icon_badge('\u{E5DB}', theme::ACCENT_BLUE),
+                    make_icon_badge(crate::ui::icons::ICON_DOWN, theme::ACCENT_BLUE),
                     text(tr(lang, "download")).color(text_muted).size(theme::TYPE_SECTION)
                 ]
                 .spacing(crate::ui::SP_8)
@@ -238,7 +238,7 @@ pub fn render<'a>(
         let upload_card = container(
             column![
                 row![
-                    make_icon_badge('\u{E5D8}', theme::ACCENT_PURPLE),
+                    make_icon_badge(crate::ui::icons::ICON_UP, theme::ACCENT_PURPLE),
                     text(tr(lang, "upload")).color(text_muted).size(theme::TYPE_SECTION)
                 ]
                 .spacing(crate::ui::SP_8)
@@ -292,7 +292,7 @@ pub fn render<'a>(
         let routing_mode_card = container(
             column![
                 row![
-                    make_icon_badge('\u{E8B8}', theme::ACCENT_BLUE),
+                    make_icon_badge(crate::ui::icons::ICON_SETTINGS, theme::ACCENT_BLUE),
                     text(tr(lang, "active_mode")).color(text_muted).size(theme::TYPE_SECTION),
                     Space::new().width(Length::Fill),
                     text(port_text).color(text_muted).size(theme::TYPE_BTN_SM)
@@ -437,14 +437,14 @@ pub fn render<'a>(
         let legend = row![
             container(Space::new()).width(12).height(4).style(|_t| container::Style {
                 background: Some(iced::Background::Color(theme::ACCENT_BLUE)),
-                border: iced::Border { radius: 1.5.into(), ..Default::default() },
+                border: iced::Border { radius: (theme::RADIUS_MICRO / 2.0).into(), ..Default::default() },
                 ..Default::default()
             }),
             text(tr(lang, "chart_legend_down")).color(text_muted).size(theme::TYPE_BTN_SM),
             Space::new().width(12),
             container(Space::new()).width(12).height(4).style(|_t| container::Style {
                 background: Some(iced::Background::Color(theme::ACCENT_PURPLE)),
-                border: iced::Border { radius: 1.5.into(), ..Default::default() },
+                border: iced::Border { radius: (theme::RADIUS_MICRO / 2.0).into(), ..Default::default() },
                 ..Default::default()
             }),
             text(tr(lang, "chart_legend_up")).color(text_muted).size(theme::TYPE_BTN_SM),
@@ -509,26 +509,7 @@ pub fn render<'a>(
             .width(Length::Fill)
         )
         .padding([8, 12])
-        .style(move |t, s| {
-            let mut base = theme::button_secondary(t, s);
-            if matches!(s, button::Status::Hovered | button::Status::Pressed) {
-                let dark = theme::is_dark(t);
-                let bg_color = if dark {
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.04)
-                } else {
-                    Color::from_rgba(0.0, 0.0, 0.0, 0.03)
-                };
-                base.background = Some(iced::Background::Color(bg_color));
-                base.border.color = theme::border_color(t);
-                base.border.width = 1.0;
-            } else {
-                base.background = None;
-                base.border.width = 0.0;
-            }
-            base.border.radius = theme::RADIUS_MD.into();
-            base.shadow = iced::Shadow::default();
-            base
-        })
+        .style(theme::button_ghost)
         .on_press(Message::TabChanged(crate::state::Tab::Proxies))
         .width(Length::FillPortion(2));
 
@@ -544,26 +525,7 @@ pub fn render<'a>(
             .width(Length::Fill)
         )
         .padding([8, 12])
-        .style(move |t, s| {
-            let mut base = theme::button_secondary(t, s);
-            if matches!(s, button::Status::Hovered | button::Status::Pressed) {
-                let dark = theme::is_dark(t);
-                let bg_color = if dark {
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.04)
-                } else {
-                    Color::from_rgba(0.0, 0.0, 0.0, 0.03)
-                };
-                base.background = Some(iced::Background::Color(bg_color));
-                base.border.color = theme::border_color(t);
-                base.border.width = 1.0;
-            } else {
-                base.background = None;
-                base.border.width = 0.0;
-            }
-            base.border.radius = theme::RADIUS_MD.into();
-            base.shadow = iced::Shadow::default();
-            base
-        })
+        .style(theme::button_ghost)
         .on_press(Message::TabChanged(crate::state::Tab::Connections))
         .width(Length::FillPortion(1));
 

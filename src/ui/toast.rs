@@ -23,7 +23,7 @@ pub fn render<'a>(toast: &'a Toast, theme: &iced::Theme) -> Element<'a, Message>
             .style(move |_t| container::Style {
                 background: Some(iced::Background::Color(accent)),
                 border: iced::Border {
-                    radius: 2.0.into(),
+                    radius: (theme::RADIUS_XS / 3.0).into(),
                     ..Default::default()
                 },
                 ..Default::default()

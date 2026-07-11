@@ -9,6 +9,7 @@ pub mod connections;
 pub mod rules;
 pub mod toast;
 pub mod util;
+pub mod icons;
 
 use iced::widget::{column, container, row, scrollable, text, Space};
 use iced::{Alignment, Element, Length};
@@ -300,7 +301,7 @@ pub fn empty_state<'a>(
     }
 
     container(col)
-        .padding(40)
+        .padding(theme::SP_40)
         .width(Length::Fill)
         .center_x(Length::Fill)
         .style(ui_theme::status_card)
@@ -376,7 +377,7 @@ pub fn status_dot<'a, Message: Clone + 'a>(
         dot_wrapper,
         text(label).color(text_color).size(text_size)
     ]
-    .spacing(6)
+    .spacing(theme::SP_8)
     .align_y(Alignment::Center)
     .into()
 }

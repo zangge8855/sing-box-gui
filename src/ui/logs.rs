@@ -71,7 +71,7 @@ pub fn render<'a>(
             filter_btn(LogFilter::Warn, "log_filter_warn"),
             filter_btn(LogFilter::Error, "log_filter_error"),
         ]
-        .spacing(6);
+        .spacing(theme::SP_8);
 
         let actions: Element<'_, Message> = if is_compact {
             column![
@@ -84,7 +84,7 @@ pub fn render<'a>(
             .into()
         } else {
             row![search_input, filters, clear_logs_btn, export_btn]
-                .spacing(10)
+                .spacing(theme::SP_12)
                 .align_y(Alignment::Center)
                 .into()
         };

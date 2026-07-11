@@ -11,6 +11,8 @@ pub const RADIUS_LG: f32 = 14.0;
 pub const RADIUS_MD: f32 = 10.0;
 pub const RADIUS_SM: f32 = 8.0;
 pub const RADIUS_XS: f32 = 6.0;
+pub const RADIUS_MICRO: f32 = 3.0;
+pub const RADIUS_PILL: f32 = 100.0;
 
 /// Font for numeric metrics (latency, speeds).
 ///
@@ -68,6 +70,10 @@ pub const BTN_PAD_LG: [u16; 2] = [12, 20];
 pub const SEARCH_WIDTH: f32 = 260.0;
 /// Grid / card list gap.
 pub const GRID_GAP: f32 = 16.0;
+pub const SP_8: f32 = 8.0;
+pub const SP_12: f32 = 12.0;
+pub const SP_32: f32 = 32.0;
+pub const SP_40: f32 = 40.0;
 
 // ── Dark mode (cool near-black with subtle blue undertone) ───────────────────
 pub const BG_DARK: Color = Color::from_rgb(0.055, 0.057, 0.070); // #0e0f12
@@ -77,13 +83,12 @@ pub const CARD_ELEVATED_DARK: Color = Color::from_rgb(0.125, 0.132, 0.160); // #
 #[allow(dead_code)]
 pub const CARD_HOVER: Color = Color::from_rgb(0.145, 0.152, 0.185);
 /// Elevated / selected dark surface alias.
-#[allow(dead_code)]
-pub const CARD_LIGHT: Color = CARD_ELEVATED_DARK;
+
 pub const BORDER_DARK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.10);
 pub const BORDER_STRONG_DARK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.16);
-pub const TEXT_PRIMARY: Color = Color::from_rgb(0.96, 0.97, 0.99);
-pub const TEXT_MUTED: Color = Color::from_rgb(0.62, 0.65, 0.72);
-pub const TEXT_TERTIARY: Color = Color::from_rgb(0.42, 0.45, 0.52);
+pub const TEXT_PRIMARY_DARK: Color = Color::from_rgb(0.96, 0.97, 0.99);
+pub const TEXT_MUTED_DARK: Color = Color::from_rgb(0.62, 0.65, 0.72);
+pub const TEXT_TERTIARY_DARK: Color = Color::from_rgb(0.42, 0.45, 0.52);
 pub const INPUT_BG_DARK: Color = Color::from_rgb(0.045, 0.048, 0.060);
 pub const CONSOLE_BG_DARK: Color = Color::from_rgb(0.028, 0.032, 0.045);
 
@@ -156,15 +161,15 @@ pub fn border_strong(theme: &iced::Theme) -> Color {
 }
 
 pub fn text_primary(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { TEXT_PRIMARY } else { TEXT_PRIMARY_LIGHT }
+    if is_dark(theme) { TEXT_PRIMARY_DARK } else { TEXT_PRIMARY_LIGHT }
 }
 
 pub fn text_muted(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { TEXT_MUTED } else { TEXT_MUTED_LIGHT }
+    if is_dark(theme) { TEXT_MUTED_DARK } else { TEXT_MUTED_LIGHT }
 }
 
 pub fn text_tertiary(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { TEXT_TERTIARY } else { TEXT_TERTIARY_LIGHT }
+    if is_dark(theme) { TEXT_TERTIARY_DARK } else { TEXT_TERTIARY_LIGHT }
 }
 
 pub fn input_surface(theme: &iced::Theme) -> Color {
@@ -431,7 +436,7 @@ pub fn button_secondary(theme: &iced::Theme, status: button::Status) -> button::
         } else {
             BORDER_STRONG_DARK
         };
-        let text = if disabled { TEXT_TERTIARY } else { TEXT_PRIMARY };
+        let text = if disabled { TEXT_TERTIARY_DARK } else { TEXT_PRIMARY_DARK };
         (b, border, text)
     } else {
         let b = match status {
@@ -516,7 +521,7 @@ pub fn button_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
         let text_color = if is_active {
             ACCENT_PURPLE
         } else if dark {
-            TEXT_MUTED
+            TEXT_MUTED_DARK
         } else {
             TEXT_MUTED_LIGHT
         };
@@ -554,7 +559,7 @@ pub fn button_header(theme: &iced::Theme, status: button::Status) -> button::Sty
         }
         _ => Color::TRANSPARENT,
     };
-    let text = if dark { TEXT_MUTED } else { TEXT_MUTED_LIGHT };
+    let text = if dark { TEXT_MUTED_DARK } else { TEXT_MUTED_LIGHT };
     button::Style {
         background: Some(Background::Color(bg)),
         text_color: text,
@@ -843,8 +848,8 @@ mod tests {
         assert!(BORDER_LIGHT.a > 0.05);
 
         // Text hierarchy: primary brighter/darker than muted in each mode
-        assert!(relative_luminance(TEXT_PRIMARY) > relative_luminance(TEXT_MUTED));
-        assert!(relative_luminance(TEXT_MUTED) > relative_luminance(TEXT_TERTIARY));
+        assert!(relative_luminance(TEXT_PRIMARY_DARK) > relative_luminance(TEXT_MUTED_DARK));
+        assert!(relative_luminance(TEXT_MUTED_DARK) > relative_luminance(TEXT_TERTIARY_DARK));
         assert!(relative_luminance(TEXT_PRIMARY_LIGHT) < relative_luminance(TEXT_MUTED_LIGHT));
         assert!(relative_luminance(TEXT_MUTED_LIGHT) < relative_luminance(TEXT_TERTIARY_LIGHT));
     }
@@ -852,13 +857,14 @@ mod tests {
     #[test]
     fn primary_text_contrasts_against_surfaces() {
         // WCAG-ish floor for large text / UI chrome (~3:1)
-        assert!(contrast_ratio(TEXT_PRIMARY, BG_DARK) >= 3.0);
-        assert!(contrast_ratio(TEXT_PRIMARY, CARD_DARK) >= 3.0);
-        assert!(contrast_ratio(TEXT_PRIMARY_LIGHT, BG_LIGHT) >= 3.0);
-        assert!(contrast_ratio(TEXT_PRIMARY_LIGHT, CARD_LIGHT_BG) >= 3.0);
+        assert!(contrast_ratio(TEXT_PRIMARY_DARK, BG_DARK) >= 4.5);
+        assert!(contrast_ratio(TEXT_PRIMARY_DARK, CARD_DARK) >= 4.5);
+        assert!(contrast_ratio(TEXT_PRIMARY_LIGHT, BG_LIGHT) >= 4.5);
+        assert!(contrast_ratio(TEXT_PRIMARY_LIGHT, CARD_LIGHT_BG) >= 4.5);
         // Muted should still be readable on card
-        assert!(contrast_ratio(TEXT_MUTED, CARD_DARK) >= 2.0);
-        assert!(contrast_ratio(TEXT_MUTED_LIGHT, CARD_LIGHT_BG) >= 2.5);
+        assert!(contrast_ratio(TEXT_MUTED_DARK, CARD_DARK) >= 3.0);
+        assert!(contrast_ratio(TEXT_MUTED_LIGHT, CARD_LIGHT_BG) >= 3.0);
+        assert!(contrast_ratio(TEXT_TERTIARY_DARK, CARD_DARK) >= 2.5);
     }
 
     #[test]
@@ -871,7 +877,7 @@ mod tests {
         assert_eq!(bg(&light), BG_LIGHT);
         assert_eq!(card_surface(&dark), CARD_DARK);
         assert_eq!(card_surface(&light), CARD_LIGHT_BG);
-        assert_eq!(text_primary(&dark), TEXT_PRIMARY);
+        assert_eq!(text_primary(&dark), TEXT_PRIMARY_DARK);
         assert_eq!(text_primary(&light), TEXT_PRIMARY_LIGHT);
         assert_eq!(border_color(&dark), BORDER_DARK);
         assert_eq!(border_color(&light), BORDER_LIGHT);
@@ -906,7 +912,7 @@ mod tests {
         let primary_dis = button_primary(&dark, button::Status::Disabled);
         assert!(primary_dis.text_color.a < 1.0);
         let secondary_dis = button_secondary(&dark, button::Status::Disabled);
-        assert_eq!(secondary_dis.text_color, TEXT_TERTIARY);
+        assert_eq!(secondary_dis.text_color, TEXT_TERTIARY_DARK);
         assert!(matches!(primary.background, Some(Background::Color(c)) if c == ACCENT_PURPLE));
 
         let secondary_l = button_secondary(&light, button::Status::Active);
@@ -975,4 +981,24 @@ mod tests {
         assert_eq!(BTN_PAD_SM, [6, 12]);
         assert_eq!(BTN_PAD_MD, [8, 16]);
     }
+}
+
+pub fn button_ghost(theme: &iced::Theme, status: button::Status) -> button::Style {
+    let mut base = button_secondary(theme, status);
+    if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+        let dark = is_dark(theme);
+        base.background = Some(iced::Background::Color(if dark {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.04)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.03)
+        }));
+        base.border.color = border_color(theme);
+        base.border.width = 1.0;
+    } else {
+        base.background = None;
+        base.border.width = 0.0;
+    }
+    base.border.radius = RADIUS_MD.into();
+    base.shadow = iced::Shadow::default();
+    base
 }
