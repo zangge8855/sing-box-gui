@@ -618,7 +618,7 @@ pub fn render<'a>(
                     container(
                         scrollable(
                             text(preview_json)
-                                .font(iced::Font::MONOSPACE)
+                                .font(theme::mono_font())
                                 .size(theme::TYPE_MONO)
                                 .color(text_primary)
                         )

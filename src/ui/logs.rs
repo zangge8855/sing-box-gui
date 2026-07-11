@@ -107,7 +107,7 @@ pub fn render<'a>(
             
             logs_col = logs_col.push(
                 text(line.clone())
-                    .font(iced::Font::MONOSPACE)
+                    .font(theme::mono_font())
                     .color(line_color)
                     .size(theme::TYPE_MONO)
                     .width(Length::Fill)

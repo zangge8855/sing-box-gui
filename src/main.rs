@@ -653,7 +653,30 @@ impl App {
             }
             Message::TabChanged(tab) => {
                 self.current_tab = tab;
-                Task::none()
+                let mut tasks = Vec::new();
+                if self.core_running && !self.core_busy() {
+                    let api_port = self.gui_config.api_port;
+                    match tab {
+                        Tab::Proxies => {
+                            tasks.push(Task::perform(
+                                async move { api::fetch_proxies(api_port).await },
+                                |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
+                            ));
+                        }
+                        Tab::Connections => {
+                            tasks.push(Task::done(Message::FetchConnections));
+                        }
+                        Tab::Dashboard => {
+                            tasks.push(Task::perform(
+                                async move { api::fetch_proxies(api_port).await },
+                                |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
+                            ));
+                            tasks.push(Task::done(Message::FetchConnections));
+                        }
+                        _ => {}
+                    }
+                }
+                Task::batch(tasks)
             }
             Message::NodeSearchChanged(query) => {
                 self.node_search = query;

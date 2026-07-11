@@ -25,6 +25,26 @@ pub fn metric_font() -> iced::Font {
     }
 }
 
+/// Font for monospaced / terminal text (logs, JSON code previews).
+///
+/// Under Windows, iced's default `Family::Monospace` (Consolas/Courier New) often
+/// fails to render Chinese/Unicode characters correctly, showing tofu blocks (□).
+/// Using `Family::SansSerif` on Windows avoids this while keeping text readable.
+pub fn mono_font() -> iced::Font {
+    #[cfg(target_os = "windows")]
+    {
+        iced::Font {
+            family: iced::font::Family::SansSerif,
+            ..Default::default()
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        iced::Font::MONOSPACE
+    }
+}
+
+
 // ── Type scale (f32 for iced::Pixels) ────────────────────────────────────────
 pub const TYPE_TITLE: f32 = 22.0;
 pub const TYPE_SECTION: f32 = 13.0; // group labels — medium muted
@@ -877,6 +897,15 @@ mod tests {
         let f = metric_font();
         assert!(matches!(f.family, iced::font::Family::SansSerif));
         assert_eq!(f.weight, iced::font::Weight::Medium);
+    }
+
+    #[test]
+    fn mono_font_fallback_on_windows() {
+        let f = mono_font();
+        #[cfg(target_os = "windows")]
+        assert!(matches!(f.family, iced::font::Family::SansSerif));
+        #[cfg(not(target_os = "windows"))]
+        assert!(matches!(f.family, iced::font::Family::Monospace));
     }
 
     #[test]
