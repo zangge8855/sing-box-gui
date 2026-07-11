@@ -32,11 +32,11 @@ pub fn render<'a>(
                 .padding(theme::BTN_PAD_MD)
                 .style(theme::button_secondary)
         } else if !core_running {
-            button(text(tr(lang, "test_latency")).size(14))
+            button(text(tr(lang, "test_latency")).size(theme::TYPE_BTN_MD))
                 .padding(theme::BTN_PAD_MD)
                 .style(theme::button_secondary)
         } else {
-            button(text(tr(lang, "test_latency")).size(14))
+            button(text(tr(lang, "test_latency")).size(theme::TYPE_BTN_MD))
                 .padding(theme::BTN_PAD_MD)
                 .style(theme::button_primary)
                 .on_press(Message::StartLatencyTest)
@@ -106,7 +106,7 @@ pub fn render<'a>(
                     
                     let g_btn = button(
                         column![
-                            text(g.name.clone()).size(12).font(iced::Font {
+                            text(g.name.clone()).size(theme::TYPE_BTN_SM).font(iced::Font {
                                 weight: iced::font::Weight::Bold,
                                 ..Default::default()
                             }).color(if is_active { Color::WHITE } else { text_primary }),
@@ -141,7 +141,7 @@ pub fn render<'a>(
                     
                     let g_btn = button(
                         column![
-                            text(g.name.clone()).size(13).font(iced::Font {
+                            text(g.name.clone()).size(theme::TYPE_SECTION).font(iced::Font {
                                 weight: iced::font::Weight::Bold,
                                 ..Default::default()
                             }).color(if is_active { Color::WHITE } else { text_primary }),
@@ -370,7 +370,7 @@ pub fn render<'a>(
                         current_row = current_row.push(container(card).width(Length::FillPortion(1)));
                         if (i + 1) % cols == 0 {
                             grid_rows = grid_rows.push(current_row);
-                            current_row = Row::new().spacing(15);
+                            current_row = Row::new().spacing(theme::GRID_GAP);
                         }
                     }
                     let remaining_elements = total_cards % cols;
@@ -383,15 +383,12 @@ pub fn render<'a>(
                     scrollable(grid_rows).style(theme::scrollbar_style).height(Length::Fill).into()
                 }
             } else {
-                container(
-                    text(tr(lang, "no_matching_nodes"))
-                        .color(text_muted)
-                        .size(15)
+                crate::ui::empty_state(
+                    tr(lang, "no_matching_nodes"),
+                    Some(tr(lang, "no_proxy_groups")),
+                    None,
+                    theme,
                 )
-                .padding(40)
-                .width(Length::Fill)
-                .style(theme::card_bg)
-                .into()
             };
             
             let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
@@ -402,7 +399,7 @@ pub fn render<'a>(
                     group_selector,
                     right_pane_content
                 ]
-                .spacing(15)
+                .spacing(crate::ui::SP_20)
                 .height(Length::Fill)
                 .width(Length::Fill)
                 .into()
@@ -489,15 +486,16 @@ pub fn render<'a>(
         });
         
         if filtered_nodes.is_empty() {
-            let content: Element<'a, Message> = container(
-                text(tr(lang, "no_matching_nodes"))
-                    .color(text_muted)
-                    .size(15)
-            )
-            .padding(40)
-            .width(Length::Fill)
-            .style(theme::card_bg)
-            .into();
+            let cta = button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
+                .padding(theme::BTN_PAD_MD)
+                .style(theme::button_secondary)
+                .on_press(Message::NodeSearchChanged(String::new()));
+            let content = crate::ui::empty_state(
+                tr(lang, "no_matching_nodes"),
+                None,
+                Some(cta.into()),
+                theme,
+            );
             let header = page_header(
                 "proxy_nodes",
                 lang,
@@ -557,9 +555,9 @@ pub fn render<'a>(
                             .size(theme::TYPE_CAPTION)
                             .width(Length::Fill)
                     ]
-                    .spacing(5)
+                    .spacing(crate::ui::SP_8)
                 ]
-                .spacing(10)
+                .spacing(crate::ui::SP_12)
                 .padding(theme::CARD_PAD);
                 
                 let card_btn = button(card_content)

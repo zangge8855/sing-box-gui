@@ -32,8 +32,8 @@ pub fn render<'a>(
 
         let filter_btn = |f: LogFilter, key: &'static str| {
             let active = log_filter == f;
-            let mut b = button(text(tr(lang, key)).size(12))
-                .padding([6, 12])
+            let mut b = button(text(tr(lang, key)).size(theme::TYPE_BTN_SM))
+                .padding(theme::BTN_PAD_SM)
                 .style(if active { theme::button_primary } else { theme::button_secondary });
             if !active {
                 b = b.on_press(Message::LogFilterChanged(f));
@@ -47,13 +47,13 @@ pub fn render<'a>(
             .width(if is_compact { Length::Fill } else { Length::Fixed(theme::SEARCH_WIDTH) })
             .style(theme::input_field);
 
-        let clear_logs_btn = button(text(tr(lang, "clear_logs")).size(13))
-            .padding([8, 14])
+        let clear_logs_btn = button(text(tr(lang, "clear_logs")).size(theme::TYPE_BTN_MD))
+            .padding(theme::BTN_PAD_MD)
             .style(theme::button_secondary)
             .on_press(Message::ClearLogs);
 
-        let export_btn = button(text(tr(lang, "export_logs")).size(13))
-            .padding([8, 14])
+        let export_btn = button(text(tr(lang, "export_logs")).size(theme::TYPE_BTN_MD))
+            .padding(theme::BTN_PAD_MD)
             .style(theme::button_secondary)
             .on_press(Message::ExportLogs);
 
@@ -109,7 +109,7 @@ pub fn render<'a>(
                 text(line.clone())
                     .font(iced::Font::MONOSPACE)
                     .color(line_color)
-                    .size(12)
+                    .size(theme::TYPE_MONO)
                     .width(Length::Fill)
             );
         }
@@ -158,7 +158,7 @@ pub fn render<'a>(
                     .height(Length::Fill)
                     .width(Length::Fill)
             )
-            .padding(15)
+            .padding(theme::CARD_PAD_DENSE)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(theme::console_bg)
@@ -167,7 +167,7 @@ pub fn render<'a>(
         let header = page_header("tab_logs", lang, Some(actions), theme, is_compact);
         
         let col = column![header, log_terminal]
-            .spacing(20)
+            .spacing(crate::ui::SP_20)
             .width(Length::Fill)
             .height(Length::Fill);
 

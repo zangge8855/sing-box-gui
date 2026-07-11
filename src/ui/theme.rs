@@ -21,9 +21,7 @@ pub const TYPE_CAPTION: f32 = 11.0;
 pub const TYPE_MICRO: f32 = 10.0; // badges only
 pub const TYPE_BTN_SM: f32 = 12.0;
 pub const TYPE_BTN_MD: f32 = 13.0;
-#[allow(dead_code)]
 pub const TYPE_BTN_LG: f32 = 14.0;
-#[allow(dead_code)]
 pub const TYPE_METRIC: f32 = 22.0; // dashboard speed numbers
 pub const TYPE_MONO: f32 = 12.0; // latency, mono captions
 
@@ -32,7 +30,6 @@ pub const CARD_PAD: f32 = 20.0;
 pub const CARD_PAD_DENSE: f32 = 16.0;
 pub const BTN_PAD_SM: [u16; 2] = [6, 12];
 pub const BTN_PAD_MD: [u16; 2] = [8, 16];
-#[allow(dead_code)]
 pub const BTN_PAD_LG: [u16; 2] = [12, 20];
 /// Shared width for page header search inputs.
 pub const SEARCH_WIDTH: f32 = 260.0;
@@ -859,5 +856,38 @@ mod tests {
         let c = with_alpha(SUCCESS, 0.2);
         assert!((c.r - SUCCESS.r).abs() < 0.001);
         assert!((c.a - 0.2).abs() < 0.001);
+    }
+
+    #[test]
+    fn type_scale_is_ordered() {
+        // Title ≥ metric > body/heading ≥ section/btn-md > btn-sm/mono > caption > micro
+        assert!(TYPE_TITLE >= TYPE_METRIC);
+        assert!(TYPE_METRIC > TYPE_BODY);
+        assert!(TYPE_BODY >= TYPE_HEADING);
+        assert!(TYPE_HEADING >= TYPE_SECTION);
+        assert!(TYPE_SECTION >= TYPE_BTN_MD);
+        assert!(TYPE_BTN_MD > TYPE_BTN_SM);
+        assert!(TYPE_BTN_SM >= TYPE_MONO);
+        assert!(TYPE_MONO > TYPE_CAPTION);
+        assert!(TYPE_CAPTION > TYPE_MICRO);
+        assert!(TYPE_MICRO >= 10.0);
+    }
+
+    #[test]
+    fn radius_scale_is_ordered() {
+        assert!(RADIUS_LG > RADIUS_MD);
+        assert!(RADIUS_MD > RADIUS_SM);
+        assert!(RADIUS_SM > RADIUS_XS);
+        assert!(RADIUS_XS >= 4.0);
+    }
+
+    #[test]
+    fn spacing_and_chrome_presets_are_positive() {
+        assert!(CARD_PAD >= CARD_PAD_DENSE);
+        assert!(CARD_PAD_DENSE >= 12.0);
+        assert!(GRID_GAP >= 12.0);
+        assert!(SEARCH_WIDTH >= 200.0);
+        assert_eq!(BTN_PAD_SM, [6, 12]);
+        assert_eq!(BTN_PAD_MD, [8, 16]);
     }
 }

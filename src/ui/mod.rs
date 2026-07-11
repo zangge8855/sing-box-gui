@@ -63,11 +63,42 @@ mod tests {
     fn page_max_width_above_settings_3col() {
         assert!(PAGE_MAX_WIDTH >= SETTINGS_3COL_W);
     }
+
+    #[test]
+    fn spacing_scale_is_ordered() {
+        assert!(SP_8 < SP_12);
+        assert!(SP_12 < SP_16);
+        assert!(SP_16 < SP_20);
+        assert!(SP_20 < SP_24);
+        // Grid gap aligns with spacing language
+        assert_eq!(ui_theme::GRID_GAP, SP_16);
+        assert_eq!(ICON_SIZE, 16.0);
+        assert!(ICON_SIZE_LG > ICON_SIZE);
+    }
+
+    #[test]
+    fn material_icons_font_asset_is_present() {
+        // Same bytes path the iced app builder registers at startup.
+        let bytes = include_bytes!("../../assets/material-icons.ttf");
+        assert!(
+            bytes.len() > 1024,
+            "material-icons.ttf should be a real font file, got {} bytes",
+            bytes.len()
+        );
+        // TrueType / OpenType magic: 0x00010000 or 'OTTO' / 'true'
+        let is_ttf = bytes.len() >= 4
+            && ((bytes[0] == 0x00 && bytes[1] == 0x01 && bytes[2] == 0x00 && bytes[3] == 0x00)
+                || &bytes[0..4] == b"OTTO"
+                || &bytes[0..4] == b"true"
+                || &bytes[0..4] == b"ttcf");
+        assert!(is_ttf, "material-icons.ttf does not look like a font header");
+    }
 }
 
 // ── Spacing scale ────────────────────────────────────────────────────────────
 pub const SP_8: f32 = 8.0;
 pub const SP_12: f32 = 12.0;
+/// Aligns with `theme::GRID_GAP` — keep for spacing-scale completeness.
 #[allow(dead_code)]
 pub const SP_16: f32 = 16.0;
 pub const SP_20: f32 = 20.0;
@@ -253,7 +284,7 @@ pub fn empty_state<'a>(
     if let Some(desc) = description {
         col = col.push(
             text(desc)
-                .size(12.0)
+                .size(ui_theme::TYPE_BTN_SM)
                 .color(ui_theme::text_muted(theme)),
         );
     }
@@ -293,12 +324,17 @@ pub fn loading_row<'a>(label: &'a str, theme: &iced::Theme) -> Element<'a, Messa
     .into()
 }
 
+/// Default Material Icons glyph size used across shell + pages.
+pub const ICON_SIZE: f32 = 16.0;
+/// Slightly larger icons for primary actions / compact sidebar.
+pub const ICON_SIZE_LG: f32 = 18.0;
+
 /// Material Icons glyph as text (requires material-icons font loaded).
 #[allow(dead_code)]
 pub fn material_icon(unicode: char) -> text::Text<'static> {
     text(unicode.to_string())
         .font(iced::Font::with_name("Material Icons"))
-        .size(16)
+        .size(ICON_SIZE)
 }
 
 /// Shared status dot component (used in dashboard and sidebar)

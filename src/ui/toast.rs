@@ -11,7 +11,7 @@ pub fn render<'a>(toast: &'a Toast, theme: &iced::Theme) -> Element<'a, Message>
         ToastKind::Info => theme::ACCENT_BLUE,
     };
 
-    let dismiss = button(text("✕").size(12))
+    let dismiss = button(text("✕").size(theme::TYPE_BTN_SM))
         .padding([4, 8])
         .style(theme::button_secondary)
         .on_press(Message::DismissToast);
@@ -29,12 +29,12 @@ pub fn render<'a>(toast: &'a Toast, theme: &iced::Theme) -> Element<'a, Message>
                 ..Default::default()
             }),
         text(&toast.message)
-            .size(13)
+            .size(theme::TYPE_SECTION)
             .color(theme::text_primary(theme))
             .width(Length::Fill),
         dismiss,
     ]
-    .spacing(12)
+    .spacing(crate::ui::SP_12)
     .align_y(Alignment::Center)
     .padding([12, 16]);
 

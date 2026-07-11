@@ -120,4 +120,15 @@ mod tests {
         let zh_total = format_traffic_usage_lang(Language::Zh, 100, 100, 1000);
         assert!(zh_total.contains("剩余"), "zh total: {zh_total}");
     }
+
+    #[test]
+    fn format_size_and_speed_use_binary_units() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(1023), "1023 B");
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1024 * 1024), "1.0 MB");
+        let speed = format_speed(2048);
+        assert!(speed.ends_with("/s"), "speed={speed}");
+        assert!(speed.contains("KB") || speed.contains("2.00"), "speed={speed}");
+    }
 }

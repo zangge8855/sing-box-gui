@@ -18,7 +18,9 @@ impl std::fmt::Display for RoutingModeOption {
     }
 }
 fn icon(unicode: char) -> text::Text<'static> {
-    text(unicode.to_string()).font(iced::Font::with_name("Material Icons")).size(16)
+    text(unicode.to_string())
+        .font(iced::Font::with_name("Material Icons"))
+        .size(crate::ui::ICON_SIZE)
 }
 
 pub fn render<'a>(
@@ -53,7 +55,7 @@ pub fn render<'a>(
             container(
                 text(unicode.to_string())
                     .font(iced::Font::with_name("Material Icons"))
-                    .size(16)
+                    .size(crate::ui::ICON_SIZE)
                     .color(color)
             )
             .padding(6)
@@ -82,8 +84,8 @@ pub fn render<'a>(
         
         let core_control_btn = if core_running {
             button(
-                row![icon('\u{E047}'), text(tr(lang, "btn_stop_core")).size(12)]
-                    .spacing(6)
+                row![icon('\u{E047}'), text(tr(lang, "btn_stop_core")).size(theme::TYPE_BTN_SM)]
+                    .spacing(crate::ui::SP_8)
                     .align_y(Alignment::Center)
             )
             .padding(theme::BTN_PAD_SM)
@@ -92,7 +94,7 @@ pub fn render<'a>(
         } else {
             button(
                 row![icon('\u{E037}'), text(tr(lang, "btn_start_core")).size(theme::TYPE_BTN_SM)]
-                    .spacing(6)
+                    .spacing(crate::ui::SP_8)
                     .align_y(Alignment::Center)
             )
             .padding(theme::BTN_PAD_SM)
@@ -104,9 +106,9 @@ pub fn render<'a>(
             column![
                 row![
                     make_icon_badge('\u{E322}', theme::ACCENT_PURPLE),
-                    text(tr(lang, "singbox_core")).color(text_muted).size(13)
+                    text(tr(lang, "singbox_core")).color(text_muted).size(theme::TYPE_SECTION)
                 ]
-                .spacing(8)
+                .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
                 
                 row![
@@ -117,9 +119,9 @@ pub fn render<'a>(
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
             ]
-            .spacing(16)
+            .spacing(theme::GRID_GAP)
         )
-        .padding(20)
+        .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
         .style(theme::card_bg);
 
@@ -133,18 +135,18 @@ pub fn render<'a>(
                 tr(lang, "disabled")
             },
             if sys_proxy_enabled { theme::SUCCESS } else { text_muted },
-            14.0,
+            theme::TYPE_BODY,
         );
         
         let sys_proxy_btn = button(
             row![
                 icon(if sys_proxy_enabled { '\u{E047}' } else { '\u{E037}' }),
-                text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") }).size(12)
+                text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") }).size(theme::TYPE_BTN_SM)
             ]
-            .spacing(6)
+            .spacing(crate::ui::SP_8)
             .align_y(Alignment::Center)
         )
-        .padding([6, 12])
+        .padding(theme::BTN_PAD_SM)
         .style(if sys_proxy_enabled { theme::button_danger } else { theme::button_primary })
         .on_press(Message::ToggleSystemProxy);
 
@@ -152,9 +154,9 @@ pub fn render<'a>(
             column![
                 row![
                     make_icon_badge('\u{E32A}', theme::ACCENT_BLUE),
-                    text(tr(lang, "system_proxy")).color(text_muted).size(13)
+                    text(tr(lang, "system_proxy")).color(text_muted).size(theme::TYPE_SECTION)
                 ]
-                .spacing(8)
+                .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
                 
                 row![
@@ -165,9 +167,9 @@ pub fn render<'a>(
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
             ]
-            .spacing(16)
+            .spacing(theme::GRID_GAP)
         )
-        .padding(20)
+        .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
         .style(theme::card_bg);
 
@@ -176,9 +178,9 @@ pub fn render<'a>(
             column![
                 row![
                     make_icon_badge('\u{E5DB}', theme::ACCENT_BLUE),
-                    text(tr(lang, "download")).color(text_muted).size(13)
+                    text(tr(lang, "download")).color(text_muted).size(theme::TYPE_SECTION)
                 ]
-                .spacing(8)
+                .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
                 
                 row![
@@ -189,18 +191,18 @@ pub fn render<'a>(
                             ..Default::default()
                         })
                         .color(theme::ACCENT_BLUE)
-                        .size(22),
+                        .size(theme::TYPE_METRIC),
                     Space::new().width(Length::Fill),
                     text(format!("{} {}", tr(lang, "total_label"), format_size(total_downloaded)))
                         .color(theme::text_tertiary(theme))
-                        .size(11)
+                        .size(theme::TYPE_CAPTION)
                 ]
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
             ]
-            .spacing(16)
+            .spacing(theme::GRID_GAP)
         )
-        .padding(20)
+        .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
         .style(theme::card_bg);
 
@@ -209,9 +211,9 @@ pub fn render<'a>(
             column![
                 row![
                     make_icon_badge('\u{E5D8}', theme::ACCENT_PURPLE),
-                    text(tr(lang, "upload")).color(text_muted).size(13)
+                    text(tr(lang, "upload")).color(text_muted).size(theme::TYPE_SECTION)
                 ]
-                .spacing(8)
+                .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
                 
                 row![
@@ -222,18 +224,18 @@ pub fn render<'a>(
                             ..Default::default()
                         })
                         .color(theme::ACCENT_PURPLE)
-                        .size(22),
+                        .size(theme::TYPE_METRIC),
                     Space::new().width(Length::Fill),
                     text(format!("{} {}", tr(lang, "total_label"), format_size(total_uploaded)))
                         .color(theme::text_tertiary(theme))
-                        .size(11)
+                        .size(theme::TYPE_CAPTION)
                 ]
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
             ]
-            .spacing(16)
+            .spacing(theme::GRID_GAP)
         )
-        .padding(20)
+        .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
         .style(theme::card_bg);
 
@@ -267,11 +269,11 @@ pub fn render<'a>(
             column![
                 row![
                     make_icon_badge('\u{E8B8}', theme::ACCENT_BLUE),
-                    text(tr(lang, "active_mode")).color(text_muted).size(13),
+                    text(tr(lang, "active_mode")).color(text_muted).size(theme::TYPE_SECTION),
                     Space::new().width(Length::Fill),
-                    text(port_text).color(text_muted).size(12)
+                    text(port_text).color(text_muted).size(theme::TYPE_BTN_SM)
                 ]
-                .spacing(8)
+                .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center)
                 .width(Length::Fill),
                 
@@ -281,9 +283,9 @@ pub fn render<'a>(
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
             ]
-            .spacing(16)
+            .spacing(theme::GRID_GAP)
         )
-        .padding(20)
+        .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
         .style(theme::card_bg);
 
@@ -294,7 +296,7 @@ pub fn render<'a>(
                 proxy_status_card,
                 routing_mode_card
             ]
-            .spacing(16)
+            .spacing(theme::GRID_GAP)
             .width(Length::Fill)
             .into()
         } else {
@@ -303,7 +305,7 @@ pub fn render<'a>(
                 proxy_status_card,
                 routing_mode_card
             ]
-            .spacing(16)
+            .spacing(theme::GRID_GAP)
             .width(Length::Fill)
             .into()
         };
@@ -314,7 +316,7 @@ pub fn render<'a>(
                 download_card,
                 upload_card
             ]
-            .spacing(16)
+            .spacing(theme::GRID_GAP)
             .width(Length::Fill)
             .into()
         } else {
@@ -322,7 +324,7 @@ pub fn render<'a>(
                 download_card,
                 upload_card
             ]
-            .spacing(16)
+            .spacing(theme::GRID_GAP)
             .width(Length::Fill)
             .into()
         };
@@ -414,16 +416,16 @@ pub fn render<'a>(
                 border: iced::Border { radius: 1.5.into(), ..Default::default() },
                 ..Default::default()
             }),
-            text(tr(lang, "chart_legend_down")).color(text_muted).size(12),
+            text(tr(lang, "chart_legend_down")).color(text_muted).size(theme::TYPE_BTN_SM),
             Space::new().width(12),
             container(Space::new()).width(12).height(4).style(|_t| container::Style {
                 background: Some(iced::Background::Color(theme::ACCENT_PURPLE)),
                 border: iced::Border { radius: 1.5.into(), ..Default::default() },
                 ..Default::default()
             }),
-            text(tr(lang, "chart_legend_up")).color(text_muted).size(12),
+            text(tr(lang, "chart_legend_up")).color(text_muted).size(theme::TYPE_BTN_SM),
         ]
-        .spacing(6)
+        .spacing(crate::ui::SP_8)
         .align_y(Alignment::Center);
 
         let idle_chart = !core_running
@@ -448,7 +450,7 @@ pub fn render<'a>(
                 .width(Length::Fill)
                 .height(Length::Fill),
         ]
-        .spacing(10)
+        .spacing(crate::ui::SP_12)
         .height(Length::Fill);
         if let Some(cap) = chart_caption {
             chart_col = chart_col.push(cap);
@@ -470,10 +472,10 @@ pub fn render<'a>(
         });
         let node_btn = button(
             column![
-                text(tr(lang, "dash_current_node")).color(text_muted).size(12),
+                text(tr(lang, "dash_current_node")).color(text_muted).size(theme::TYPE_BTN_SM),
                 text(crate::ui::util::truncate_chars(node_label, 36))
                     .color(theme::text_primary(theme))
-                    .size(15)
+                    .size(theme::TYPE_BODY)
                     .font(iced::Font {
                         weight: iced::font::Weight::Medium,
                         ..Default::default()
@@ -508,10 +510,10 @@ pub fn render<'a>(
 
         let conn_btn = button(
             column![
-                text(tr(lang, "dash_connections")).color(text_muted).size(12),
+                text(tr(lang, "dash_connections")).color(text_muted).size(theme::TYPE_BTN_SM),
                 text(format!("{}", active_connections))
                     .color(theme::ACCENT_BLUE)
-                    .size(18)
+                    .size(theme::TYPE_TITLE)
                     .font(iced::Font {
                         weight: iced::font::Weight::Bold,
                         family: iced::font::Family::Monospace,
@@ -547,7 +549,7 @@ pub fn render<'a>(
 
         let summary_card = container(
             row![node_btn, conn_btn]
-            .spacing(20)
+            .spacing(crate::ui::SP_20)
             .align_y(Alignment::Center)
             .width(Length::Fill)
         )
@@ -576,13 +578,13 @@ pub fn render<'a>(
             traffic_row,
             chart_card
         ]
-        .spacing(20)
+        .spacing(crate::ui::SP_20)
         .width(Length::Fill);
 
         if gui_config.tun_mode {
             content_col = content_col.push(
-                container(text(tr(lang, "tun_admin_banner")).size(12).color(theme::WARNING))
-                    .padding(12)
+                container(text(tr(lang, "tun_admin_banner")).size(theme::TYPE_BTN_SM).color(theme::WARNING))
+                    .padding(crate::ui::SP_12)
                     .width(Length::Fill)
                     .style(|t| theme::tinted_banner(t, theme::WARNING)),
             );

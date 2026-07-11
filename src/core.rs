@@ -576,6 +576,17 @@ mod tests {
     use std::process::Stdio;
 
     #[test]
+    fn is_core_running_fast_reads_cached_flag_without_process() {
+        // Fast path must not require a live child — only the atomic cache.
+        CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
+        assert!(!is_core_running_fast());
+        CORE_RUNNING_CACHED.store(true, Ordering::SeqCst);
+        assert!(is_core_running_fast());
+        CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
+        assert!(!is_core_running_fast());
+    }
+
+    #[test]
     fn format_early_exit_prefers_fatal_lines() {
         let lines = vec![
             "TRACE[0000] initialize cache-file...".to_string(),

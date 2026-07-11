@@ -402,22 +402,22 @@ pub fn render<'a>(
                                 dt.with_timezone(&chrono::Local).format("%Y-%m-%d")
                             ))
                             .color(if near { theme::WARNING } else { text_muted })
-                            .size(11)
+                            .size(theme::TYPE_CAPTION)
                         })
                     });
 
                     let mut meta_col = column![
                         text(truncate_chars(&profile.name, 36))
                             .color(text_primary)
-                            .size(15)
+                            .size(theme::TYPE_BODY)
                             .font(iced::Font {
                                 weight: iced::font::Weight::Bold,
                                 ..Default::default()
                             }),
-                        text(display_url).color(text_muted).size(12),
-                        text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(text_muted).size(11),
+                        text(display_url).color(text_muted).size(theme::TYPE_BTN_SM),
+                        text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(text_muted).size(theme::TYPE_CAPTION),
                     ]
-                    .spacing(6)
+                    .spacing(crate::ui::SP_8)
                     .width(Length::Fill);
 
                     if let Some(t) = traffic_block {
@@ -444,7 +444,7 @@ pub fn render<'a>(
                     }
                     
                     container(card_layout)
-                        .padding(20)
+                        .padding(theme::CARD_PAD)
                         .width(Length::Fill)
                         .style(move |theme| {
                             if is_active {

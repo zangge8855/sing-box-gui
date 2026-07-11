@@ -32,7 +32,7 @@ pub fn render<'a>(
         let make_toggle_row = move |label_key: &'static str, is_on: bool, msg: Message| {
             let label_el: Element<'_, Message> = text(tr(lang, label_key))
                 .color(theme::text_primary(theme))
-                .size(13)
+                .size(theme::TYPE_SECTION)
                 .width(Length::Fill)
                 .into();
                 
@@ -55,11 +55,11 @@ pub fn render<'a>(
         
         // 1. System Integration Card (Left Column)
         let mut sys_items: Vec<Element<'_, Message>> = vec![
-            text(tr(lang, "sys_integration")).color(text_muted).size(13).into(),
+            text(tr(lang, "sys_integration")).color(text_muted).size(theme::TYPE_SECTION).into(),
         ];
         if gui_config.tun_mode {
             sys_items.push(
-                container(text(tr(lang, "tun_admin_banner")).size(11).color(theme::WARNING))
+                container(text(tr(lang, "tun_admin_banner")).size(theme::TYPE_CAPTION).color(theme::WARNING))
                     .padding(10)
                     .width(Length::Fill)
                     .style(|t| theme::tinted_banner(t, theme::WARNING))
@@ -79,7 +79,7 @@ pub fn render<'a>(
             sys_items.push(
                 column![
                     make_toggle_row(key, on, msg),
-                    text(tr(lang, help)).color(text_muted).size(11)
+                    text(tr(lang, help)).color(text_muted).size(theme::TYPE_CAPTION)
                 ]
                 .spacing(4)
                 .into(),
@@ -109,19 +109,19 @@ pub fn render<'a>(
             
         let ports_row = row![
             column![
-                text(tr(lang, "mixed_port_label")).color(text_muted).size(12),
+                text(tr(lang, "mixed_port_label")).color(text_muted).size(theme::TYPE_BTN_SM),
                 mixed_port_input.width(Length::Fill)
             ]
-            .spacing(5)
+            .spacing(crate::ui::SP_8)
             .width(Length::FillPortion(1)),
             column![
-                text(tr(lang, "api_port_label")).color(text_muted).size(12),
+                text(tr(lang, "api_port_label")).color(text_muted).size(theme::TYPE_BTN_SM),
                 api_port_input.width(Length::Fill)
             ]
-            .spacing(5)
+            .spacing(crate::ui::SP_8)
             .width(Length::FillPortion(1)),
         ]
-        .spacing(16)
+        .spacing(theme::GRID_GAP)
         .width(Length::Fill);
         
         let dns_local_input = text_input("223.5.5.5", dns_local_str)
@@ -138,41 +138,41 @@ pub fn render<'a>(
             
         let dns_row = row![
             column![
-                text(tr(lang, "dns_local")).color(text_muted).size(12),
+                text(tr(lang, "dns_local")).color(text_muted).size(theme::TYPE_BTN_SM),
                 dns_local_input.width(Length::Fill)
             ]
-            .spacing(5)
+            .spacing(crate::ui::SP_8)
             .width(Length::FillPortion(1)),
             column![
-                text(tr(lang, "dns_remote")).color(text_muted).size(12),
+                text(tr(lang, "dns_remote")).color(text_muted).size(theme::TYPE_BTN_SM),
                 dns_remote_input.width(Length::Fill)
             ]
-            .spacing(5)
+            .spacing(crate::ui::SP_8)
             .width(Length::FillPortion(1)),
         ]
-        .spacing(16)
+        .spacing(theme::GRID_GAP)
         .width(Length::Fill);
         
         let network_dns_card = container(
             column![
-                text(tr(lang, "ports_config")).color(text_muted).size(13),
+                text(tr(lang, "ports_config")).color(text_muted).size(theme::TYPE_SECTION),
                 ports_row,
-                text(tr(lang, "dns_servers")).color(text_muted).size(13),
+                text(tr(lang, "dns_servers")).color(text_muted).size(theme::TYPE_SECTION),
                 dns_row,
                 column![
                     make_toggle_row("fake_ip_label", gui_config.fake_ip, Message::ToggleFakeIp),
-                    text(tr(lang, "help_fake_ip")).color(text_muted).size(11)
+                    text(tr(lang, "help_fake_ip")).color(text_muted).size(theme::TYPE_CAPTION)
                 ]
                 .spacing(4),
             ]
-            .spacing(20)
+            .spacing(crate::ui::SP_20)
         )
         .padding(theme::CARD_PAD)
         .width(Length::Fill)
         .style(theme::card_bg);
         
         // 3. App & Core Preferences Card (Right Column)
-        let lang_label = text(tr(lang, "app_language")).color(text_muted).size(13);
+        let lang_label = text(tr(lang, "app_language")).color(text_muted).size(theme::TYPE_SECTION);
         
         let lang_options = vec![
             LanguageOption { lang: Language::Zh, label: "简体中文" },
@@ -192,7 +192,7 @@ pub fn render<'a>(
         .padding(8)
         .style(theme::pick_list);
         
-        let theme_label = text(tr(lang, "app_theme")).color(text_muted).size(13);
+        let theme_label = text(tr(lang, "app_theme")).color(text_muted).size(theme::TYPE_SECTION);
         
         let theme_options = vec![
             ThemeOption { theme: AppTheme::Auto, label: tr(lang, "theme_auto") },
@@ -218,14 +218,14 @@ pub fn render<'a>(
                 column![lang_label, lang_selector].spacing(8),
                 column![theme_label, theme_selector].spacing(8)
             ]
-            .spacing(15)
+            .spacing(theme::GRID_GAP)
             .into()
         } else {
             row![
-                column![lang_label, lang_selector].spacing(8).width(Length::FillPortion(1)),
-                column![theme_label, theme_selector].spacing(8).width(Length::FillPortion(1))
+                column![lang_label, lang_selector].spacing(crate::ui::SP_8).width(Length::FillPortion(1)),
+                column![theme_label, theme_selector].spacing(crate::ui::SP_8).width(Length::FillPortion(1))
             ]
-            .spacing(20)
+            .spacing(crate::ui::SP_20)
             .width(Length::Fill)
             .into()
         };
@@ -257,11 +257,11 @@ pub fn render<'a>(
         .style(theme::pick_list);
 
         let auto_update_block = column![
-            text(tr(lang, "auto_update_interval")).color(text_muted).size(12),
-            text(tr(lang, "help_auto_update")).color(text_muted).size(11),
+            text(tr(lang, "auto_update_interval")).color(text_muted).size(theme::TYPE_BTN_SM),
+            text(tr(lang, "help_auto_update")).color(text_muted).size(theme::TYPE_CAPTION),
             interval_picker,
         ]
-        .spacing(6)
+        .spacing(crate::ui::SP_8)
         .width(Length::Fill);
 
         let version_label = if let Some(v) = core_version {
@@ -279,36 +279,36 @@ pub fn render<'a>(
                 .on_press(Message::ForceCoreDownload);
             column![
                 row![
-                    text(tr(lang, "core_installed_status")).color(theme::SUCCESS).size(13).width(Length::Fill),
-                    text(version_label).color(text_muted).size(11)
+                    text(tr(lang, "core_installed_status")).color(theme::SUCCESS).size(theme::TYPE_SECTION).width(Length::Fill),
+                    text(version_label).color(text_muted).size(theme::TYPE_CAPTION)
                 ]
                 .width(Length::Fill)
-                .spacing(5)
+                .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
-                text(tr(lang, "help_reinstall_core")).color(text_muted).size(11),
+                text(tr(lang, "help_reinstall_core")).color(text_muted).size(theme::TYPE_CAPTION),
                 reinstall,
             ]
-            .spacing(8)
+            .spacing(crate::ui::SP_8)
             .width(Length::Fill)
             .into()
         } else {
             let btn = button(
                 text(tr(lang, "btn_download_core"))
-                    .size(12)
+                    .size(theme::TYPE_BTN_SM)
                     .width(Length::Fill)
                     .align_x(Alignment::Center)
             )
-            .padding([6, 12])
+            .padding(theme::BTN_PAD_SM)
             .width(Length::Fill)
             .style(theme::button_primary)
             .on_press(Message::TriggerCoreDownload);
                 
             row![
-                text(tr(lang, "core_not_found")).color(theme::DANGER).size(13).width(Length::Fill),
+                text(tr(lang, "core_not_found")).color(theme::DANGER).size(theme::TYPE_SECTION).width(Length::Fill),
                 btn
             ]
             .width(Length::Fill)
-            .spacing(10)
+            .spacing(crate::ui::SP_12)
             .align_y(Alignment::Center)
             .into()
         };
@@ -336,22 +336,22 @@ pub fn render<'a>(
             .style(theme::input_field);
 
         let latency_block = column![
-            text(tr(lang, "latency_test_url_label")).color(text_muted).size(12),
-            text(tr(lang, "help_latency_test")).color(text_muted).size(11),
+            text(tr(lang, "latency_test_url_label")).color(text_muted).size(theme::TYPE_BTN_SM),
+            text(tr(lang, "help_latency_test")).color(text_muted).size(theme::TYPE_CAPTION),
             latency_url_input.width(Length::Fill),
-            text(tr(lang, "latency_test_timeout_label")).color(text_muted).size(12),
+            text(tr(lang, "latency_test_timeout_label")).color(text_muted).size(theme::TYPE_BTN_SM),
             latency_timeout_input.width(Length::Fill),
         ]
-        .spacing(6)
+        .spacing(crate::ui::SP_8)
         .width(Length::Fill);
         
         let open_dir_btn = button(
             text(tr(lang, "btn_open_data_dir"))
-                .size(12)
+                .size(theme::TYPE_BTN_SM)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
         )
-        .padding([8, 12])
+        .padding(theme::BTN_PAD_MD)
         .width(Length::Fill)
         .style(theme::button_secondary)
         .on_press(Message::OpenDataDir);
@@ -362,23 +362,23 @@ pub fn render<'a>(
             .padding(10)
             .style(theme::input_field);
 
-        let clear_core_path_btn = button(text(tr(lang, "btn_clear_core_path")).size(12))
-            .padding([8, 12])
+        let clear_core_path_btn = button(text(tr(lang, "btn_clear_core_path")).size(theme::TYPE_BTN_SM))
+            .padding(theme::BTN_PAD_MD)
             .style(theme::button_secondary)
             .on_press(Message::ClearCorePath);
 
         let core_path_row = column![
-            text(tr(lang, "core_path_label")).color(text_muted).size(12),
-            text(tr(lang, "help_core_path")).color(text_muted).size(11),
+            text(tr(lang, "core_path_label")).color(text_muted).size(theme::TYPE_BTN_SM),
+            text(tr(lang, "help_core_path")).color(text_muted).size(theme::TYPE_CAPTION),
             core_path_input.width(Length::Fill),
             clear_core_path_btn,
         ]
-        .spacing(6)
+        .spacing(crate::ui::SP_8)
         .width(Length::Fill);
 
         let core_mgmt_card = container(
             column![
-                text(tr(lang, "core_components")).color(text_muted).size(13),
+                text(tr(lang, "core_components")).color(text_muted).size(theme::TYPE_SECTION),
                 core_downloader,
                 core_path_row,
                 latency_block,
@@ -386,7 +386,7 @@ pub fn render<'a>(
                 open_dir_btn,
                 install_status_row
             ]
-            .spacing(12)
+            .spacing(crate::ui::SP_12)
         )
         .padding(theme::CARD_PAD)
         .width(Length::Fill)
@@ -395,15 +395,15 @@ pub fn render<'a>(
         let app_update_card = {
             let update_info: Element<'_, Message> = match update_status {
                 UpdateStatus::NotChecked => {
-                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_check_update")).size(12))
-                        .padding([6, 12])
+                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_check_update")).size(theme::TYPE_BTN_SM))
+                        .padding(theme::BTN_PAD_SM)
                         .style(theme::button_primary)
                         .on_press(Message::CheckUpdate)
                         .into();
                     row![
                         text(format!("{}: v{}", tr(lang, "current_ver_label"), env!("CARGO_PKG_VERSION")))
                             .color(text_muted)
-                            .size(13)
+                            .size(theme::TYPE_SECTION)
                             .width(Length::Fill),
                         btn
                     ]
@@ -415,7 +415,7 @@ pub fn render<'a>(
                     row![
                         text(tr(lang, "status_checking"))
                             .color(text_muted)
-                            .size(13)
+                            .size(theme::TYPE_SECTION)
                             .width(Length::Fill)
                     ]
                     .width(Length::Fill)
@@ -423,15 +423,15 @@ pub fn render<'a>(
                     .into()
                 }
                 UpdateStatus::UpToDate => {
-                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_check_update")).size(12))
-                        .padding([6, 12])
+                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_check_update")).size(theme::TYPE_BTN_SM))
+                        .padding(theme::BTN_PAD_SM)
                         .style(theme::button_secondary)
                         .on_press(Message::CheckUpdate)
                         .into();
                     row![
                         text(tr(lang, "status_uptodate"))
                             .color(theme::SUCCESS)
-                            .size(13)
+                            .size(theme::TYPE_SECTION)
                             .width(Length::Fill),
                         btn
                     ]
@@ -440,15 +440,15 @@ pub fn render<'a>(
                     .into()
                 }
                 UpdateStatus::NewVersion(tag_name) => {
-                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_goto_github")).size(12))
-                        .padding([6, 12])
+                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_goto_github")).size(theme::TYPE_BTN_SM))
+                        .padding(theme::BTN_PAD_SM)
                         .style(theme::button_primary)
                         .on_press(Message::OpenUrl("https://github.com/zangge8855/sing-box-gui/releases/latest".to_string()))
                         .into();
                     row![
                         text(format!("{} {}", tr(lang, "status_new_available"), tag_name))
                             .color(theme::WARNING)
-                            .size(13)
+                            .size(theme::TYPE_SECTION)
                             .width(Length::Fill),
                         btn
                     ]
@@ -457,8 +457,8 @@ pub fn render<'a>(
                     .into()
                 }
                 UpdateStatus::Error(err) => {
-                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_check_update")).size(12))
-                        .padding([6, 12])
+                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_check_update")).size(theme::TYPE_BTN_SM))
+                        .padding(theme::BTN_PAD_SM)
                         .style(theme::button_secondary)
                         .on_press(Message::CheckUpdate)
                         .into();
@@ -466,7 +466,7 @@ pub fn render<'a>(
                         row![
                             text(tr(lang, "status_check_failed"))
                                 .color(theme::DANGER)
-                                .size(13)
+                                .size(theme::TYPE_SECTION)
                                 .width(Length::Fill),
                             btn
                         ]
@@ -474,9 +474,9 @@ pub fn render<'a>(
                         .align_y(Alignment::Center),
                         text(err.clone())
                             .color(theme::DANGER)
-                            .size(11)
+                            .size(theme::TYPE_CAPTION)
                     ]
-                    .spacing(8)
+                    .spacing(crate::ui::SP_8)
                     .width(Length::Fill)
                     .into()
                 }
@@ -484,10 +484,10 @@ pub fn render<'a>(
             
             container(
                 column![
-                    text(tr(lang, "app_update")).color(text_muted).size(13),
+                    text(tr(lang, "app_update")).color(text_muted).size(theme::TYPE_SECTION),
                     update_info
                 ]
-                .spacing(12)
+                .spacing(crate::ui::SP_12)
             )
             .padding(theme::CARD_PAD)
             .width(Length::Fill)
@@ -550,7 +550,7 @@ pub fn render<'a>(
             } else {
                 tr(lang, "btn_show_preview")
             })
-            .size(13)
+            .size(theme::TYPE_BTN_MD)
         )
         .padding(theme::BTN_PAD_MD)
         .style(theme::button_secondary)
@@ -563,7 +563,7 @@ pub fn render<'a>(
                     row![
                         text(tr(lang, "core_config_preview"))
                             .color(text_muted)
-                            .size(13)
+                            .size(theme::TYPE_SECTION)
                             .width(Length::Fill),
                         preview_toggle,
                     ]
@@ -572,17 +572,17 @@ pub fn render<'a>(
                         scrollable(
                             text(preview_json)
                                 .font(iced::Font::MONOSPACE)
-                                .size(12)
+                                .size(theme::TYPE_MONO)
                                 .color(text_primary)
                         )
                         .style(theme::scrollbar_style)
                         .height(Length::Fixed(280.0))
                         .width(Length::Fill)
                     )
-                    .padding(15)
+                    .padding(theme::CARD_PAD_DENSE)
                     .style(theme::console_bg)
                 ]
-                .spacing(12)
+                .spacing(crate::ui::SP_12)
             )
             .padding(theme::CARD_PAD)
             .width(Length::Fill)
@@ -593,7 +593,7 @@ pub fn render<'a>(
                 row![
                     text(tr(lang, "core_config_preview"))
                         .color(text_muted)
-                        .size(13)
+                        .size(theme::TYPE_SECTION)
                         .width(Length::Fill),
                     preview_toggle,
                 ]
@@ -609,11 +609,11 @@ pub fn render<'a>(
             main_row_layout,
             preview_card
         ]
-        .spacing(20)
+        .spacing(crate::ui::SP_20)
         .width(Length::Fill);
         
-        let save_btn = button(text(tr(lang, "btn_save_apply")).size(14))
-            .padding([10, 20])
+        let save_btn = button(text(tr(lang, "btn_save_apply")).size(theme::TYPE_BTN_LG))
+            .padding(theme::BTN_PAD_LG)
             .style(theme::button_primary)
             .on_press(Message::SaveSettings);
 

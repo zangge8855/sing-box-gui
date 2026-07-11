@@ -58,8 +58,8 @@ pub fn render<'a>(
             .width(if is_compact { Length::Fill } else { Length::Fixed(theme::SEARCH_WIDTH) })
             .style(theme::input_field);
 
-        let close_all_btn = button(text(tr(lang, "close_all_conn")).size(13))
-            .padding([8, 14])
+        let close_all_btn = button(text(tr(lang, "close_all_conn")).size(theme::TYPE_BTN_MD))
+            .padding(theme::BTN_PAD_MD)
             .style(theme::button_danger)
             .on_press(Message::CloseAllConnections);
 
@@ -132,7 +132,7 @@ pub fn render<'a>(
                     let ul_text = format_size(conn.upload);
                     
                     let close_btn = button(
-                        text(tr(lang, "close_conn")).size(11)
+                        text(tr(lang, "close_conn")).size(theme::TYPE_CAPTION)
                     )
                     .style(theme::button_danger)
                     .padding([4, 8])
@@ -143,7 +143,7 @@ pub fn render<'a>(
                             row![
                                 text(truncate_chars(&host_full, 48))
                                     .color(text_primary)
-                                    .size(13)
+                                    .size(theme::TYPE_SECTION)
                                     .font(iced::Font {
                                         weight: iced::font::Weight::Bold,
                                         ..Default::default()
@@ -162,7 +162,7 @@ pub fn render<'a>(
                                     .padding([2, 6])
                                     .style(theme::badge_bg),
                             ]
-                            .spacing(8)
+                            .spacing(crate::ui::SP_8)
                             .align_y(Alignment::Center),
 
                             text(format!("{}: {}", tr(lang, "col_process"), truncate_chars(&process_label, 36)))
@@ -180,7 +180,7 @@ pub fn render<'a>(
                             ]
                             .align_y(Alignment::Center)
                         ]
-                        .spacing(8)
+                        .spacing(crate::ui::SP_8)
                     )
                     .padding(theme::CARD_PAD_DENSE)
                     .width(Length::Fill)
@@ -200,7 +200,7 @@ pub fn render<'a>(
             let make_hdr_text = |s: &'static str| {
                 text(tr(lang, s))
                     .color(text_muted)
-                    .size(13)
+                    .size(theme::TYPE_SECTION)
                     .font(iced::Font {
                         weight: iced::font::Weight::Semibold,
                         ..Default::default()
@@ -229,7 +229,7 @@ pub fn render<'a>(
                     make_hdr_text("chains").width(Length::FillPortion(2)),
                     text("↓ / ↑")
                         .color(text_muted)
-                        .size(13)
+                        .size(theme::TYPE_SECTION)
                         .font(iced::Font {
                             weight: iced::font::Weight::Semibold,
                             ..Default::default()
@@ -294,7 +294,7 @@ pub fn render<'a>(
                     let ul_text = format_size(conn.upload);
                     
                     let close_btn = button(
-                        text(tr(lang, "close_conn")).size(12)
+                        text(tr(lang, "close_conn")).size(theme::TYPE_BTN_SM)
                     )
                     .style(theme::button_danger)
                     .padding([4, 8])
@@ -302,32 +302,32 @@ pub fn render<'a>(
                     
                     let row_content: Element<'_, Message> = if is_wide {
                         row![
-                            text(host_text).width(Length::FillPortion(3)).size(13).color(text_primary),
-                            text(process_text).width(Length::FillPortion(2)).size(12).color(text_muted),
-                            text(&conn.metadata.network).width(Length::FillPortion(1)).size(13).color(theme::SUCCESS),
-                            text(chains_text).width(Length::FillPortion(2)).size(13).color(text_muted),
-                            text(truncate_chars(&conn.rule, 16)).width(Length::FillPortion(1)).size(13).color(text_primary),
-                            text(dl_text).width(Length::FillPortion(1)).size(13).color(text_primary),
-                            text(ul_text).width(Length::FillPortion(1)).size(13).color(text_primary),
+                            text(host_text).width(Length::FillPortion(3)).size(theme::TYPE_SECTION).color(text_primary),
+                            text(process_text).width(Length::FillPortion(2)).size(theme::TYPE_BTN_SM).color(text_muted),
+                            text(&conn.metadata.network).width(Length::FillPortion(1)).size(theme::TYPE_SECTION).color(theme::SUCCESS),
+                            text(chains_text).width(Length::FillPortion(2)).size(theme::TYPE_SECTION).color(text_muted),
+                            text(truncate_chars(&conn.rule, 16)).width(Length::FillPortion(1)).size(theme::TYPE_SECTION).color(text_primary),
+                            text(dl_text).width(Length::FillPortion(1)).size(theme::TYPE_SECTION).color(text_primary),
+                            text(ul_text).width(Length::FillPortion(1)).size(theme::TYPE_SECTION).color(text_primary),
                             container(close_btn).width(Length::FillPortion(1)).center_x(Length::FillPortion(1))
                         ]
                         .align_y(Alignment::Center)
-                        .spacing(10)
+                        .spacing(crate::ui::SP_12)
                         .padding(10)
                         .into()
                     } else {
                         let net_rule = format!("{} · {}", conn.metadata.network, truncate_chars(&conn.rule, 14));
                         let traffic = format!("↓{} ↑{}", dl_text, ul_text);
                         row![
-                            text(host_text).width(Length::FillPortion(3)).size(13).color(text_primary),
-                            text(process_text).width(Length::FillPortion(2)).size(12).color(text_muted),
-                            text(net_rule).width(Length::FillPortion(2)).size(12).color(theme::SUCCESS),
-                            text(chains_text).width(Length::FillPortion(2)).size(12).color(text_muted),
-                            text(traffic).width(Length::FillPortion(2)).size(12).color(text_primary),
+                            text(host_text).width(Length::FillPortion(3)).size(theme::TYPE_SECTION).color(text_primary),
+                            text(process_text).width(Length::FillPortion(2)).size(theme::TYPE_BTN_SM).color(text_muted),
+                            text(net_rule).width(Length::FillPortion(2)).size(theme::TYPE_BTN_SM).color(theme::SUCCESS),
+                            text(chains_text).width(Length::FillPortion(2)).size(theme::TYPE_BTN_SM).color(text_muted),
+                            text(traffic).width(Length::FillPortion(2)).size(theme::TYPE_BTN_SM).color(text_primary),
                             container(close_btn).width(Length::FillPortion(1)).center_x(Length::FillPortion(1))
                         ]
                         .align_y(Alignment::Center)
-                        .spacing(10)
+                        .spacing(crate::ui::SP_12)
                         .padding(10)
                         .into()
                     };
@@ -376,7 +376,7 @@ pub fn render<'a>(
             .into();
             
             let col = column![page_title, list_content]
-                .spacing(20)
+                .spacing(crate::ui::SP_20)
                 .width(Length::Fill)
                 .height(Length::Fill);
 

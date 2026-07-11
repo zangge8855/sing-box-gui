@@ -1773,7 +1773,7 @@ impl App {
                         container(
                             text(icon_char.to_string())
                                 .font(Font::with_name("Material Icons"))
-                                .size(18)
+                                .size(ui::ICON_SIZE_LG)
                         )
                         .width(Length::Fill)
                         .align_x(Alignment::Center)
@@ -1785,15 +1785,15 @@ impl App {
                         indicator,
                         text(icon_char.to_string())
                             .font(Font::with_name("Material Icons"))
-                            .size(16),
+                            .size(ui::ICON_SIZE),
                         text(ui::i18n::tr(lang, key))
-                            .size(15)
+                            .size(ui::theme::TYPE_BODY)
                             .font(Font {
                                 weight: if active { iced::font::Weight::Bold } else { iced::font::Weight::Medium },
                                 ..Default::default()
                             })
                     ]
-                    .spacing(12)
+                    .spacing(ui::SP_12)
                     .align_y(Alignment::Center)
                     .into()
                 };
@@ -1810,7 +1810,7 @@ impl App {
                         btn,
                         container(
                             text(ui::i18n::tr(lang, key))
-                                .size(12)
+                                .size(ui::theme::TYPE_BTN_SM)
                                 .color(ui::theme::text_primary(theme)),
                         )
                         .padding([6, 10])

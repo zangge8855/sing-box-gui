@@ -26,15 +26,15 @@ pub fn render<'a>(
 
         let builtin_banner = container(
             column![
-                text(tr(lang, "rules_builtin_title")).color(text_primary).size(14).font(iced::Font {
+                text(tr(lang, "rules_builtin_title")).color(text_primary).size(theme::TYPE_HEADING).font(iced::Font {
                     weight: iced::font::Weight::Bold,
                     ..Default::default()
                 }),
-                text(tr(lang, "rules_builtin_desc")).color(text_muted).size(12),
+                text(tr(lang, "rules_builtin_desc")).color(text_muted).size(theme::TYPE_BTN_SM),
             ]
-            .spacing(6)
+            .spacing(crate::ui::SP_8)
         )
-        .padding(16)
+        .padding(theme::CARD_PAD_DENSE)
         .width(Length::Fill)
         .style(theme::status_card);
 
@@ -50,7 +50,7 @@ pub fn render<'a>(
                 let del_btn = button(
                     text("\u{E5CD}".to_string())
                         .font(iced::Font::with_name("Material Icons"))
-                        .size(16),
+                        .size(crate::ui::ICON_SIZE),
                 )
                     .style(theme::button_secondary)
                     .padding([4, 8])
@@ -60,11 +60,11 @@ pub fn render<'a>(
                     });
                     
                 let item_row = row![
-                    text(item).color(text_primary).size(13).width(Length::Fill),
+                    text(item).color(text_primary).size(theme::TYPE_SECTION).width(Length::Fill),
                     del_btn
                 ]
                 .align_y(Alignment::Center)
-                .spacing(10)
+                .spacing(crate::ui::SP_12)
                 .padding([4, 8]);
                 
                 list_col = list_col.push(container(item_row).style(move |t| theme::list_item_style(t, false, false)));
@@ -74,7 +74,7 @@ pub fn render<'a>(
                 container(
                     text(tr(lang, "rules_desc"))
                         .color(theme::text_tertiary(theme))
-                        .size(12)
+                        .size(theme::TYPE_BTN_SM)
                         .align_x(Alignment::Center)
                 )
                 .width(Length::Fill)
@@ -107,7 +107,7 @@ pub fn render<'a>(
             let add_btn = button(
                 text("\u{E145}".to_string())
                     .font(iced::Font::with_name("Material Icons"))
-                    .size(18),
+                    .size(crate::ui::ICON_SIZE_LG),
             )
                 .style(theme::button_primary)
                 .padding([9, 14])
@@ -119,12 +119,12 @@ pub fn render<'a>(
                         weight: iced::font::Weight::Semibold,
                         ..Default::default()
                     }),
-                    row![input_box, add_btn].spacing(10).align_y(Alignment::Center),
+                    row![input_box, add_btn].spacing(crate::ui::SP_12).align_y(Alignment::Center),
                     list_content
                 ]
-                .spacing(12)
+                .spacing(crate::ui::SP_12)
             )
-            .padding(16)
+            .padding(theme::CARD_PAD_DENSE)
             .width(Length::Fill)
             .style(theme::card_bg)
         };
