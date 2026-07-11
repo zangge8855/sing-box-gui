@@ -93,6 +93,13 @@ mod tests {
                 || &bytes[0..4] == b"ttcf");
         assert!(is_ttf, "material-icons.ttf does not look like a font header");
     }
+
+    #[test]
+    fn check_icon_loading() {
+        let bytes = include_bytes!("../../assets/logo.jpg");
+        let icon = iced::window::icon::from_file_data(bytes, None);
+        assert!(icon.is_ok(), "Failed to load icon: {:?}", icon.err());
+    }
 }
 
 // ── Spacing scale ────────────────────────────────────────────────────────────

@@ -3194,8 +3194,13 @@ fn is_remote_version_newer(local_pkg_version: &str, remote_tag: &str) -> bool {
 }
 
 fn main() -> iced::Result {
-    let icon_bytes = include_bytes!("../assets/logo.jpg");
-    let icon = iced::window::icon::from_file_data(icon_bytes, None).ok();
+    #[cfg(target_os = "windows")]
+    let icon = None;
+    #[cfg(not(target_os = "windows"))]
+    let icon = {
+        let icon_bytes = include_bytes!("../assets/logo.jpg");
+        iced::window::icon::from_file_data(icon_bytes, None).ok()
+    };
     
     let window_settings = iced::window::Settings {
         size: iced::Size::new(1080.0, 750.0),
