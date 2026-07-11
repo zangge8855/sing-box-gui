@@ -70,28 +70,53 @@ fn format_unexpected_exit(exit_code: Option<i32>) -> String {
     }
 }
 
+fn decode_log_line(bytes: &[u8]) -> String {
+    // Try UTF-8 first
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+    // Fallback to GBK on Windows, or default lossy UTF-8
+    #[cfg(target_os = "windows")]
+    {
+        let (cow, _, had_errors) = encoding_rs::GBK.decode(bytes);
+        if !had_errors {
+            return cow.into_owned();
+        }
+    }
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
 fn spawn_log_forwarder<R: Read + Send + 'static>(
     pipe: R,
     sender: UnboundedSender<String>,
     early_buf: Arc<Mutex<Vec<String>>>,
 ) {
     thread::spawn(move || {
-        let reader = BufReader::new(pipe);
-        for line in reader.lines() {
-            if let Ok(line_str) = line {
-                if let Ok(mut buf) = early_buf.lock() {
-                    // Ring buffer capped at 500 lines. Once full we drop the
-                    // oldest entries so the final lines on a FATAL early-exit
-                    // (whichever are closer to the actual error) stay visible
-                    // — no silent loss mid-grace. Drop in chunks to amortize.
-                    if buf.len() >= 500 {
-                        let drop = buf.len().saturating_sub(400) + 50;
-                        buf.drain(..drop);
-                    }
-                    buf.push(line_str.clone());
-                }
-                let _ = sender.send(line_str);
+        let mut reader = BufReader::new(pipe);
+        let mut buf = Vec::new();
+        while let Ok(n) = reader.read_until(b'\n', &mut buf) {
+            if n == 0 {
+                break; // EOF
             }
+            // Trim trailing newline characters (\r and \n)
+            while buf.ends_with(&[b'\n']) || buf.ends_with(&[b'\r']) {
+                buf.pop();
+            }
+            let line_str = decode_log_line(&buf);
+            buf.clear();
+            
+            if let Ok(mut buf_guard) = early_buf.lock() {
+                // Ring buffer capped at 500 lines. Once full we drop the
+                // oldest entries so the final lines on a FATAL early-exit
+                // (whichever are closer to the actual error) stay visible
+                // — no silent loss mid-grace. Drop in chunks to amortize.
+                if buf_guard.len() >= 500 {
+                    let drop = buf_guard.len().saturating_sub(400) + 50;
+                    buf_guard.drain(..drop);
+                }
+                buf_guard.push(line_str.clone());
+            }
+            let _ = sender.send(line_str);
         }
     });
 }
@@ -679,5 +704,19 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
         assert!(result.is_ok(), "expected Ok, got {result:?}");
+    }
+
+    #[test]
+    fn test_decode_log_line() {
+        let utf8_bytes = "hello world 国外".as_bytes();
+        let decoded = decode_log_line(utf8_bytes);
+        assert_eq!(decoded, "hello world 国外");
+
+        #[cfg(target_os = "windows")]
+        {
+            let gbk_bytes = b"hello \xb9\xfa\xcd\xe2"; // "hello 国外" in GBK
+            let decoded_gbk = decode_log_line(gbk_bytes);
+            assert_eq!(decoded_gbk, "hello 国外");
+        }
     }
 }

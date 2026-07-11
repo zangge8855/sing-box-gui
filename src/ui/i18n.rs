@@ -41,6 +41,7 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "toast_update_downloading",
     "toast_update_installing",
     "toast_update_no_asset",
+    "more_nodes_hint",
 ];
 
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
@@ -104,6 +105,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "no_matching_logs" => "No log lines match the current filter.",
             "empty_logs_hint" => "Start the core to stream live logs here.",
             "rules_builtin_title" => "Built-in routing",
+            "more_nodes_hint" => "... and {} more nodes. Use search to filter.",
             "rules_builtin_desc" => "Rule mode already bypasses private LAN and China mainland (geosite-cn / geoip-cn). Custom rules below are applied on top and take effect after core restart.",
             
             // Dashboard
@@ -519,6 +521,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_download_install" => "下载并重启",
             "status_downloading_update" => "正在下载更新…",
             "toast_update_downloading" => "正在后台下载更新…",
+            "more_nodes_hint" => "... 还有 {} 个节点。使用搜索以过滤。",
             "toast_update_installing" => "正在安装更新并重启…",
             "toast_update_no_asset" => "当前平台没有可自动安装的安装包，请打开 GitHub 手动下载。",
             "status_check_failed" => "检查更新失败:",

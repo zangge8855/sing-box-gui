@@ -239,8 +239,16 @@ pub fn render<'a>(
                         theme,
                     )
                 } else {
+                    let total_nodes = filtered_sub_nodes.len();
+                    let max_render = 120;
+                    let display_nodes = if total_nodes > max_render {
+                        &filtered_sub_nodes[..max_render]
+                    } else {
+                        &filtered_sub_nodes[..]
+                    };
+
                     let mut card_elements: Vec<Element<'a, Message>> = Vec::new();
-                    for node_name in filtered_sub_nodes {
+                    for &node_name in display_nodes {
                         let active = Some(node_name.as_str()) == group_info_cloned.now.as_deref();
                         
                         let mut latency = None;
@@ -383,6 +391,22 @@ pub fn render<'a>(
                         }
                         grid_rows = grid_rows.push(current_row);
                     }
+
+                    if total_nodes > max_render {
+                        let more_count = total_nodes - max_render;
+                        let hint_str = tr(lang, "more_nodes_hint").replace("{}", &more_count.to_string());
+                        grid_rows = grid_rows.push(
+                            container(
+                                text(hint_str)
+                                    .color(text_muted)
+                                    .size(theme::TYPE_CAPTION)
+                            )
+                            .width(Length::Fill)
+                            .align_x(Alignment::Center)
+                            .padding(12)
+                        );
+                    }
+                    
                     scrollable(grid_rows).style(theme::scrollbar_style).height(Length::Fill).into()
                 }
             } else {
@@ -515,9 +539,17 @@ pub fn render<'a>(
             
             let header_actions = make_header_actions(search_query, is_compact);
             
+            let total_nodes = filtered_nodes.len();
+            let max_render = 120;
+            let display_nodes = if total_nodes > max_render {
+                &filtered_nodes[..max_render]
+            } else {
+                &filtered_nodes[..]
+            };
+
             let mut card_elements: Vec<Element<'_, Message>> = Vec::new();
             
-            for node in &filtered_nodes {
+            for &node in display_nodes {
                 let is_selected = Some(node.name.as_str()) == selected_node;
                 
                 let latency_font = theme::metric_font();
@@ -618,6 +650,21 @@ pub fn render<'a>(
                     current_row = current_row.push(container(text("")).width(Length::FillPortion(1)));
                 }
                 grid_rows = grid_rows.push(current_row);
+            }
+            
+            if total_nodes > max_render {
+                let more_count = total_nodes - max_render;
+                let hint_str = tr(lang, "more_nodes_hint").replace("{}", &more_count.to_string());
+                grid_rows = grid_rows.push(
+                    container(
+                        text(hint_str)
+                            .color(text_muted)
+                            .size(theme::TYPE_CAPTION)
+                    )
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center)
+                    .padding(12)
+                );
             }
             
             let grid_content: Element<'_, Message> = scrollable(grid_rows).style(theme::scrollbar_style).height(Length::Fill).into();

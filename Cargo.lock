@@ -4885,6 +4885,7 @@ dependencies = [
  "base64",
  "chrono",
  "dirs",
+ "encoding_rs",
  "flate2",
  "futures",
  "iced",
