@@ -1,13 +1,13 @@
 # sing-box GUI
 
 ![Build Status](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml/badge.svg)
-![Version](https://img.shields.io/badge/version-2026.7.9-blue.svg)
+![Version](https://img.shields.io/badge/version-2026.7.11-blue.svg)
 
 <p align="center">
   <img src="assets/logo.jpg" alt="sing-box GUI Logo" width="128" height="128" style="border-radius: 20px;"/>
 </p>
 
-An elegant, feature-rich, and clearly-structured sing-box client written in pure Rust using [Iced 0.14.0](https://github.com/iced-rs/iced), natively adapted and polished for the Windows platform. The version number for this release is **2026.7.9**.
+An elegant, feature-rich, and clearly-structured sing-box client written in pure Rust using [Iced 0.14.0](https://github.com/iced-rs/iced), natively adapted and polished for the Windows platform. The version number for this release is **2026.7.11**.
 
 ## 🌟 Core Features
 
@@ -91,7 +91,7 @@ This project is open-sourced under the **GNU General Public License v3.0** (GPL-
 # sing-box GUI (中文说明)
 
 ![Build Status](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml/badge.svg)
-![Version](https://img.shields.io/badge/version-2026.7.9-blue.svg)
+![Version](https://img.shields.io/badge/version-2026.7.11-blue.svg)
 
 <p align="center">
   <img src="assets/logo.jpg" alt="sing-box GUI Logo" width="128" height="128" style="border-radius: 20px;"/>
