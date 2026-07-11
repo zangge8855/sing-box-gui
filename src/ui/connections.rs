@@ -218,7 +218,7 @@ pub fn render<'a>(
                     make_hdr_text("upload").width(Length::FillPortion(1)),
                     Space::new().width(Length::FillPortion(1))
                 ]
-                .spacing(10)
+                .spacing(crate::ui::SP_12)
                 .padding([0, 10])
                 .into()
             } else {
@@ -237,7 +237,7 @@ pub fn render<'a>(
                         .width(Length::FillPortion(2)),
                     Space::new().width(Length::FillPortion(1))
                 ]
-                .spacing(10)
+                .spacing(crate::ui::SP_12)
                 .padding([0, 10])
                 .into()
             };

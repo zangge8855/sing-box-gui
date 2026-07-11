@@ -592,6 +592,8 @@ pub fn list_item_zebra(theme: &iced::Theme, is_selected: bool, is_hovered: bool,
         };
         style.background = Some(Background::Color(bg));
     }
+    style.border.width = 0.0;
+    style.border.radius = 0.0.into();
     style
 }
 

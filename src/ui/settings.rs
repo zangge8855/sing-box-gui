@@ -225,7 +225,7 @@ pub fn render<'a>(
                 column![lang_label, lang_selector].spacing(crate::ui::SP_8).width(Length::FillPortion(1)),
                 column![theme_label, theme_selector].spacing(crate::ui::SP_8).width(Length::FillPortion(1))
             ]
-            .spacing(crate::ui::SP_20)
+            .spacing(theme::GRID_GAP)
             .width(Length::Fill)
             .into()
         };
@@ -550,12 +550,12 @@ pub fn render<'a>(
 
         let mid_col = column![
             network_dns_card,
+            app_prefs_card,
         ]
         .spacing(20)
         .width(if is_compact { Length::Fill } else { Length::FillPortion(1) });
 
         let app_and_core_col = column![
-            app_prefs_card,
             core_mgmt_card,
             app_update_card
         ]
