@@ -383,8 +383,9 @@ pub fn render<'a>(
                     scrollable(grid_rows).style(theme::scrollbar_style).height(Length::Fill).into()
                 }
             } else {
+                // Group has no `all` node list (not a failed search filter).
                 crate::ui::empty_state(
-                    tr(lang, "no_matching_nodes"),
+                    tr(lang, "no_nodes"),
                     Some(tr(lang, "no_proxy_groups")),
                     None,
                     theme,
@@ -625,7 +626,7 @@ pub fn render<'a>(
             let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
             
             let col = column![header, grid_content]
-                .spacing(20)
+                .spacing(crate::ui::SP_20)
                 .width(Length::Fill)
                 .height(Length::Fill);
 
@@ -633,5 +634,35 @@ pub fn render<'a>(
         });
             
         content.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// When a group has no `all` list, the empty-state must not use search-filter framing.
+    #[test]
+    fn empty_group_all_none_uses_no_nodes_not_search_copy() {
+        let src = include_str!("proxies.rs");
+        let code = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("proxies.rs production source");
+        // Locate the branch that handles missing `all` (after filtered grid).
+        assert!(
+            code.contains("Group has no `all` node list"),
+            "expected documented empty-all branch"
+        );
+        // The no-all branch must title with no_nodes (or no_proxy_groups), never only search framing.
+        let marker = "Group has no `all` node list";
+        let idx = code.find(marker).expect("marker");
+        let window = &code[idx..idx.saturating_add(280).min(code.len())];
+        assert!(
+            window.contains("\"no_nodes\"") || window.contains("\"no_proxy_groups\""),
+            "empty-all branch must use no_nodes/no_proxy_groups; window={window}"
+        );
+        assert!(
+            !window.contains("\"no_matching_nodes\""),
+            "empty-all branch must not use search framing no_matching_nodes; window={window}"
+        );
     }
 }

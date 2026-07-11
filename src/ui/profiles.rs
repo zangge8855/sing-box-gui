@@ -38,53 +38,53 @@ pub fn render<'a>(
         let input = text_input(tr(lang, "sub_url_placeholder"), url_input)
             .on_input(Message::SubscriptionInputChanged)
             .on_submit(Message::DownloadSubscription)
-            .padding(12)
+            .padding(crate::ui::SP_12)
             .width(Length::Fill)
             .style(theme::input_field);
             
         let download_btn = if downloading {
             button(
                 text(tr(lang, "btn_downloading"))
-                    .size(14)
+                    .size(theme::TYPE_BTN_LG)
                     .align_x(Alignment::Center)
             )
-            .padding([12, 24])
+            .padding(theme::BTN_PAD_LG)
             .style(theme::button_secondary)
         } else {
             button(
                 text(tr(lang, "btn_download"))
-                    .size(14)
+                    .size(theme::TYPE_BTN_LG)
                     .align_x(Alignment::Center)
             )
-            .padding([12, 24])
+            .padding(theme::BTN_PAD_LG)
             .style(theme::button_primary)
             .on_press(Message::DownloadSubscription)
         };
         
         let open_folder_btn = button(
             text(tr(lang, "btn_open_folder"))
-                .size(14)
+                .size(theme::TYPE_BTN_LG)
                 .align_x(Alignment::Center)
         )
-        .padding([12, 24])
+        .padding(theme::BTN_PAD_LG)
         .style(theme::button_secondary)
         .on_press(Message::OpenProfilesFolder);
 
         let clipboard_btn = button(
             text(tr(lang, "btn_import_clipboard"))
-                .size(14)
+                .size(theme::TYPE_BTN_LG)
                 .align_x(Alignment::Center)
         )
-        .padding([12, 16])
+        .padding(theme::BTN_PAD_LG)
         .style(theme::button_secondary)
         .on_press(Message::ImportFromClipboard);
 
         let file_btn = button(
             text(tr(lang, "btn_import_file"))
-                .size(14)
+                .size(theme::TYPE_BTN_LG)
                 .align_x(Alignment::Center)
         )
-        .padding([12, 16])
+        .padding(theme::BTN_PAD_LG)
         .style(theme::button_secondary)
         .on_press(Message::ImportLocalFile);
         
@@ -95,16 +95,16 @@ pub fn render<'a>(
                     download_btn.width(Length::Fill),
                     open_folder_btn.width(Length::Fill)
                 ]
-                .spacing(12)
+                .spacing(crate::ui::SP_12)
                 .width(Length::Fill),
                 row![
                     clipboard_btn.width(Length::Fill),
                     file_btn.width(Length::Fill)
                 ]
-                .spacing(12)
+                .spacing(crate::ui::SP_12)
                 .width(Length::Fill)
             ]
-            .spacing(12)
+            .spacing(crate::ui::SP_12)
             .width(Length::Fill)
             .into()
         } else {
@@ -114,7 +114,7 @@ pub fn render<'a>(
                     download_btn,
                     open_folder_btn
                 ]
-                .spacing(12)
+                .spacing(crate::ui::SP_12)
                 .align_y(Alignment::Center)
                 .width(Length::Fill),
                 row![
@@ -122,34 +122,34 @@ pub fn render<'a>(
                     file_btn,
                     iced::widget::Space::new().width(Length::Fill),
                 ]
-                .spacing(12)
+                .spacing(crate::ui::SP_12)
                 .align_y(Alignment::Center)
             ]
-            .spacing(10)
+            .spacing(crate::ui::SP_12)
             .width(Length::Fill)
             .into()
         };
         
         let add_form = container(
             column![
-                text(tr(lang, "import_sub")).color(text_muted).size(14),
+                text(tr(lang, "import_sub")).color(text_muted).size(theme::TYPE_HEADING),
                 form_layout
             ]
-            .spacing(10)
+            .spacing(crate::ui::SP_12)
         )
-        .padding(20)
+        .padding(theme::CARD_PAD)
         .style(theme::card_bg);
         
         let error_banner = if let Some(err) = profile_error {
             Some(
                 container(
                     row![
-                        text("⚠️ ").size(14),
-                        text(err).size(13).color(theme::DANGER)
+                        text("⚠️ ").size(theme::TYPE_HEADING),
+                        text(err).size(theme::TYPE_SECTION).color(theme::DANGER)
                     ]
                     .align_y(Alignment::Center)
                 )
-                .padding(12)
+                .padding(crate::ui::SP_12)
                 .width(Length::Fill)
                 .style(|t| theme::tinted_banner(t, theme::DANGER))
             )
@@ -159,34 +159,23 @@ pub fn render<'a>(
         
         // Grid system for profiles list (Responsive Grid)
         let grid_content: Element<'a, Message> = if gui_config.subscriptions.is_empty() {
-            container(
-                column![
-                    text(tr(lang, "no_profiles"))
-                        .color(text_muted)
-                        .size(14),
-                    text(tr(lang, "empty_profiles_hint"))
-                        .color(theme::text_tertiary(theme))
-                        .size(12),
-                    row![
-                        button(text(tr(lang, "btn_import_clipboard")).size(13))
-                            .padding([8, 14])
-                            .style(theme::button_primary)
-                            .on_press(Message::ImportFromClipboard),
-                        button(text(tr(lang, "btn_import_file")).size(13))
-                            .padding([8, 14])
-                            .style(theme::button_secondary)
-                            .on_press(Message::ImportLocalFile),
-                    ]
-                    .spacing(10)
-                ]
-                .spacing(12)
-                .align_x(Alignment::Center)
+            let cta = row![
+                button(text(tr(lang, "btn_import_clipboard")).size(theme::TYPE_BTN_MD))
+                    .padding(theme::BTN_PAD_MD)
+                    .style(theme::button_primary)
+                    .on_press(Message::ImportFromClipboard),
+                button(text(tr(lang, "btn_import_file")).size(theme::TYPE_BTN_MD))
+                    .padding(theme::BTN_PAD_MD)
+                    .style(theme::button_secondary)
+                    .on_press(Message::ImportLocalFile),
+            ]
+            .spacing(crate::ui::SP_12);
+            crate::ui::empty_state(
+                tr(lang, "no_profiles"),
+                Some(tr(lang, "empty_profiles_hint")),
+                Some(cta.into()),
+                theme,
             )
-            .padding(40)
-            .width(Length::Fill)
-            .center_x(Length::Fill)
-            .style(theme::card_bg)
-            .into()
         } else {
             let mut card_elements: Vec<Element<'a, Message>> = Vec::new();
             
@@ -194,11 +183,11 @@ pub fn render<'a>(
                 let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
                 
                 let update_btn = if downloading {
-                    button(text(tr(lang, "btn_downloading")).size(12))
+                    button(text(tr(lang, "btn_downloading")).size(theme::TYPE_BTN_SM))
                         .padding(theme::BTN_PAD_SM)
                         .style(theme::button_secondary)
                 } else {
-                    button(text(tr(lang, "btn_update")).size(12))
+                    button(text(tr(lang, "btn_update")).size(theme::TYPE_BTN_SM))
                         .padding(theme::BTN_PAD_SM)
                         .style(theme::button_primary)
                         .on_press(Message::UpdateSubscription(profile.id.clone()))
@@ -206,20 +195,20 @@ pub fn render<'a>(
           
                 let delete_actions: Element<'a, Message> = if confirm_delete_id == Some(profile.id.as_str()) {
                     row![
-                        button(text(tr(lang, "btn_confirm_delete")).size(12))
+                        button(text(tr(lang, "btn_confirm_delete")).size(theme::TYPE_BTN_SM))
                             .padding(theme::BTN_PAD_SM)
                             .style(theme::button_danger)
                             .on_press(Message::ConfirmDeleteProfile),
-                        button(text(tr(lang, "btn_cancel")).size(12))
+                        button(text(tr(lang, "btn_cancel")).size(theme::TYPE_BTN_SM))
                             .padding(theme::BTN_PAD_SM)
                             .style(theme::button_secondary)
                             .on_press(Message::CancelDeleteProfile),
                     ]
-                    .spacing(6)
+                    .spacing(crate::ui::SP_8)
                     .align_y(Alignment::Center)
                     .into()
                 } else {
-                    button(text(tr(lang, "btn_delete")).size(12))
+                    button(text(tr(lang, "btn_delete")).size(theme::TYPE_BTN_SM))
                         .padding(theme::BTN_PAD_SM)
                         .style(theme::button_secondary)
                         .on_press(Message::RequestDeleteProfile(profile.id.clone()))
@@ -228,7 +217,7 @@ pub fn render<'a>(
                     
                 let show_more = more_id.as_deref() == Some(profile.id.as_str());
                 let more_btn = button(
-                    text(if show_more { tr(lang, "btn_less") } else { tr(lang, "btn_more") }).size(12)
+                    text(if show_more { tr(lang, "btn_less") } else { tr(lang, "btn_more") }).size(theme::TYPE_BTN_SM)
                 )
                 .padding(theme::BTN_PAD_SM)
                 .style(theme::button_secondary)
@@ -244,9 +233,9 @@ pub fn render<'a>(
                 };
                 
                 // Primary actions only: select / update / delete (+ more toggle)
-                let mut actions_row = row![].spacing(8).align_y(Alignment::Center);
+                let mut actions_row = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
                 if !is_active {
-                    let select_btn = button(text(tr(lang, "btn_select")).size(12))
+                    let select_btn = button(text(tr(lang, "btn_select")).size(theme::TYPE_BTN_SM))
                         .padding(theme::BTN_PAD_SM)
                         .style(theme::button_secondary)
                         .on_press(Message::SelectProfile(profile.id.clone()));
@@ -260,16 +249,16 @@ pub fn render<'a>(
                 let secondary_row: Option<Element<'a, Message>> = if show_more {
                     Some(
                         row![
-                            button(text(tr(lang, "btn_edit_url")).size(12))
+                            button(text(tr(lang, "btn_edit_url")).size(theme::TYPE_BTN_SM))
                                 .padding(theme::BTN_PAD_SM)
                                 .style(theme::button_secondary)
                                 .on_press(Message::StartEditProfile(profile.id.clone())),
-                            button(text(tr(lang, "btn_edit")).size(12))
+                            button(text(tr(lang, "btn_edit")).size(theme::TYPE_BTN_SM))
                                 .padding(theme::BTN_PAD_SM)
                                 .style(theme::button_secondary)
                                 .on_press(Message::EditProfile(profile.id.clone())),
                         ]
-                        .spacing(8)
+                        .spacing(crate::ui::SP_8)
                         .align_y(Alignment::Center)
                         .into(),
                     )
@@ -286,50 +275,50 @@ pub fn render<'a>(
                     let name_input = text_input(tr(lang, "placeholder_profile_name"), &editing_name)
                         .on_input(Message::EditProfileNameChanged)
                         .padding(10)
-                        .size(13)
+                        .size(theme::TYPE_SECTION)
                         .style(theme::input_field);
                         
                     let url_input_field = text_input(tr(lang, "placeholder_profile_url"), &editing_url)
                         .on_input(Message::EditProfileUrlChanged)
                         .padding(10)
-                        .size(13)
+                        .size(theme::TYPE_SECTION)
                         .style(theme::input_field);
                         
-                    let save_btn: Element<'a, Message> = button(text(tr(lang, "btn_save")).size(12))
-                        .padding([6, 12])
+                    let save_btn: Element<'a, Message> = button(text(tr(lang, "btn_save")).size(theme::TYPE_BTN_SM))
+                        .padding(theme::BTN_PAD_SM)
                         .style(theme::button_primary)
                         .on_press(Message::SaveProfileEdit)
                         .into();
                         
-                    let cancel_btn: Element<'a, Message> = button(text(tr(lang, "btn_cancel")).size(12))
-                        .padding([6, 12])
+                    let cancel_btn: Element<'a, Message> = button(text(tr(lang, "btn_cancel")).size(theme::TYPE_BTN_SM))
+                        .padding(theme::BTN_PAD_SM)
                         .style(theme::button_secondary)
                         .on_press(Message::CancelProfileEdit)
                         .into();
                         
                     let form_col = column![
-                        text(tr(lang, "edit_link_title")).color(text_primary).size(14).font(iced::Font {
+                        text(tr(lang, "edit_link_title")).color(text_primary).size(theme::TYPE_HEADING).font(iced::Font {
                             weight: iced::font::Weight::Bold,
                             ..Default::default()
                         }),
                         column![
-                            text(tr(lang, "placeholder_profile_name")).color(text_muted).size(11),
+                            text(tr(lang, "placeholder_profile_name")).color(text_muted).size(theme::TYPE_CAPTION),
                             name_input
                         ].spacing(4),
                         column![
-                            text(tr(lang, "placeholder_profile_url")).color(text_muted).size(11),
+                            text(tr(lang, "placeholder_profile_url")).color(text_muted).size(theme::TYPE_CAPTION),
                             url_input_field
                         ].spacing(4),
                         row![
                             iced::widget::Space::new().width(Length::Fill),
                             cancel_btn,
                             save_btn
-                        ].spacing(10)
+                        ].spacing(crate::ui::SP_12)
                     ]
-                    .spacing(12);
+                    .spacing(crate::ui::SP_12);
                     
                     container(form_col)
-                        .padding(20)
+                        .padding(theme::CARD_PAD)
                         .width(Length::Fill)
                         .style(theme::card_selected)
                 } else {
@@ -338,7 +327,7 @@ pub fn render<'a>(
                             let total = profile.traffic_total.unwrap_or(0);
                             let label = text(format_traffic_usage_lang(lang, u, d, total))
                                 .color(theme::ACCENT_BLUE)
-                                .size(11);
+                                .size(theme::TYPE_CAPTION);
                             if let Some(ratio) = traffic_usage_ratio(u, d, total) {
                                 let bar_color = if ratio >= 0.9 {
                                     theme::DANGER
@@ -437,7 +426,7 @@ pub fn render<'a>(
                         .align_y(Alignment::Center)
                         .width(Length::Fill)
                     ]
-                    .spacing(12);
+                    .spacing(crate::ui::SP_12);
 
                     if let Some(sec) = secondary_row {
                         card_layout = card_layout.push(sec);
@@ -492,20 +481,22 @@ pub fn render<'a>(
         let mut main_layout_col = column![
             add_form,
         ]
-        .spacing(20)
+        .spacing(crate::ui::SP_20)
         .width(Length::Fill);
         
         if let Some(banner) = error_banner {
             main_layout_col = main_layout_col.push(banner);
         }
         
-        main_layout_col = main_layout_col.push(text(tr(lang, "imported_profiles")).color(text_muted).size(14));
+        main_layout_col = main_layout_col.push(
+            text(tr(lang, "imported_profiles")).color(text_muted).size(theme::TYPE_HEADING)
+        );
         main_layout_col = main_layout_col.push(grid_content);
         
         let header = page_header("tab_profiles", lang, None, theme, is_compact);
         
         let col = column![header, main_layout_col]
-            .spacing(20)
+            .spacing(crate::ui::SP_20)
             .width(Length::Fill)
             .height(Length::Fill);
 
@@ -575,5 +566,49 @@ mod tests {
             mask_sensitive_url("invalid_url_string"),
             "invalid_url_string"
         );
+    }
+
+    /// Structural: shipped profiles UI source must not use bare numeric text sizes
+    /// for body/button labels — TYPE_* tokens are the source of truth.
+    #[test]
+    fn profiles_source_uses_type_tokens_not_bare_sizes() {
+        let src = include_str!("profiles.rs");
+        // Strip this test module so assertions below don't match themselves.
+        let code = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("profiles.rs should have a test module");
+        // Bare text/button size literals like .size(12) / .size(14.0)
+        let bare_size = regex_lite_count_bare_sizes(code);
+        assert_eq!(
+            bare_size, 0,
+            "profiles.rs still has {bare_size} bare .size(N) literals outside tests"
+        );
+        assert!(
+            code.contains("theme::TYPE_"),
+            "profiles.rs must reference theme::TYPE_* tokens"
+        );
+    }
+
+    fn regex_lite_count_bare_sizes(code: &str) -> usize {
+        // Match .size(digits) or .size(digits.digits) — not TYPE_* or variables
+        let mut count = 0;
+        let bytes = code.as_bytes();
+        let needle = b".size(";
+        let mut i = 0;
+        while i + needle.len() < bytes.len() {
+            if &bytes[i..i + needle.len()] == needle {
+                let rest = &code[i + needle.len()..];
+                let end = rest.find(')').unwrap_or(0);
+                let arg = rest[..end].trim();
+                if !arg.is_empty() && arg.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                    count += 1;
+                }
+                i += needle.len() + end.max(1);
+            } else {
+                i += 1;
+            }
+        }
+        count
     }
 }
