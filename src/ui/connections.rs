@@ -6,10 +6,24 @@ use crate::api::Connection;
 use crate::ui::{page_header, CONNECTIONS_TABLE_W, CONNECTIONS_WIDE_W};
 use crate::ui::util::{format_size, truncate_chars};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConnectionSortOption {
+    sort: crate::state::ConnectionSort,
+    label: String,
+}
+
+impl std::fmt::Display for ConnectionSortOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
+
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
     active_connections: &'a [Connection],
     search_query: &'a str,
+    connections_sort: crate::state::ConnectionSort,
+    connections_sort_desc: bool,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -26,7 +40,7 @@ pub fn render<'a>(
         let is_wide = size.width >= CONNECTIONS_WIDE_W;
         
         // Filter connections
-        let filtered_connections: Vec<&Connection> = if query_str.trim().is_empty() {
+        let mut filtered_connections: Vec<&Connection> = if query_str.trim().is_empty() {
             active_connections.iter().collect()
         } else {
             let q = query_str.to_lowercase();
@@ -52,6 +66,80 @@ pub fn render<'a>(
                 .collect()
         };
         
+        // Sort connections
+        match connections_sort {
+            crate::state::ConnectionSort::None => {}
+            crate::state::ConnectionSort::Host => {
+                filtered_connections.sort_by(|a, b| {
+                    let ha = if !a.metadata.host.is_empty() { &a.metadata.host } else { &a.metadata.destination_ip };
+                    let hb = if !b.metadata.host.is_empty() { &b.metadata.host } else { &b.metadata.destination_ip };
+                    if connections_sort_desc {
+                        hb.to_lowercase().cmp(&ha.to_lowercase())
+                    } else {
+                        ha.to_lowercase().cmp(&hb.to_lowercase())
+                    }
+                });
+            }
+            crate::state::ConnectionSort::Process => {
+                filtered_connections.sort_by(|a, b| {
+                    let pa = a.metadata.process_display().unwrap_or_default();
+                    let pb = b.metadata.process_display().unwrap_or_default();
+                    if connections_sort_desc {
+                        pb.to_lowercase().cmp(&pa.to_lowercase())
+                    } else {
+                        pa.to_lowercase().cmp(&pb.to_lowercase())
+                    }
+                });
+            }
+            crate::state::ConnectionSort::Network => {
+                filtered_connections.sort_by(|a, b| {
+                    if connections_sort_desc {
+                        b.metadata.network.to_lowercase().cmp(&a.metadata.network.to_lowercase())
+                    } else {
+                        a.metadata.network.to_lowercase().cmp(&b.metadata.network.to_lowercase())
+                    }
+                });
+            }
+            crate::state::ConnectionSort::Chains => {
+                filtered_connections.sort_by(|a, b| {
+                    let ca = a.chains.join(" ➔ ");
+                    let cb = b.chains.join(" ➔ ");
+                    if connections_sort_desc {
+                        cb.to_lowercase().cmp(&ca.to_lowercase())
+                    } else {
+                        ca.to_lowercase().cmp(&cb.to_lowercase())
+                    }
+                });
+            }
+            crate::state::ConnectionSort::Rule => {
+                filtered_connections.sort_by(|a, b| {
+                    if connections_sort_desc {
+                        b.rule.to_lowercase().cmp(&a.rule.to_lowercase())
+                    } else {
+                        a.rule.to_lowercase().cmp(&b.rule.to_lowercase())
+                    }
+                });
+            }
+            crate::state::ConnectionSort::Download => {
+                filtered_connections.sort_by(|a, b| {
+                    if connections_sort_desc {
+                        b.download.cmp(&a.download)
+                    } else {
+                        a.download.cmp(&b.download)
+                    }
+                });
+            }
+            crate::state::ConnectionSort::Upload => {
+                filtered_connections.sort_by(|a, b| {
+                    if connections_sort_desc {
+                        b.upload.cmp(&a.upload)
+                    } else {
+                        a.upload.cmp(&b.upload)
+                    }
+                });
+            }
+        }
+        
         let search_input = text_input(tr(lang, "placeholder_connections_search"), &query_str)
             .on_input(Message::ConnectionsSearchChanged)
             .padding(8)
@@ -63,9 +151,47 @@ pub fn render<'a>(
             .style(theme::button_danger)
             .on_press(Message::CloseAllConnections);
 
+        let sort_options = vec![
+            ConnectionSortOption { sort: crate::state::ConnectionSort::None, label: tr(lang, "sort_original").to_string() },
+            ConnectionSortOption { sort: crate::state::ConnectionSort::Host, label: tr(lang, "sort_host").to_string() },
+            ConnectionSortOption { sort: crate::state::ConnectionSort::Process, label: tr(lang, "sort_process").to_string() },
+            ConnectionSortOption { sort: crate::state::ConnectionSort::Network, label: tr(lang, "sort_network").to_string() },
+            ConnectionSortOption { sort: crate::state::ConnectionSort::Rule, label: tr(lang, "sort_rule").to_string() },
+            ConnectionSortOption { sort: crate::state::ConnectionSort::Download, label: tr(lang, "sort_download").to_string() },
+            ConnectionSortOption { sort: crate::state::ConnectionSort::Upload, label: tr(lang, "sort_upload").to_string() },
+        ];
+
+        let selected_sort_opt = sort_options.iter()
+            .find(|o| o.sort == connections_sort)
+            .cloned()
+            .unwrap_or_else(|| sort_options[0].clone());
+
+        let sort_picker = iced::widget::pick_list(
+            sort_options,
+            Some(selected_sort_opt),
+            move |opt| Message::SortConnections(opt.sort)
+        )
+        .padding(8)
+        .style(theme::pick_list);
+
+        let direction_btn = button(
+            text(if connections_sort_desc { "▼" } else { "▲" }).size(theme::TYPE_BTN_MD)
+        )
+        .padding([8, 12])
+        .style(theme::button_secondary)
+        .on_press(Message::SortConnections(connections_sort));
+
         let header_actions: Element<'_, Message> = if is_compact {
             column![
                 search_input.width(Length::Fill),
+                row![
+                    text(format!("{}:", tr(lang, "sort_connections_by"))).size(theme::TYPE_CAPTION).color(text_muted),
+                    sort_picker.width(Length::Fill),
+                    direction_btn
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
                 close_all_btn.width(Length::Fill)
             ]
             .spacing(8)
@@ -197,44 +323,70 @@ pub fn render<'a>(
         } else {
             // Desktop: mid-width 5-col (host, net+rule, chains, traffic, close)
             //          wide 7-col table
-            let make_hdr_text = |s: &'static str| {
-                text(tr(lang, s))
-                    .color(text_muted)
-                    .size(theme::TYPE_SECTION)
-                    .font(iced::Font {
-                        weight: iced::font::Weight::Semibold,
-                        ..Default::default()
-                    })
+            let make_hdr_btn = |sort_col: crate::state::ConnectionSort, s: &'static str, portion: u16| {
+                let is_sorted = connections_sort == sort_col;
+                let label = if is_sorted {
+                    format!("{} {}", tr(lang, s), if connections_sort_desc { "▼" } else { "▲" })
+                } else {
+                    tr(lang, s).to_string()
+                };
+                button(
+                    text(label)
+                        .size(theme::TYPE_SECTION)
+                        .font(iced::Font {
+                            weight: if is_sorted { iced::font::Weight::Bold } else { iced::font::Weight::Semibold },
+                            ..Default::default()
+                        })
+                )
+                .style(theme::button_header)
+                .padding([4, 6])
+                .on_press(Message::SortConnections(sort_col))
+                .width(Length::FillPortion(portion))
+            };
+
+            let make_hdr_btn_custom = |sort_col: crate::state::ConnectionSort, label_str: String, portion: u16| {
+                let is_sorted = connections_sort == sort_col;
+                let final_label = if is_sorted {
+                    format!("{} {}", label_str, if connections_sort_desc { "▼" } else { "▲" })
+                } else {
+                    label_str
+                };
+                button(
+                    text(final_label)
+                        .size(theme::TYPE_SECTION)
+                        .font(iced::Font {
+                            weight: if is_sorted { iced::font::Weight::Bold } else { iced::font::Weight::Semibold },
+                            ..Default::default()
+                        })
+                )
+                .style(theme::button_header)
+                .padding([4, 6])
+                .on_press(Message::SortConnections(sort_col))
+                .width(Length::FillPortion(portion))
             };
 
             let header: Element<'_, Message> = if is_wide {
                 row![
-                    make_hdr_text("host").width(Length::FillPortion(3)),
-                    make_hdr_text("col_process").width(Length::FillPortion(2)),
-                    make_hdr_text("network").width(Length::FillPortion(1)),
-                    make_hdr_text("chains").width(Length::FillPortion(2)),
-                    make_hdr_text("rule").width(Length::FillPortion(1)),
-                    make_hdr_text("download").width(Length::FillPortion(1)),
-                    make_hdr_text("upload").width(Length::FillPortion(1)),
+                    make_hdr_btn(crate::state::ConnectionSort::Host, "host", 3),
+                    make_hdr_btn(crate::state::ConnectionSort::Process, "col_process", 2),
+                    make_hdr_btn(crate::state::ConnectionSort::Network, "network", 1),
+                    make_hdr_btn(crate::state::ConnectionSort::Chains, "chains", 2),
+                    make_hdr_btn(crate::state::ConnectionSort::Rule, "rule", 1),
+                    make_hdr_btn(crate::state::ConnectionSort::Download, "download", 1),
+                    make_hdr_btn(crate::state::ConnectionSort::Upload, "upload", 1),
                     Space::new().width(Length::FillPortion(1))
                 ]
                 .spacing(crate::ui::SP_12)
                 .padding([0, 10])
                 .into()
             } else {
+                let net_rule_label = format!("{} / {}", tr(lang, "network"), tr(lang, "rule"));
                 row![
-                    make_hdr_text("host").width(Length::FillPortion(3)),
-                    make_hdr_text("col_process").width(Length::FillPortion(2)),
-                    make_hdr_text("network").width(Length::FillPortion(2)),
-                    make_hdr_text("chains").width(Length::FillPortion(2)),
-                    text("↓ / ↑")
-                        .color(text_muted)
-                        .size(theme::TYPE_SECTION)
-                        .font(iced::Font {
-                            weight: iced::font::Weight::Semibold,
-                            ..Default::default()
-                        })
-                        .width(Length::FillPortion(2)),
+                    make_hdr_btn(crate::state::ConnectionSort::Host, "host", 3),
+                    make_hdr_btn(crate::state::ConnectionSort::Process, "col_process", 2),
+                    make_hdr_btn_custom(crate::state::ConnectionSort::Network, net_rule_label, 2),
+                    make_hdr_btn(crate::state::ConnectionSort::Chains, "chains", 2),
+                    make_hdr_btn_custom(crate::state::ConnectionSort::Download, "↓ / ↑".to_string(), 2),
                     Space::new().width(Length::FillPortion(1))
                 ]
                 .spacing(crate::ui::SP_12)

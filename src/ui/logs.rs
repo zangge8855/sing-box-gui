@@ -13,7 +13,7 @@ pub fn get_logs_scrollable_id() -> &'static iced::widget::Id {
 
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
-    log_lines: &'a [String],
+    log_lines: &'a std::collections::VecDeque<String>,
     log_filter: LogFilter,
     log_search: &'a str,
     theme: &iced::Theme,

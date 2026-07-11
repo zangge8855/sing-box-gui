@@ -6,6 +6,18 @@ use crate::ui::theme;
 use crate::ui::{empty_state, page_header, PAGE_COMPACT_W};
 use crate::ui::util::truncate_chars;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProxySortOption {
+    sort: crate::state::ProxySort,
+    label: String,
+}
+
+impl std::fmt::Display for ProxySortOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
+
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
     nodes: &'a [ProxyNode],
@@ -15,6 +27,7 @@ pub fn render<'a>(
     proxy_groups: &'a std::collections::HashMap<String, crate::api::ProxyInfo>,
     selected_group: &'a str,
     core_running: bool,
+    proxy_sort: crate::state::ProxySort,
     theme: &'a iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -48,13 +61,51 @@ pub fn render<'a>(
             .width(if is_compact { Length::Fill } else { Length::Fixed(theme::SEARCH_WIDTH) })
             .style(theme::input_field);
             
-        row![
-            search_input,
-            speed_test_btn
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center)
-        .into()
+        let sort_options = vec![
+            ProxySortOption { sort: crate::state::ProxySort::Latency, label: tr(lang, "sort_latency").to_string() },
+            ProxySortOption { sort: crate::state::ProxySort::Name, label: tr(lang, "sort_name").to_string() },
+            ProxySortOption { sort: crate::state::ProxySort::Original, label: tr(lang, "sort_original").to_string() },
+        ];
+
+        let selected_sort_opt = sort_options.iter()
+            .find(|o| o.sort == proxy_sort)
+            .cloned()
+            .unwrap_or_else(|| sort_options[0].clone());
+
+        let sort_picker = iced::widget::pick_list(
+            sort_options,
+            Some(selected_sort_opt),
+            move |opt| Message::SetProxySort(opt.sort)
+        )
+        .padding(8)
+        .style(theme::pick_list);
+
+        if is_compact {
+            column![
+                search_input.width(Length::Fill),
+                row![
+                    text(format!("{}:", tr(lang, "sort_nodes_by"))).size(theme::TYPE_CAPTION).color(text_muted),
+                    sort_picker.width(Length::Fill)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
+                speed_test_btn.width(Length::Fill)
+            ]
+            .spacing(8)
+            .width(Length::Fill)
+            .into()
+        } else {
+            row![
+                search_input,
+                text(format!("{}:", tr(lang, "sort_nodes_by"))).size(theme::TYPE_CAPTION).color(text_muted),
+                sort_picker.width(Length::Fixed(120.0)),
+                speed_test_btn
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into()
+        }
     };
     
     // Check if we have active groups from Clash API
@@ -201,31 +252,40 @@ pub fn render<'a>(
                         .collect()
                 };
 
-                // Sort by latency ascending; missing/timeout last, then name
-                filtered_sub_nodes.sort_by(|a, b| {
-                    let lat = |name: &str| -> Option<u64> {
-                        if let Some(n_info) = proxy_groups_cloned.get(name) {
-                            if let Some(ref hist) = n_info.history {
-                                if let Some(last) = hist.last() {
-                                    if let Some(d) = last.get("delay").and_then(|d| d.as_u64()) {
-                                        if d < 9999 {
-                                            return Some(d);
+                match proxy_sort {
+                    crate::state::ProxySort::Latency => {
+                        filtered_sub_nodes.sort_by(|a, b| {
+                            let lat = |name: &str| -> Option<u64> {
+                                if let Some(n_info) = proxy_groups_cloned.get(name) {
+                                    if let Some(ref hist) = n_info.history {
+                                        if let Some(last) = hist.last() {
+                                            if let Some(d) = last.get("delay").and_then(|d| d.as_u64()) {
+                                                if d < 9999 {
+                                                    return Some(d);
+                                                }
+                                            }
                                         }
                                     }
                                 }
+                                nodes_cloned.iter().find(|n| n.name == name).and_then(|n| {
+                                    n.latency.filter(|&ms| ms < 9999)
+                                })
+                            };
+                            match (lat(a), lat(b)) {
+                                (Some(la), Some(lb)) => la.cmp(&lb).then_with(|| a.cmp(b)),
+                                (Some(_), None) => std::cmp::Ordering::Less,
+                                (None, Some(_)) => std::cmp::Ordering::Greater,
+                                (None, None) => a.cmp(b),
                             }
-                        }
-                        nodes_cloned.iter().find(|n| n.name == name).and_then(|n| {
-                            n.latency.filter(|&ms| ms < 9999)
-                        })
-                    };
-                    match (lat(a), lat(b)) {
-                        (Some(la), Some(lb)) => la.cmp(&lb).then_with(|| a.cmp(b)),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => a.cmp(b),
+                        });
                     }
-                });
+                    crate::state::ProxySort::Name => {
+                        filtered_sub_nodes.sort_by(|a, b| a.cmp(b));
+                    }
+                    crate::state::ProxySort::Original => {
+                        // Keep original order
+                    }
+                }
 
                 if filtered_sub_nodes.is_empty() {
                     let cta = button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))

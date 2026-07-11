@@ -59,7 +59,7 @@ struct App {
     gui_config: GuiConfig,
     core_running: bool,
     sys_proxy_enabled: bool,
-    log_lines: Vec<String>,
+    log_lines: std::collections::VecDeque<String>,
     current_speed: Bandwidth,
     speed_history: Vec<(u64, u64)>, // (up, down)
     total_uploaded: u64,
@@ -136,6 +136,16 @@ struct App {
     force_stop_after_start: bool,
     /// Tick counter for tab-aware API poll throttling.
     poll_tick_counter: u32,
+    
+    connections_sort: state::ConnectionSort,
+    connections_sort_desc: bool,
+    proxy_sort: state::ProxySort,
+    
+    cached_system_is_light: bool,
+    theme_check_counter: u32,
+    config_dirty: bool,
+    pending_exit: bool,
+    pending_update_path: Option<std::path::PathBuf>,
 }
 
 impl App {
@@ -270,7 +280,7 @@ impl App {
             gui_config,
             core_running: false,
             sys_proxy_enabled: false,
-            log_lines: Vec::new(),
+            log_lines: std::collections::VecDeque::new(),
             current_speed: Bandwidth::default(),
             speed_history: vec![(0, 0); 30],
             total_uploaded: 0,
@@ -333,6 +343,15 @@ impl App {
             pending_core_restart: false,
             force_stop_after_start: false,
             poll_tick_counter: 0,
+            connections_sort: state::ConnectionSort::None,
+            connections_sort_desc: false,
+            proxy_sort: state::ProxySort::Latency,
+            
+            cached_system_is_light: false,
+            theme_check_counter: 0,
+            config_dirty: false,
+            pending_exit: false,
+            pending_update_path: None,
         };
         
         // Force initialization of log and traffic streams on startup
@@ -462,20 +481,20 @@ impl App {
     fn on_core_started_ok(&mut self) -> Task<Message> {
         self.core_running = true;
         self.log_lines
-            .push("[GUI] sing-box core started successfully.".to_string());
+            .push_back("[GUI] sing-box core started successfully.".to_string());
 
         if self.gui_config.auto_sys_proxy && !self.sys_proxy_enabled {
             match sysproxy::set_system_proxy(true, self.gui_config.mixed_port) {
                 Ok(_) => {
                     self.sys_proxy_enabled = true;
                     self.gui_config.system_proxy_enabled = true;
-                    let _ = config::save_gui_config(&self.gui_config);
+                    self.config_dirty = true;
                     self.log_lines
-                        .push("[GUI] System proxy auto-enabled on core start.".to_string());
+            .push_back("[GUI] System proxy auto-enabled on core start.".to_string());
                 }
                 Err(e) => {
                     let msg = format!("Failed to auto-enable system proxy: {}", e);
-                    self.log_lines.push(format!("[GUI] {}", msg));
+                    self.log_lines.push_back(format!("[GUI] {}", msg));
                     self.toast_error(if self.gui_config.language == state::Language::Zh {
                         format!("自动开启系统代理失败: {}", e)
                     } else {
@@ -512,11 +531,11 @@ impl App {
                 Ok(_) => {
                     self.sys_proxy_enabled = false;
                     self.gui_config.system_proxy_enabled = false;
-                    let _ = config::save_gui_config(&self.gui_config);
+                    self.config_dirty = true;
                 }
                 Err(e) => {
                     self.log_lines
-                        .push(format!("[GUI] Failed to disable system proxy: {}", e));
+            .push_back(format!("[GUI] Failed to disable system proxy: {}", e));
                     self.toast_error(if self.gui_config.language == state::Language::Zh {
                         format!("关闭系统代理失败: {}", e)
                     } else {
@@ -529,7 +548,7 @@ impl App {
         self.total_uploaded = 0;
         self.total_downloaded = 0;
         self.log_lines
-            .push("[GUI] sing-box core stopped.".to_string());
+            .push_back("[GUI] sing-box core stopped.".to_string());
     }
 
     fn restart_core(&mut self) -> Task<Message> {
@@ -541,7 +560,7 @@ impl App {
         if self.core_running {
             self.pending_core_restart = true;
             self.log_lines
-                .push("[GUI] Restarting core to apply new settings...".to_string());
+            .push_back("[GUI] Restarting core to apply new settings...".to_string());
             self.task_stop_core()
         } else {
             Task::none()
@@ -635,7 +654,8 @@ impl App {
                     }
                     "exit_app" => {
                         if self.gui_config.close_core_on_exit {
-                            core::stop_core();
+                            self.pending_exit = true;
+                            return self.task_stop_core();
                         }
                         let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
                         iced::exit()
@@ -710,7 +730,7 @@ impl App {
             }
             Message::GroupNodeSelected { group, node, error } => {
                 if let Some(err) = error {
-                    self.log_lines.push(format!("[GUI] Failed to select node {} for group {}: {}", node, group, err));
+                    self.log_lines.push_back(format!("[GUI] Failed to select node {} for group {}: {}", node, group, err));
                 } else {
                     if let Some(g_info) = self.proxy_groups.get_mut(&group) {
                         g_info.now = Some(node.clone());
@@ -718,9 +738,9 @@ impl App {
                     if group == "Proxy" {
                         self.selected_node_tag = Some(node.clone());
                         self.gui_config.selected_node_tag = Some(node.clone());
-                        let _ = config::save_gui_config(&self.gui_config);
+                        self.config_dirty = true;
                     }
-                    self.log_lines.push(format!("[GUI] Selected node: {} for group {}", node, group));
+                    self.log_lines.push_back(format!("[GUI] Selected node: {} for group {}", node, group));
                 }
                 Task::none()
             }
@@ -744,8 +764,8 @@ impl App {
                 if !trimmed.is_empty() && !list.contains(&trimmed) {
                     list.push(trimmed.clone());
                     val.clear();
-                    let _ = config::save_gui_config(&self.gui_config);
-                    self.log_lines.push(format!("[GUI] Added custom rule to {}: {}", field.as_str(), trimmed));
+                    self.config_dirty = true;
+                    self.log_lines.push_back(format!("[GUI] Added custom rule to {}: {}", field.as_str(), trimmed));
                     return self.restart_core();
                 }
                 Task::none()
@@ -759,8 +779,8 @@ impl App {
                 };
                 if index < list.len() {
                     let removed = list.remove(index);
-                    let _ = config::save_gui_config(&self.gui_config);
-                    self.log_lines.push(format!("[GUI] Removed custom rule from {}: {}", field.as_str(), removed));
+                    self.config_dirty = true;
+                    self.log_lines.push_back(format!("[GUI] Removed custom rule from {}: {}", field.as_str(), removed));
                     return self.restart_core();
                 }
                 Task::none()
@@ -816,7 +836,7 @@ impl App {
                         self.core_running = false;
                         self.force_stop_after_start = false;
                         self.log_lines
-                            .push(format!("[GUI] Error starting core: {}", e));
+            .push_back(format!("[GUI] Error starting core: {}", e));
                         self.toast_error(e);
                         // Drop pending restart so we don't loop on a broken config.
                         self.pending_core_restart = false;
@@ -827,6 +847,26 @@ impl App {
             Message::CoreStopFinished => {
                 self.core_stopping = false;
                 self.on_core_stopped_cleanup();
+                if self.pending_exit {
+                    let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                    return iced::exit();
+                }
+                
+                if let Some(path) = self.pending_update_path.take() {
+                    let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                    match apply_update_and_restart(&path) {
+                        Ok(()) => {
+                            self.log_lines
+                                .push_back("[GUI] Update scheduled; exiting to apply.".to_string());
+                            return iced::exit();
+                        }
+                        Err(e) => {
+                            self.log_lines.push_back(format!("[GUI] Failed to apply update: {}", e));
+                            self.toast_error(&format!("Update failed: {}", e));
+                        }
+                    }
+                }
+                
                 if self.pending_core_restart {
                     self.pending_core_restart = false;
                     return self.task_start_core();
@@ -834,13 +874,12 @@ impl App {
                 Task::none()
             }
             Message::NewLogLine(line) => {
-                self.log_lines.push(line);
+                self.log_lines.push_back(line);
                 // When the GUI log window oversize its cap, drop the oldest 10%
                 // entries in a single drain (one memmove) to keep memory bounded
                 // without paying per-line overhead on every message.
-                if self.log_lines.len() > 1000 {
-                    let drop_n = self.log_lines.len().saturating_sub(900);
-                    self.log_lines.drain(..drop_n);
+                while self.log_lines.len() > 1000 {
+                    self.log_lines.pop_front();
                 }
                 // Follow tail when Logs tab is active
                 if self.logs_follow && self.current_tab == state::Tab::Logs {
@@ -871,13 +910,13 @@ impl App {
                         "logs_export_{}.txt",
                         chrono::Local::now().format("%Y%m%d_%H%M%S")
                     ));
-                    std::fs::write(&path, lines.join("\n"))
+                    std::fs::write(&path, lines.into_iter().collect::<Vec<_>>().join("\n"))
                         .map(|_| path.to_string_lossy().to_string())
                         .map_err(|e| e.to_string())
                 }, Message::LogsExported)
             }
             Message::LogsExported(Ok(path)) => {
-                self.log_lines.push(format!("[GUI] Logs exported to {}", path));
+                self.log_lines.push_back(format!("[GUI] Logs exported to {}", path));
                 self.toast_success(if self.gui_config.language == state::Language::Zh {
                     format!("日志已导出: {}", path)
                 } else {
@@ -900,12 +939,12 @@ impl App {
             }
             Message::AutoUpdateIntervalChanged(hours) => {
                 self.gui_config.auto_update_interval_hours = hours;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 Task::none()
             }
             Message::ToggleDisableProxyOnCoreStop => {
                 self.gui_config.disable_proxy_on_core_stop = !self.gui_config.disable_proxy_on_core_stop;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 Task::none()
             }
             Message::ImportFromClipboard => {
@@ -944,7 +983,7 @@ impl App {
             Message::LocalFilePicked(None) => Task::none(),
             Message::TriggerCoreDownload => {
                 let log_tx = get_log_tx();
-                self.log_lines.push("[GUI] Starting sing-box core download...".to_string());
+                self.log_lines.push_back("[GUI] Starting sing-box core download...".to_string());
                 self.core_install_msg = Some("Downloading...".to_string());
                 Task::perform(async move {
                     core::download_core(log_tx, false).await
@@ -952,7 +991,7 @@ impl App {
             }
             Message::ForceCoreDownload => {
                 let log_tx = get_log_tx();
-                self.log_lines.push("[GUI] Force reinstalling sing-box core...".to_string());
+                self.log_lines.push_back("[GUI] Force reinstalling sing-box core...".to_string());
                 self.core_install_msg = Some("Reinstalling...".to_string());
                 Task::perform(async move {
                     core::download_core(log_tx, true).await
@@ -960,13 +999,13 @@ impl App {
             }
             Message::LatencyTestUrlChanged(url) => {
                 self.gui_config.latency_test_url = url;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 Task::none()
             }
             Message::LatencyTestTimeoutChanged(s) => {
                 if let Ok(ms) = s.parse::<u32>() {
                     self.gui_config.latency_test_timeout_ms = ms.clamp(500, 30_000);
-                    let _ = config::save_gui_config(&self.gui_config);
+                    self.config_dirty = true;
                 }
                 Task::none()
             }
@@ -975,7 +1014,7 @@ impl App {
                     Ok(_) => {
                         self.core_installed = true;
                         self.core_install_msg = None;
-                        self.log_lines.push("[GUI] sing-box core downloaded and installed successfully.".to_string());
+                        self.log_lines.push_back("[GUI] sing-box core downloaded and installed successfully.".to_string());
                         self.toast_success(if self.gui_config.language == state::Language::Zh {
                             "内核下载安装成功"
                         } else {
@@ -991,7 +1030,7 @@ impl App {
                     }
                     Err(e) => {
                         self.core_install_msg = Some(e.clone());
-                        self.log_lines.push(format!("[GUI ERROR] Failed to download core: {}", e));
+                        self.log_lines.push_back(format!("[GUI ERROR] Failed to download core: {}", e));
                         self.toast_error(e);
                     }
                 }
@@ -1012,11 +1051,11 @@ impl App {
                     Ok(_) => {
                         self.sys_proxy_enabled = target;
                         self.gui_config.system_proxy_enabled = target;
-                        let _ = config::save_gui_config(&self.gui_config);
-                        self.log_lines.push(format!("[GUI] System proxy toggled to: {}", target));
+                        self.config_dirty = true;
+                        self.log_lines.push_back(format!("[GUI] System proxy toggled to: {}", target));
                     }
                     Err(e) => {
-                        self.log_lines.push(format!("[GUI] System proxy error: {}", e));
+                        self.log_lines.push_back(format!("[GUI] System proxy error: {}", e));
                         self.toast_error(if self.gui_config.language == state::Language::Zh {
                             format!("系统代理切换失败: {}", e)
                         } else {
@@ -1075,7 +1114,7 @@ impl App {
                 self.downloading = false;
                 if let Some(err) = error {
                     self.profile_error = Some(err.clone());
-                    self.log_lines.push(format!("[GUI] Download failed: {}", err));
+                    self.log_lines.push_back(format!("[GUI] Download failed: {}", err));
                     self.toast_error(err);
                 } else {
                     self.profile_error = None;
@@ -1128,18 +1167,18 @@ impl App {
                                 expire_at,
                             });
                         }
-                        let _ = config::save_gui_config(&self.gui_config);
+                        self.config_dirty = true;
                     }
 
                     self.sync_input_buffers();
 
                     if self.gui_config.active_profile_id.is_none() && !id.is_empty() {
                         self.gui_config.active_profile_id = Some(id.clone());
-                        let _ = config::save_gui_config(&self.gui_config);
+                        self.config_dirty = true;
                         self.reload_active_nodes();
                     }
                     self.log_lines
-                        .push("[GUI] Subscription downloaded successfully.".to_string());
+            .push_back("[GUI] Subscription downloaded successfully.".to_string());
                     self.toast_success(self.tr("toast_sub_ok"));
                 }
                 self.kick_pending_auto_update()
@@ -1147,9 +1186,9 @@ impl App {
             Message::SelectProfile(id) => {
                 self.confirm_delete_profile_id = None;
                 self.gui_config.active_profile_id = Some(id);
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 self.reload_active_nodes();
-                self.log_lines.push("[GUI] Active profile updated.".to_string());
+                self.log_lines.push_back("[GUI] Active profile updated.".to_string());
                 self.toast_success(if self.gui_config.language == state::Language::Zh {
                     "已切换活动订阅"
                 } else {
@@ -1176,8 +1215,8 @@ impl App {
                         self.gui_config.active_profile_id = None;
                         self.active_profile_nodes.clear();
                     }
-                    let _ = config::save_gui_config(&self.gui_config);
-                    self.log_lines.push("[GUI] Profile deleted.".to_string());
+                    self.config_dirty = true;
+                    self.log_lines.push_back("[GUI] Profile deleted.".to_string());
                     self.toast_success(self.tr("toast_profile_deleted"));
 
                     // Active profile deleted while core runs → stop to avoid orphan config.
@@ -1198,7 +1237,7 @@ impl App {
                 if !self.core_running {
                     self.selected_node_tag = Some(tag.clone());
                     self.gui_config.selected_node_tag = Some(tag.clone());
-                    let _ = config::save_gui_config(&self.gui_config);
+                    self.config_dirty = true;
                     return Task::none();
                 }
                 let tag_clone = tag.clone();
@@ -1215,12 +1254,12 @@ impl App {
             }
             Message::NodeSelected { tag, error } => {
                 if let Some(err) = error {
-                    self.log_lines.push(format!("[GUI] Failed to select node: {}", err));
+                    self.log_lines.push_back(format!("[GUI] Failed to select node: {}", err));
                 } else {
                     self.selected_node_tag = Some(tag.clone());
                     self.gui_config.selected_node_tag = Some(tag.clone());
-                    let _ = config::save_gui_config(&self.gui_config);
-                    self.log_lines.push(format!("[GUI] Selected node: {}", tag));
+                    self.config_dirty = true;
+                    self.log_lines.push_back(format!("[GUI] Selected node: {}", tag));
                 }
                 Task::none()
             }
@@ -1287,7 +1326,7 @@ impl App {
                     let id_clone = id.clone();
                     self.downloading = true;
                     self.profile_error = None;
-                    self.log_lines.push(format!("[GUI] Updating subscription: {}", url));
+                    self.log_lines.push_back(format!("[GUI] Updating subscription: {}", url));
                     
                     Task::perform(async move {
                         fetch_and_save_subscription(url, id_clone).await
@@ -1314,7 +1353,7 @@ impl App {
                         },
                     })
                 } else {
-                    self.log_lines.push("[GUI] Subscription not found.".to_string());
+                    self.log_lines.push_back("[GUI] Subscription not found.".to_string());
                     Task::none()
                 }
             }
@@ -1326,6 +1365,16 @@ impl App {
                 self.kick_pending_auto_update()
             }
             Message::Tick => {
+                self.theme_check_counter = self.theme_check_counter.wrapping_add(1);
+                if self.theme_check_counter % 5 == 0 {
+                    self.cached_system_is_light = detect_system_theme();
+                }
+
+                if self.config_dirty {
+                    let _ = config::save_gui_config(&self.gui_config);
+                    self.config_dirty = false;
+                }
+
                 // Lock-free fast path; during async start/stop prefer the transition flags.
                 if !self.core_busy() {
                     self.core_running = core::is_core_running_fast();
@@ -1393,13 +1442,13 @@ impl App {
                 self.core_running = running;
                 if was_running && !self.core_running {
                     if let Some(msg) = core::take_unexpected_core_exit() {
-                        self.log_lines.push(format!("[GUI] {}", msg));
+                        self.log_lines.push_back(format!("[GUI] {}", msg));
                         self.toast_error(msg);
                         if self.gui_config.disable_proxy_on_core_stop && self.sys_proxy_enabled {
                             let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
                             self.sys_proxy_enabled = false;
                             self.gui_config.system_proxy_enabled = false;
-                            let _ = config::save_gui_config(&self.gui_config);
+                            self.config_dirty = true;
                         }
                         if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
                             let _ = cancel_tx.send(());
@@ -1442,12 +1491,12 @@ impl App {
                 Task::none()
             }
             Message::ConnectionClosed(Ok(id)) => {
-                self.log_lines.push(format!("[GUI] Closed connection {}", id));
+                self.log_lines.push_back(format!("[GUI] Closed connection {}", id));
                 self.active_connections.retain(|c| c.id != id);
                 Task::none()
             }
             Message::ConnectionClosed(Err(e)) => {
-                self.log_lines.push(format!("[GUI] Failed to close connection: {}", e));
+                self.log_lines.push_back(format!("[GUI] Failed to close connection: {}", e));
                 self.toast_error(e);
                 Task::none()
             }
@@ -1467,7 +1516,7 @@ impl App {
             }
             Message::AllConnectionsClosed(Ok(())) => {
                 self.active_connections.clear();
-                self.log_lines.push("[GUI] Closed all connections.".to_string());
+                self.log_lines.push_back("[GUI] Closed all connections.".to_string());
                 self.toast_success(if self.gui_config.language == state::Language::Zh {
                     "已关闭全部连接"
                 } else {
@@ -1476,13 +1525,13 @@ impl App {
                 Task::none()
             }
             Message::AllConnectionsClosed(Err(e)) => {
-                self.log_lines.push(format!("[GUI] Failed to close all connections: {}", e));
+                self.log_lines.push_back(format!("[GUI] Failed to close all connections: {}", e));
                 self.toast_error(e);
                 Task::none()
             }
             Message::RoutingModeChanged(mode) => {
                 self.gui_config.routing_mode = mode;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 let mode_label = mode.as_clash_mode();
                 if self.core_running {
                     let api_port = self.gui_config.api_port;
@@ -1491,7 +1540,7 @@ impl App {
                         api::set_mode(api_port, &mode_str).await.map(|_| mode_str)
                     }, Message::ModeSet)
                 } else {
-                    self.log_lines.push(format!(
+                    self.log_lines.push_back(format!(
                         "[GUI] Routing mode set to {} (will apply on next core start).",
                         mode_label
                     ));
@@ -1504,7 +1553,7 @@ impl App {
                 }
             }
             Message::ModeSet(Ok(mode)) => {
-                self.log_lines.push(format!("[GUI] Routing mode switched to {}.", mode));
+                self.log_lines.push_back(format!("[GUI] Routing mode switched to {}.", mode));
                 self.toast_success(if self.gui_config.language == state::Language::Zh {
                     format!("路由模式已切换为 {}", mode)
                 } else {
@@ -1513,7 +1562,7 @@ impl App {
                 Task::none()
             }
             Message::ModeSet(Err(e)) => {
-                self.log_lines.push(format!("[GUI] Failed to set routing mode: {}", e));
+                self.log_lines.push_back(format!("[GUI] Failed to set routing mode: {}", e));
                 self.toast_error(if self.gui_config.language == state::Language::Zh {
                     format!("切换路由模式失败: {}", e)
                 } else {
@@ -1570,7 +1619,7 @@ impl App {
                 self.core_path_input_str.clear();
                 self.gui_config.core_path = None;
                 self.core_installed = core::is_core_installed(&self.gui_config);
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 self.toast_info(if self.gui_config.language == state::Language::Zh {
                     "已恢复默认内核路径"
                 } else {
@@ -1580,7 +1629,7 @@ impl App {
             }
             Message::ToggleTun => {
                 self.gui_config.tun_mode = !self.gui_config.tun_mode;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 // Admin-elevation sanity check: TUN inbound needs CAP_NET_ADMIN /
                 // the Windows wintun driver via an elevated process. Tell the user
                 // *now* instead of letting them discover it from a FATAL toast.
@@ -1595,7 +1644,7 @@ impl App {
             }
             Message::ToggleAutostart => {
                 self.gui_config.start_on_boot = !self.gui_config.start_on_boot;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 #[cfg(not(target_os = "windows"))]
                 {
                     // No-op without an OS launch integration on mac/linux.
@@ -1611,23 +1660,23 @@ impl App {
             }
             Message::ToggleAutoStartCore => {
                 self.gui_config.auto_start_core = !self.gui_config.auto_start_core;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 Task::none()
             }
             Message::ToggleAutoSysProxy => {
                 self.gui_config.auto_sys_proxy = !self.gui_config.auto_sys_proxy;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 Task::none()
             }
             Message::SetLanguage(lang) => {
                 self.gui_config.language = lang;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 self.update_tray_menu();
                 Task::none()
             }
             Message::SetTheme(theme) => {
                 self.gui_config.theme = theme;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 Task::none()
             }
             Message::OpenDataDir => {
@@ -1664,7 +1713,7 @@ impl App {
                     if let Some(profile) = self.gui_config.subscriptions.iter_mut().find(|p| p.id == id) {
                         profile.name = self.editing_profile_name.clone();
                         profile.url = self.editing_profile_url.clone();
-                        let _ = config::save_gui_config(&self.gui_config);
+                        self.config_dirty = true;
                     }
                     self.editing_profile_id = None;
                 }
@@ -1672,6 +1721,19 @@ impl App {
             }
             Message::CancelProfileEdit => {
                 self.editing_profile_id = None;
+                Task::none()
+            }
+            Message::SortConnections(col) => {
+                if self.connections_sort == col {
+                    self.connections_sort_desc = !self.connections_sort_desc;
+                } else {
+                    self.connections_sort = col;
+                    self.connections_sort_desc = matches!(col, state::ConnectionSort::Download | state::ConnectionSort::Upload);
+                }
+                Task::none()
+            }
+            Message::SetProxySort(mode) => {
+                self.proxy_sort = mode;
                 Task::none()
             }
             Message::ToggleConfigPreview => {
@@ -1688,22 +1750,22 @@ impl App {
             }
             Message::ToggleCloseCoreOnExit => {
                 self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 Task::none()
             }
             Message::ToggleFakeIp => {
                 self.gui_config.fake_ip = !self.gui_config.fake_ip;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 self.restart_core()
             }
             Message::ToggleTcpFastOpen => {
                 self.gui_config.tcp_fast_open = !self.gui_config.tcp_fast_open;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 self.restart_core()
             }
             Message::ToggleTcpMultipath => {
                 self.gui_config.tcp_multipath = !self.gui_config.tcp_multipath;
-                let _ = config::save_gui_config(&self.gui_config);
+                self.config_dirty = true;
                 self.restart_core()
             }
             Message::SaveSettings => {
@@ -1713,7 +1775,7 @@ impl App {
                     } else {
                         "Port numbers cannot be empty!".to_string()
                     };
-                    self.log_lines.push(format!("[GUI ERROR] {}", err));
+                    self.log_lines.push_back(format!("[GUI ERROR] {}", err));
                     self.core_install_msg = Some(err);
                     return Task::none();
                 }
@@ -1727,7 +1789,7 @@ impl App {
                     } else {
                         "Ports must be valid numbers between 1 and 65535!".to_string()
                     };
-                    self.log_lines.push(format!("[GUI ERROR] {}", err));
+                    self.log_lines.push_back(format!("[GUI ERROR] {}", err));
                     self.core_install_msg = Some(err);
                     return Task::none();
                 }
@@ -1742,7 +1804,7 @@ impl App {
                     "Ports below 1024 are reserved, pick a higher number.".to_string()
                 };
                 if *mixed_p < 1024 || *api_p < 1024 {
-                    self.log_lines.push(format!("[GUI ERROR] {}", reserved_msg));
+                    self.log_lines.push_back(format!("[GUI ERROR] {}", reserved_msg));
                     self.core_install_msg = Some(reserved_msg);
                     return Task::none();
                 }
@@ -1752,7 +1814,7 @@ impl App {
                     } else {
                         "Mixed proxy port and Clash API port must differ, otherwise the core will FATAL.".to_string()
                     };
-                    self.log_lines.push(format!("[GUI ERROR] {}", err));
+                    self.log_lines.push_back(format!("[GUI ERROR] {}", err));
                     self.core_install_msg = Some(err);
                     return Task::none();
                 }
@@ -1765,8 +1827,8 @@ impl App {
                     self.gui_config.core_path = Some(trimmed_core.to_string());
                 }
                 self.core_installed = core::is_core_installed(&self.gui_config);
-                let _ = config::save_gui_config(&self.gui_config);
-                self.log_lines.push("[GUI] Settings saved and applied successfully.".to_string());
+                self.config_dirty = true;
+                self.log_lines.push_back("[GUI] Settings saved and applied successfully.".to_string());
                 self.toast_success(if self.gui_config.language == state::Language::Zh {
                     "设置已保存并应用"
                 } else {
@@ -1822,7 +1884,7 @@ impl App {
             Message::AppUpdateDownloaded { tag, url, result } => {
                 match result {
                     Ok(path) => {
-                        self.log_lines.push(format!(
+                        self.log_lines.push_back(format!(
                             "[GUI] Update {} downloaded to {}",
                             tag,
                             path.display()
@@ -1831,38 +1893,12 @@ impl App {
                         // Stop core and clear proxy before replacing the binary.
                         self.force_stop_after_start = false;
                         self.pending_core_restart = false;
-                        self.core_starting = false;
-                        self.core_stopping = false;
-                        core::stop_core();
-                        if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
-                            let _ = cancel_tx.send(());
-                        }
-                        self.core_running = false;
-                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
-                        self.sys_proxy_enabled = false;
-                        self.gui_config.system_proxy_enabled = false;
-                        let _ = config::save_gui_config(&self.gui_config);
-                        match apply_update_and_restart(&path) {
-                            Ok(()) => {
-                                self.log_lines
-                                    .push("[GUI] Update scheduled; exiting to apply.".to_string());
-                                iced::exit()
-                            }
-                            Err(e) => {
-                                self.log_lines
-                                    .push(format!("[GUI] Failed to apply update: {}", e));
-                                self.update_status = state::UpdateStatus::NewVersion {
-                                    tag,
-                                    download_url: Some(url),
-                                };
-                                self.toast_error(e);
-                                Task::none()
-                            }
-                        }
+                        self.pending_update_path = Some(path);
+                        return self.task_stop_core();
                     }
                     Err(e) => {
                         self.log_lines
-                            .push(format!("[GUI] Update download failed: {}", e));
+            .push_back(format!("[GUI] Update download failed: {}", e));
                         // Keep download URL so the user can retry in-app.
                         self.update_status = state::UpdateStatus::NewVersion {
                             tag,
@@ -1965,6 +2001,7 @@ impl App {
                     proxy_groups_ref,
                     selected_group_ref,
                     core_running,
+                    self.proxy_sort,
                     theme,
                 ),
                 Tab::Profiles => ui::profiles::render(
@@ -1991,6 +2028,8 @@ impl App {
                     gui_config_ref,
                     active_connections_ref,
                     connections_search_ref,
+                    self.connections_sort,
+                    self.connections_sort_desc,
                     theme,
                 ),
                 Tab::Logs => ui::logs::render(
@@ -2531,7 +2570,10 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
         return Ok((content, meta));
     }
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     let res = client
         .get(url)
         .header("User-Agent", "clash")

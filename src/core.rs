@@ -1,5 +1,6 @@
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader, Read};
+use futures::StreamExt;
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -255,11 +256,11 @@ pub async fn download_core(
         let mut file = File::create(&temp_archive_path)
             .map_err(|e| format!("Failed to create temp archive file: {}", e))?;
             
-        let bytes = response.bytes().await
-            .map_err(|e| format!("Failed to read response bytes: {}", e))?;
-            
-        io::copy(&mut &bytes[..], &mut file)
-            .map_err(|e| format!("Failed to write archive file: {}", e))?;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("Failed to read chunk: {}", e))?;
+            file.write_all(&chunk).map_err(|e| format!("Failed to write chunk: {}", e))?;
+        }
             
         let _ = progress_sender.send("Extracting core...".to_string());
         
@@ -513,18 +514,7 @@ pub fn stop_core() {
         // its cache file, tear down the TUN interface and unwind cleanly
         // before we resort to a forceful kill.
         let _ = child.kill();
-        if child.try_wait().map(|o| o.is_none()).unwrap_or(false) {
-            let deadline = Instant::now() + Duration::from_millis(STOP_GRACE_MS);
-            while Instant::now() < deadline {
-                if let Ok(Some(_)) = child.try_wait() {
-                    return;
-                }
-                thread::sleep(Duration::from_millis(25));
-            }
-            // Timed out still alive — force kill + reap.
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        let _ = child.wait();
     }
 }
 

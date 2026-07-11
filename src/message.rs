@@ -127,4 +127,6 @@ pub enum Message {
     CoreStartFinished(Result<(), String>),
     /// Async result of `core::stop_core`.
     CoreStopFinished,
+    SortConnections(crate::state::ConnectionSort),
+    SetProxySort(crate::state::ProxySort),
 }

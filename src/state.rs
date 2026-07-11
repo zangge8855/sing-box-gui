@@ -334,6 +334,27 @@ pub enum UpdateStatus {
     Error(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ConnectionSort {
+    #[default]
+    None,
+    Host,
+    Process,
+    Network,
+    Chains,
+    Rule,
+    Download,
+    Upload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ProxySort {
+    #[default]
+    Latency,
+    Name,
+    Original,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

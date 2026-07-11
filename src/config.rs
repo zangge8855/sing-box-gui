@@ -3,18 +3,23 @@ use std::path::PathBuf;
 use serde_json::json;
 use crate::state::{GuiConfig, ProxyNode};
 
+use std::sync::OnceLock;
+static APP_DIR: OnceLock<PathBuf> = OnceLock::new();
+
 pub fn get_app_dir() -> PathBuf {
-    let base = dirs::data_dir()
-        .or_else(|| dirs::config_dir())
-        .or_else(|| std::env::var("APPDATA").ok().map(PathBuf::from))
-        .unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        });
-    let dir = base.join("sing-box-gui");
-    let _ = fs::create_dir_all(&dir);
-    let _ = fs::create_dir_all(dir.join("profiles"));
-    let _ = fs::create_dir_all(dir.join("bin"));
-    dir
+    APP_DIR.get_or_init(|| {
+        let base = dirs::data_dir()
+            .or_else(|| dirs::config_dir())
+            .or_else(|| std::env::var("APPDATA").ok().map(PathBuf::from))
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            });
+        let dir = base.join("sing-box-gui");
+        let _ = fs::create_dir_all(&dir);
+        let _ = fs::create_dir_all(dir.join("profiles"));
+        let _ = fs::create_dir_all(dir.join("bin"));
+        dir
+    }).clone()
 }
 
 /// Parse Clash subscription-userinfo header values.
@@ -495,6 +500,36 @@ pub fn get_profile_path(profile_id: &str) -> PathBuf {
 }
 
 pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
+    let key_alterId = serde_yaml::Value::String("alterId".into());
+    let key_auth_str = serde_yaml::Value::String("auth-str".into());
+    let key_auth_str = serde_yaml::Value::String("auth_str".into());
+    let key_cipher = serde_yaml::Value::String("cipher".into());
+    let key_congestion_control = serde_yaml::Value::String("congestion_control".into());
+    let key_fingerprint = serde_yaml::Value::String("fingerprint".into());
+    let key_flow = serde_yaml::Value::String("flow".into());
+    let key_grpc_opts = serde_yaml::Value::String("grpc-opts".into());
+    let key_grpc_service_name = serde_yaml::Value::String("grpc-service-name".into());
+    let key_headers = serde_yaml::Value::String("headers".into());
+    let key_host = serde_yaml::Value::String("host".into());
+    let key_name = serde_yaml::Value::String("name".into());
+    let key_network = serde_yaml::Value::String("network".into());
+    let key_password = serde_yaml::Value::String("password".into());
+    let key_path = serde_yaml::Value::String("path".into());
+    let key_port = serde_yaml::Value::String("port".into());
+    let key_public_key = serde_yaml::Value::String("public-key".into());
+    let key_reality = serde_yaml::Value::String("reality".into());
+    let key_reality_opts = serde_yaml::Value::String("reality-opts".into());
+    let key_server = serde_yaml::Value::String("server".into());
+    let key_servername = serde_yaml::Value::String("servername".into());
+    let key_serviceName = serde_yaml::Value::String("serviceName".into());
+    let key_short_id = serde_yaml::Value::String("short-id".into());
+    let key_skip_cert_verify = serde_yaml::Value::String("skip-cert-verify".into());
+    let key_sni = serde_yaml::Value::String("sni".into());
+    let key_tls = serde_yaml::Value::String("tls".into());
+    let key_type = serde_yaml::Value::String("type".into());
+    let key_username = serde_yaml::Value::String("username".into());
+    let key_uuid = serde_yaml::Value::String("uuid".into());
+    let key_ws_opts = serde_yaml::Value::String("ws-opts".into());
     let normalized = normalize_profile_content(content);
     let val: serde_yaml::Value = serde_yaml::from_str(&normalized)
         .map_err(|e| format!("YAML parsing failed: {}", e))?;
@@ -506,21 +541,21 @@ pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
     let mut nodes = Vec::new();
     for item in proxies {
         if let Some(map) = item.as_mapping() {
-            let name = map.get(&serde_yaml::Value::String("name".to_string()))
+            let name = map.get(&key_name)
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unnamed")
                 .to_string();
                 
-            let node_type = map.get(&serde_yaml::Value::String("type".to_string()))
+            let node_type = map.get(&key_type)
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
                 
-            let server = map.get(&serde_yaml::Value::String("server".to_string()))
+            let server = map.get(&key_server)
                 .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|i| i.to_string())))
                 .unwrap_or_else(|| "127.0.0.1".to_string());
                 
-            let port_u64 = map.get(&serde_yaml::Value::String("port".to_string()))
+            let port_u64 = map.get(&key_port)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
             
@@ -618,20 +653,30 @@ pub fn validate_profile_content(content: &str) -> Result<(), String> {
 }
 
 fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
-    let network = map.get(&serde_yaml::Value::String("network".to_string()))
+    let key_network = serde_yaml::Value::String("network".into());
+    let key_type = serde_yaml::Value::String("type".into());
+    let key_ws_opts = serde_yaml::Value::String("ws-opts".into());
+    let key_path = serde_yaml::Value::String("path".into());
+    let key_headers = serde_yaml::Value::String("headers".into());
+    let key_host = serde_yaml::Value::String("host".into());
+    let key_grpc_opts = serde_yaml::Value::String("grpc-opts".into());
+    let key_grpc_service_name = serde_yaml::Value::String("grpc-service-name".into());
+    let key_serviceName = serde_yaml::Value::String("serviceName".into());
+
+    let network = map.get(&key_network)
         .and_then(|v| v.as_str())
-        .or_else(|| map.get(&serde_yaml::Value::String("type".to_string())).and_then(|v| v.as_str()))
+        .or_else(|| map.get(&key_type).and_then(|v| v.as_str()))
         .unwrap_or("tcp");
         
     if network == "ws" {
         let mut path = "/".to_string();
         let mut headers_map = serde_json::Map::new();
         
-        if let Some(ws_opts) = map.get(&serde_yaml::Value::String("ws-opts".to_string())).and_then(|v| v.as_mapping()) {
-            if let Some(p) = ws_opts.get(&serde_yaml::Value::String("path".to_string())).and_then(|v| v.as_str()) {
+        if let Some(ws_opts) = map.get(&key_ws_opts).and_then(|v| v.as_mapping()) {
+            if let Some(p) = ws_opts.get(&key_path).and_then(|v| v.as_str()) {
                 path = p.to_string();
             }
-            if let Some(headers) = ws_opts.get(&serde_yaml::Value::String("headers".to_string())).and_then(|v| v.as_mapping()) {
+            if let Some(headers) = ws_opts.get(&key_headers).and_then(|v| v.as_mapping()) {
                 for (k, v) in headers {
                     if let (Some(ks), Some(vs)) = (k.as_str(), v.as_str()) {
                         headers_map.insert(ks.to_string(), json!(vs));
@@ -639,10 +684,10 @@ fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
                 }
             }
         } else {
-            if let Some(p) = map.get(&serde_yaml::Value::String("path".to_string())).and_then(|v| v.as_str()) {
+            if let Some(p) = map.get(&key_path).and_then(|v| v.as_str()) {
                 path = p.to_string();
             }
-            if let Some(h) = map.get(&serde_yaml::Value::String("host".to_string())).and_then(|v| v.as_str()) {
+            if let Some(h) = map.get(&key_host).and_then(|v| v.as_str()) {
                 headers_map.insert("Host".to_string(), json!(h));
             }
         }
@@ -654,11 +699,11 @@ fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
         }))
     } else if network == "grpc" {
         let mut service_name = "".to_string();
-        if let Some(grpc_opts) = map.get(&serde_yaml::Value::String("grpc-opts".to_string())).and_then(|v| v.as_mapping()) {
-            if let Some(s) = grpc_opts.get(&serde_yaml::Value::String("grpc-service-name".to_string())).and_then(|v| v.as_str()) {
+        if let Some(grpc_opts) = map.get(&key_grpc_opts).and_then(|v| v.as_mapping()) {
+            if let Some(s) = grpc_opts.get(&key_grpc_service_name).and_then(|v| v.as_str()) {
                 service_name = s.to_string();
             }
-        } else if let Some(s) = map.get(&serde_yaml::Value::String("serviceName".to_string())).and_then(|v| v.as_str()) {
+        } else if let Some(s) = map.get(&key_serviceName).and_then(|v| v.as_str()) {
             service_name = s.to_string();
         }
         
@@ -675,6 +720,36 @@ pub fn convert_clash_to_singbox(
     yaml_content: &str,
     gui_config: &GuiConfig,
 ) -> Result<serde_json::Value, String> {
+    let key_alterId = serde_yaml::Value::String("alterId".into());
+    let key_auth_str = serde_yaml::Value::String("auth-str".into());
+    let key_auth_str = serde_yaml::Value::String("auth_str".into());
+    let key_cipher = serde_yaml::Value::String("cipher".into());
+    let key_congestion_control = serde_yaml::Value::String("congestion_control".into());
+    let key_fingerprint = serde_yaml::Value::String("fingerprint".into());
+    let key_flow = serde_yaml::Value::String("flow".into());
+    let key_grpc_opts = serde_yaml::Value::String("grpc-opts".into());
+    let key_grpc_service_name = serde_yaml::Value::String("grpc-service-name".into());
+    let key_headers = serde_yaml::Value::String("headers".into());
+    let key_host = serde_yaml::Value::String("host".into());
+    let key_name = serde_yaml::Value::String("name".into());
+    let key_network = serde_yaml::Value::String("network".into());
+    let key_password = serde_yaml::Value::String("password".into());
+    let key_path = serde_yaml::Value::String("path".into());
+    let key_port = serde_yaml::Value::String("port".into());
+    let key_public_key = serde_yaml::Value::String("public-key".into());
+    let key_reality = serde_yaml::Value::String("reality".into());
+    let key_reality_opts = serde_yaml::Value::String("reality-opts".into());
+    let key_server = serde_yaml::Value::String("server".into());
+    let key_servername = serde_yaml::Value::String("servername".into());
+    let key_serviceName = serde_yaml::Value::String("serviceName".into());
+    let key_short_id = serde_yaml::Value::String("short-id".into());
+    let key_skip_cert_verify = serde_yaml::Value::String("skip-cert-verify".into());
+    let key_sni = serde_yaml::Value::String("sni".into());
+    let key_tls = serde_yaml::Value::String("tls".into());
+    let key_type = serde_yaml::Value::String("type".into());
+    let key_username = serde_yaml::Value::String("username".into());
+    let key_uuid = serde_yaml::Value::String("uuid".into());
+    let key_ws_opts = serde_yaml::Value::String("ws-opts".into());
     let normalized = normalize_profile_content(yaml_content);
     let yaml: serde_yaml::Value = serde_yaml::from_str(&normalized)
         .map_err(|e| format!("YAML parsing failed: {}", e))?;
@@ -696,16 +771,16 @@ pub fn convert_clash_to_singbox(
             None => continue,
         };
         
-        let name = map.get(&serde_yaml::Value::String("name".to_string()))
+        let name = map.get(&key_name)
             .and_then(|v| v.as_str())
             .unwrap_or("Unnamed")
             .to_string();
             
-        let server = map.get(&serde_yaml::Value::String("server".to_string()))
+        let server = map.get(&key_server)
             .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|i| i.to_string())))
             .unwrap_or_else(|| "127.0.0.1".to_string());
             
-        let port_u64 = map.get(&serde_yaml::Value::String("port".to_string()))
+        let port_u64 = map.get(&key_port)
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
             
@@ -717,11 +792,11 @@ pub fn convert_clash_to_singbox(
         outbound.insert("tag".to_string(), json!(name));
         node_tags.push(name.clone());
         
-        let node_type = map.get(&serde_yaml::Value::String("type".to_string()))
+        let node_type = map.get(&key_type)
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
             
-        let skip_cert_verify = map.get(&serde_yaml::Value::String("skip-cert-verify".to_string()))
+        let skip_cert_verify = map.get(&key_skip_cert_verify)
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
             
@@ -731,10 +806,10 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
                 
-                let cipher = map.get(&serde_yaml::Value::String("cipher".to_string()))
+                let cipher = map.get(&key_cipher)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let password = map.get(&serde_yaml::Value::String("password".to_string()))
+                let password = map.get(&key_password)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                     
@@ -746,13 +821,13 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
                 
-                let uuid = map.get(&serde_yaml::Value::String("uuid".to_string()))
+                let uuid = map.get(&key_uuid)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let security = map.get(&serde_yaml::Value::String("cipher".to_string()))
+                let security = map.get(&key_cipher)
                     .and_then(|v| v.as_str())
                     .unwrap_or("auto");
-                let alter_id = map.get(&serde_yaml::Value::String("alterId".to_string()))
+                let alter_id = map.get(&key_alterId)
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0);
                     
@@ -762,12 +837,12 @@ pub fn convert_clash_to_singbox(
                     outbound.insert("alter_id".to_string(), json!(alter_id));
                 }
                 
-                let tls_enabled = map.get(&serde_yaml::Value::String("tls".to_string()))
+                let tls_enabled = map.get(&key_tls)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                let sni = map.get(&serde_yaml::Value::String("sni".to_string()))
+                let sni = map.get(&key_sni)
                     .and_then(|v| v.as_str())
-                    .or_else(|| map.get(&serde_yaml::Value::String("servername".to_string())).and_then(|v| v.as_str()))
+                    .or_else(|| map.get(&key_servername).and_then(|v| v.as_str()))
                     .unwrap_or(&server);
                     
                 if tls_enabled {
@@ -787,10 +862,10 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
                 
-                let uuid = map.get(&serde_yaml::Value::String("uuid".to_string()))
+                let uuid = map.get(&key_uuid)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let flow = map.get(&serde_yaml::Value::String("flow".to_string()))
+                let flow = map.get(&key_flow)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                     
@@ -799,14 +874,14 @@ pub fn convert_clash_to_singbox(
                     outbound.insert("flow".to_string(), json!(flow));
                 }
                 
-                let tls_enabled = map.get(&serde_yaml::Value::String("tls".to_string()))
+                let tls_enabled = map.get(&key_tls)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
-                let sni = map.get(&serde_yaml::Value::String("sni".to_string()))
+                let sni = map.get(&key_sni)
                     .and_then(|v| v.as_str())
                     .unwrap_or(&server);
                     
-                let reality_enabled = map.get(&serde_yaml::Value::String("reality".to_string()))
+                let reality_enabled = map.get(&key_reality)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                     
@@ -817,22 +892,22 @@ pub fn convert_clash_to_singbox(
                     tls_opts.insert("insecure".to_string(), json!(skip_cert_verify));
                     
                     if reality_enabled {
-                        let public_key = map.get(&serde_yaml::Value::String("public-key".to_string()))
+                        let public_key = map.get(&key_public_key)
                             .and_then(|v| v.as_str())
                             .or_else(|| {
-                                map.get(&serde_yaml::Value::String("reality-opts".to_string()))
+                                map.get(&key_reality_opts)
                                     .and_then(|v| v.as_mapping())
-                                    .and_then(|m| m.get(&serde_yaml::Value::String("public-key".to_string())))
+                                    .and_then(|m| m.get(&key_public_key))
                                     .and_then(|v| v.as_str())
                             })
                             .unwrap_or("");
                             
-                        let short_id = map.get(&serde_yaml::Value::String("short-id".to_string()))
+                        let short_id = map.get(&key_short_id)
                             .and_then(|v| v.as_str())
                             .or_else(|| {
-                                map.get(&serde_yaml::Value::String("reality-opts".to_string()))
+                                map.get(&key_reality_opts)
                                     .and_then(|v| v.as_mapping())
-                                    .and_then(|m| m.get(&serde_yaml::Value::String("short-id".to_string())))
+                                    .and_then(|m| m.get(&key_short_id))
                                     .and_then(|v| v.as_str())
                             })
                             .unwrap_or("");
@@ -843,7 +918,7 @@ pub fn convert_clash_to_singbox(
                             "short_id": short_id
                         }));
                         
-                        let fingerprint = map.get(&serde_yaml::Value::String("fingerprint".to_string()))
+                        let fingerprint = map.get(&key_fingerprint)
                             .and_then(|v| v.as_str())
                             .unwrap_or("chrome");
                             
@@ -865,15 +940,15 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
                 
-                let password = map.get(&serde_yaml::Value::String("password".to_string()))
+                let password = map.get(&key_password)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 outbound.insert("password".to_string(), json!(password));
                 
-                let tls_enabled = map.get(&serde_yaml::Value::String("tls".to_string()))
+                let tls_enabled = map.get(&key_tls)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
-                let sni = map.get(&serde_yaml::Value::String("sni".to_string()))
+                let sni = map.get(&key_sni)
                     .and_then(|v| v.as_str())
                     .unwrap_or(&server);
                     
@@ -894,14 +969,14 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
                 
-                let auth = map.get(&serde_yaml::Value::String("auth_str".to_string()))
+                let auth = map.get(&key_auth_str)
                     .and_then(|v| v.as_str())
-                    .or_else(|| map.get(&serde_yaml::Value::String("auth-str".to_string())).and_then(|v| v.as_str()))
-                    .or_else(|| map.get(&serde_yaml::Value::String("password".to_string())).and_then(|v| v.as_str()))
+                    .or_else(|| map.get(&key_auth_str).and_then(|v| v.as_str()))
+                    .or_else(|| map.get(&key_password).and_then(|v| v.as_str()))
                     .unwrap_or("");
                 outbound.insert("auth_str".to_string(), json!(auth));
                 
-                let sni = map.get(&serde_yaml::Value::String("sni".to_string()))
+                let sni = map.get(&key_sni)
                     .and_then(|v| v.as_str())
                     .unwrap_or(&server);
                 outbound.insert("tls".to_string(), json!({
@@ -915,13 +990,13 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
                 
-                let password = map.get(&serde_yaml::Value::String("password".to_string()))
+                let password = map.get(&key_password)
                     .and_then(|v| v.as_str())
-                    .or_else(|| map.get(&serde_yaml::Value::String("auth-str".to_string())).and_then(|v| v.as_str()))
+                    .or_else(|| map.get(&key_auth_str).and_then(|v| v.as_str()))
                     .unwrap_or("");
                 outbound.insert("password".to_string(), json!(password));
                 
-                let sni = map.get(&serde_yaml::Value::String("sni".to_string()))
+                let sni = map.get(&key_sni)
                     .and_then(|v| v.as_str())
                     .unwrap_or(&server);
                 outbound.insert("tls".to_string(), json!({
@@ -935,10 +1010,10 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
                 
-                let username = map.get(&serde_yaml::Value::String("username".to_string()))
+                let username = map.get(&key_username)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let password = map.get(&serde_yaml::Value::String("password".to_string()))
+                let password = map.get(&key_password)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                     
@@ -954,10 +1029,10 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
                 
-                let username = map.get(&serde_yaml::Value::String("username".to_string()))
+                let username = map.get(&key_username)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let password = map.get(&serde_yaml::Value::String("password".to_string()))
+                let password = map.get(&key_password)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                     
@@ -968,10 +1043,10 @@ pub fn convert_clash_to_singbox(
                     outbound.insert("password".to_string(), json!(password));
                 }
                 
-                let tls_enabled = map.get(&serde_yaml::Value::String("tls".to_string()))
+                let tls_enabled = map.get(&key_tls)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                let sni = map.get(&serde_yaml::Value::String("sni".to_string()))
+                let sni = map.get(&key_sni)
                     .and_then(|v| v.as_str())
                     .unwrap_or(&server);
                     
@@ -988,10 +1063,10 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
                 
-                let uuid = map.get(&serde_yaml::Value::String("uuid".to_string()))
+                let uuid = map.get(&key_uuid)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let password = map.get(&serde_yaml::Value::String("password".to_string()))
+                let password = map.get(&key_password)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                     
@@ -1000,12 +1075,12 @@ pub fn convert_clash_to_singbox(
                     outbound.insert("password".to_string(), json!(password));
                 }
                 
-                let congestion = map.get(&serde_yaml::Value::String("congestion_control".to_string()))
+                let congestion = map.get(&key_congestion_control)
                     .and_then(|v| v.as_str())
                     .unwrap_or("cubic");
                 outbound.insert("congestion_control".to_string(), json!(congestion));
                 
-                let sni = map.get(&serde_yaml::Value::String("sni".to_string()))
+                let sni = map.get(&key_sni)
                     .and_then(|v| v.as_str())
                     .unwrap_or(&server);
                 outbound.insert("tls".to_string(), json!({

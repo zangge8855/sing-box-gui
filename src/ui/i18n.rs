@@ -40,8 +40,18 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "status_downloading_update",
     "toast_update_downloading",
     "toast_update_installing",
-    "toast_update_no_asset",
     "more_nodes_hint",
+    "sort_connections_by",
+    "sort_nodes_by",
+    "sort_latency",
+    "sort_name",
+    "sort_original",
+    "sort_host",
+    "sort_process",
+    "sort_network",
+    "sort_rule",
+    "sort_download",
+    "sort_upload",
 ];
 
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
@@ -282,8 +292,20 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "status_downloading_update" => "Downloading update…",
             "toast_update_downloading" => "Downloading update in the background…",
             "toast_update_installing" => "Installing update and restarting…",
-            "toast_update_no_asset" => "No installable package for this platform; open GitHub to download.",
             "status_check_failed" => "Check failed:",
+            
+            // Sorting
+            "sort_connections_by" => "Sort by",
+            "sort_nodes_by" => "Sort by",
+            "sort_latency" => "Latency",
+            "sort_name" => "Name",
+            "sort_original" => "Original",
+            "sort_host" => "Host",
+            "sort_process" => "Process",
+            "sort_network" => "Network",
+            "sort_rule" => "Rule",
+            "sort_download" => "Download",
+            "sort_upload" => "Upload",
 
             _ => key,
         },
@@ -523,8 +545,20 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "toast_update_downloading" => "正在后台下载更新…",
             "more_nodes_hint" => "... 还有 {} 个节点。使用搜索以过滤。",
             "toast_update_installing" => "正在安装更新并重启…",
-            "toast_update_no_asset" => "当前平台没有可自动安装的安装包，请打开 GitHub 手动下载。",
             "status_check_failed" => "检查更新失败:",
+            
+            // Sorting
+            "sort_connections_by" => "排序依据",
+            "sort_nodes_by" => "节点排序",
+            "sort_latency" => "延迟优先",
+            "sort_name" => "名称排序",
+            "sort_original" => "原始顺序",
+            "sort_host" => "目标域名",
+            "sort_process" => "应用进程",
+            "sort_network" => "网络协议",
+            "sort_rule" => "分流规则",
+            "sort_download" => "下载流量",
+            "sort_upload" => "上传流量",
             
             _ => key,
         }

@@ -535,6 +535,39 @@ pub fn button_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
     }
 }
 
+pub fn button_header(theme: &iced::Theme, status: button::Status) -> button::Style {
+    let dark = is_dark(theme);
+    let bg = match status {
+        button::Status::Hovered => {
+            if dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.055)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.045)
+            }
+        }
+        button::Status::Pressed => {
+            if dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.07)
+            }
+        }
+        _ => Color::TRANSPARENT,
+    };
+    let text = if dark { TEXT_MUTED } else { TEXT_MUTED_LIGHT };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: text,
+        border: Border {
+            radius: RADIUS_XS.into(),
+            width: 0.0,
+            color: Color::TRANSPARENT,
+        },
+        shadow: Shadow::default(),
+        ..Default::default()
+    }
+}
+
 pub fn list_item_style(theme: &iced::Theme, is_selected: bool, is_hovered: bool) -> container::Style {
     let dark = is_dark(theme);
     let base_bg = if dark {
