@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, row, svg, text, Space, responsive, pick_list};
-use iced::{Alignment, Element, Length, Color};
+use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
 use crate::ui::theme;

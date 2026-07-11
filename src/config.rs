@@ -500,36 +500,10 @@ pub fn get_profile_path(profile_id: &str) -> PathBuf {
 }
 
 pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
-    let key_alterId = serde_yaml::Value::String("alterId".into());
-    let key_auth_str = serde_yaml::Value::String("auth-str".into());
-    let key_auth_str = serde_yaml::Value::String("auth_str".into());
-    let key_cipher = serde_yaml::Value::String("cipher".into());
-    let key_congestion_control = serde_yaml::Value::String("congestion_control".into());
-    let key_fingerprint = serde_yaml::Value::String("fingerprint".into());
-    let key_flow = serde_yaml::Value::String("flow".into());
-    let key_grpc_opts = serde_yaml::Value::String("grpc-opts".into());
-    let key_grpc_service_name = serde_yaml::Value::String("grpc-service-name".into());
-    let key_headers = serde_yaml::Value::String("headers".into());
-    let key_host = serde_yaml::Value::String("host".into());
     let key_name = serde_yaml::Value::String("name".into());
-    let key_network = serde_yaml::Value::String("network".into());
-    let key_password = serde_yaml::Value::String("password".into());
-    let key_path = serde_yaml::Value::String("path".into());
     let key_port = serde_yaml::Value::String("port".into());
-    let key_public_key = serde_yaml::Value::String("public-key".into());
-    let key_reality = serde_yaml::Value::String("reality".into());
-    let key_reality_opts = serde_yaml::Value::String("reality-opts".into());
     let key_server = serde_yaml::Value::String("server".into());
-    let key_servername = serde_yaml::Value::String("servername".into());
-    let key_serviceName = serde_yaml::Value::String("serviceName".into());
-    let key_short_id = serde_yaml::Value::String("short-id".into());
-    let key_skip_cert_verify = serde_yaml::Value::String("skip-cert-verify".into());
-    let key_sni = serde_yaml::Value::String("sni".into());
-    let key_tls = serde_yaml::Value::String("tls".into());
     let key_type = serde_yaml::Value::String("type".into());
-    let key_username = serde_yaml::Value::String("username".into());
-    let key_uuid = serde_yaml::Value::String("uuid".into());
-    let key_ws_opts = serde_yaml::Value::String("ws-opts".into());
     let normalized = normalize_profile_content(content);
     let val: serde_yaml::Value = serde_yaml::from_str(&normalized)
         .map_err(|e| format!("YAML parsing failed: {}", e))?;
@@ -661,7 +635,7 @@ fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
     let key_host = serde_yaml::Value::String("host".into());
     let key_grpc_opts = serde_yaml::Value::String("grpc-opts".into());
     let key_grpc_service_name = serde_yaml::Value::String("grpc-service-name".into());
-    let key_serviceName = serde_yaml::Value::String("serviceName".into());
+    let key_service_name = serde_yaml::Value::String("serviceName".into());
 
     let network = map.get(&key_network)
         .and_then(|v| v.as_str())
@@ -703,7 +677,7 @@ fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
             if let Some(s) = grpc_opts.get(&key_grpc_service_name).and_then(|v| v.as_str()) {
                 service_name = s.to_string();
             }
-        } else if let Some(s) = map.get(&key_serviceName).and_then(|v| v.as_str()) {
+        } else if let Some(s) = map.get(&key_service_name).and_then(|v| v.as_str()) {
             service_name = s.to_string();
         }
         
@@ -720,28 +694,20 @@ pub fn convert_clash_to_singbox(
     yaml_content: &str,
     gui_config: &GuiConfig,
 ) -> Result<serde_json::Value, String> {
-    let key_alterId = serde_yaml::Value::String("alterId".into());
-    let key_auth_str = serde_yaml::Value::String("auth-str".into());
+    let key_alter_id = serde_yaml::Value::String("alterId".into());
     let key_auth_str = serde_yaml::Value::String("auth_str".into());
     let key_cipher = serde_yaml::Value::String("cipher".into());
     let key_congestion_control = serde_yaml::Value::String("congestion_control".into());
     let key_fingerprint = serde_yaml::Value::String("fingerprint".into());
     let key_flow = serde_yaml::Value::String("flow".into());
-    let key_grpc_opts = serde_yaml::Value::String("grpc-opts".into());
-    let key_grpc_service_name = serde_yaml::Value::String("grpc-service-name".into());
-    let key_headers = serde_yaml::Value::String("headers".into());
-    let key_host = serde_yaml::Value::String("host".into());
     let key_name = serde_yaml::Value::String("name".into());
-    let key_network = serde_yaml::Value::String("network".into());
     let key_password = serde_yaml::Value::String("password".into());
-    let key_path = serde_yaml::Value::String("path".into());
     let key_port = serde_yaml::Value::String("port".into());
     let key_public_key = serde_yaml::Value::String("public-key".into());
     let key_reality = serde_yaml::Value::String("reality".into());
     let key_reality_opts = serde_yaml::Value::String("reality-opts".into());
     let key_server = serde_yaml::Value::String("server".into());
     let key_servername = serde_yaml::Value::String("servername".into());
-    let key_serviceName = serde_yaml::Value::String("serviceName".into());
     let key_short_id = serde_yaml::Value::String("short-id".into());
     let key_skip_cert_verify = serde_yaml::Value::String("skip-cert-verify".into());
     let key_sni = serde_yaml::Value::String("sni".into());
@@ -749,7 +715,6 @@ pub fn convert_clash_to_singbox(
     let key_type = serde_yaml::Value::String("type".into());
     let key_username = serde_yaml::Value::String("username".into());
     let key_uuid = serde_yaml::Value::String("uuid".into());
-    let key_ws_opts = serde_yaml::Value::String("ws-opts".into());
     let normalized = normalize_profile_content(yaml_content);
     let yaml: serde_yaml::Value = serde_yaml::from_str(&normalized)
         .map_err(|e| format!("YAML parsing failed: {}", e))?;
@@ -827,7 +792,7 @@ pub fn convert_clash_to_singbox(
                 let security = map.get(&key_cipher)
                     .and_then(|v| v.as_str())
                     .unwrap_or("auto");
-                let alter_id = map.get(&key_alterId)
+                let alter_id = map.get(&key_alter_id)
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0);
                     

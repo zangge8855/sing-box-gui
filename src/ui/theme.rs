@@ -12,7 +12,7 @@ pub const RADIUS_MD: f32 = 10.0;
 pub const RADIUS_SM: f32 = 8.0;
 pub const RADIUS_XS: f32 = 6.0;
 pub const RADIUS_MICRO: f32 = 3.0;
-pub const RADIUS_PILL: f32 = 100.0;
+
 
 /// Font for numeric metrics (latency, speeds).
 ///
@@ -72,7 +72,7 @@ pub const SEARCH_WIDTH: f32 = 260.0;
 pub const GRID_GAP: f32 = 16.0;
 pub const SP_8: f32 = 8.0;
 pub const SP_12: f32 = 12.0;
-pub const SP_32: f32 = 32.0;
+
 pub const SP_40: f32 = 40.0;
 
 // ── Dark mode (cool near-black with subtle blue undertone) ───────────────────
