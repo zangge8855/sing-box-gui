@@ -406,7 +406,8 @@ pub fn start_core(
         return Err("sing-box core not found! Please download it or specify correct path in Settings.".to_string());
     }
 
-    // Validate generated config before spawning the process
+    // Validate generated config before spawning the process.
+    // Spawn/check failures are hard errors — never skip validation silently.
     let run_config_path = prepare_run_config(gui_config)?;
     {
         let mut check_cmd = Command::new(&core_path);
@@ -415,19 +416,20 @@ pub fn start_core(
         check_cmd.stderr(Stdio::piped());
         #[cfg(target_os = "windows")]
         check_cmd.creation_flags(0x08000000);
-        if let Ok(output) = check_cmd.output() {
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let msg = if !stderr.trim().is_empty() {
-                    stderr.trim().to_string()
-                } else if !stdout.trim().is_empty() {
-                    stdout.trim().to_string()
-                } else {
-                    "Configuration check failed".to_string()
-                };
-                return Err(format!("Config check failed: {}", msg));
-            }
+        let output = check_cmd
+            .output()
+            .map_err(|e| format!("Failed to run config check: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let msg = if !stderr.trim().is_empty() {
+                stderr.trim().to_string()
+            } else if !stdout.trim().is_empty() {
+                stdout.trim().to_string()
+            } else {
+                "Configuration check failed".to_string()
+            };
+            return Err(format!("Config check failed: {}", msg));
         }
     }
 

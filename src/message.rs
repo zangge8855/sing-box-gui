@@ -1,5 +1,13 @@
 use crate::state::{Tab, RoutingMode, Language, AppTheme, RuleField, LogFilter};
 
+/// Latest GitHub release info for in-app updates.
+#[derive(Debug, Clone)]
+pub struct AppUpdateInfo {
+    pub tag_name: String,
+    /// Direct download URL for the current platform binary, if present on the release.
+    pub download_url: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     TabChanged(Tab),
@@ -26,6 +34,8 @@ pub enum Message {
         traffic_total: Option<u64>,
         expire_at: Option<i64>,
         display_name: Option<String>,
+        /// Source URL/path used for import (needed when registering a new profile).
+        source_url: Option<String>,
     },
     SelectProfile(String),
     RequestDeleteProfile(String),
@@ -88,7 +98,17 @@ pub enum Message {
     ToggleAutoStartCore,
     ToggleAutoSysProxy,
     CheckUpdate,
-    UpdateChecked(Result<String, String>),
+    /// Result of GitHub latest-release check (tag + optional platform asset URL).
+    UpdateChecked(Result<AppUpdateInfo, String>),
+    /// User (or auto-flow) requested download + install of a release asset.
+    DownloadAppUpdate { tag: String, url: String },
+    /// Download finished (path to temp binary) or failed.
+    AppUpdateDownloaded {
+        tag: String,
+        /// Original asset URL (kept so the user can retry after a failure).
+        url: String,
+        result: Result<std::path::PathBuf, String>,
+    },
     OpenUrl(String),
     StartEditProfile(String),
     EditProfileNameChanged(String),
@@ -103,4 +123,8 @@ pub enum Message {
     ToggleConfigPreview,
     ToggleProfileMore(String),
     CoreLivenessChecked(bool),
+    /// Async result of `core::start_core` (runs off the UI thread).
+    CoreStartFinished(Result<(), String>),
+    /// Async result of `core::stop_core`.
+    CoreStopFinished,
 }

@@ -422,6 +422,22 @@ pub fn render<'a>(
                     .align_y(Alignment::Center)
                     .into()
                 }
+                UpdateStatus::Downloading { tag } => {
+                    row![
+                        container(crate::ui::loading_row(
+                            tr(lang, "status_downloading_update"),
+                            theme,
+                        ))
+                        .width(Length::Fill),
+                        text(tag.clone())
+                            .color(theme::WARNING)
+                            .size(theme::TYPE_CAPTION),
+                    ]
+                    .width(Length::Fill)
+                    .spacing(crate::ui::SP_12)
+                    .align_y(Alignment::Center)
+                    .into()
+                }
                 UpdateStatus::UpToDate => {
                     let btn: Element<'_, Message> = button(text(tr(lang, "btn_check_update")).size(theme::TYPE_BTN_SM))
                         .padding(theme::BTN_PAD_SM)
@@ -439,18 +455,49 @@ pub fn render<'a>(
                     .align_y(Alignment::Center)
                     .into()
                 }
-                UpdateStatus::NewVersion(tag_name) => {
-                    let btn: Element<'_, Message> = button(text(tr(lang, "btn_goto_github")).size(theme::TYPE_BTN_SM))
-                        .padding(theme::BTN_PAD_SM)
-                        .style(theme::button_primary)
-                        .on_press(Message::OpenUrl("https://github.com/zangge8855/sing-box-gui/releases/latest".to_string()))
-                        .into();
+                UpdateStatus::NewVersion { tag, download_url } => {
+                    let install_btn: Element<'_, Message> = if let Some(url) = download_url.clone() {
+                        button(text(tr(lang, "btn_download_install")).size(theme::TYPE_BTN_SM))
+                            .padding(theme::BTN_PAD_SM)
+                            .style(theme::button_primary)
+                            .on_press(Message::DownloadAppUpdate {
+                                tag: tag.clone(),
+                                url,
+                            })
+                            .into()
+                    } else {
+                        button(text(tr(lang, "btn_goto_github")).size(theme::TYPE_BTN_SM))
+                            .padding(theme::BTN_PAD_SM)
+                            .style(theme::button_primary)
+                            .on_press(Message::OpenUrl(
+                                "https://github.com/zangge8855/sing-box-gui/releases/latest"
+                                    .to_string(),
+                            ))
+                            .into()
+                    };
+                    let github_btn: Element<'_, Message> = button(
+                        text(tr(lang, "btn_goto_github")).size(theme::TYPE_BTN_SM),
+                    )
+                    .padding(theme::BTN_PAD_SM)
+                    .style(theme::button_secondary)
+                    .on_press(Message::OpenUrl(
+                        "https://github.com/zangge8855/sing-box-gui/releases/latest".to_string(),
+                    ))
+                    .into();
+                    let actions: Element<'_, Message> = if download_url.is_some() {
+                        row![install_btn, github_btn]
+                            .spacing(8)
+                            .align_y(Alignment::Center)
+                            .into()
+                    } else {
+                        install_btn
+                    };
                     row![
-                        text(format!("{} {}", tr(lang, "status_new_available"), tag_name))
+                        text(format!("{} {}", tr(lang, "status_new_available"), tag))
                             .color(theme::WARNING)
                             .size(theme::TYPE_SECTION)
                             .width(Length::Fill),
-                        btn
+                        actions
                     ]
                     .width(Length::Fill)
                     .align_y(Alignment::Center)

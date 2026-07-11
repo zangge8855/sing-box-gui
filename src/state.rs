@@ -322,7 +322,15 @@ pub enum UpdateStatus {
     NotChecked,
     Checking,
     UpToDate,
-    NewVersion(String),
+    /// Remote tag and optional direct asset URL for the current platform.
+    NewVersion {
+        tag: String,
+        download_url: Option<String>,
+    },
+    /// In-app download of the release binary is in progress.
+    Downloading {
+        tag: String,
+    },
     Error(String),
 }
 

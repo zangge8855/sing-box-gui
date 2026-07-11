@@ -126,6 +126,16 @@ struct App {
     pending_auto_updates: std::collections::VecDeque<String>,
     /// Follow new log lines (snap scroll to end).
     logs_follow: bool,
+    /// Core start in progress (async; UI stays responsive).
+    core_starting: bool,
+    /// Core stop in progress (async).
+    core_stopping: bool,
+    /// After async stop completes, start again (settings/profile restart).
+    pending_core_restart: bool,
+    /// After an in-flight start finishes, stop immediately (e.g. active profile deleted).
+    force_stop_after_start: bool,
+    /// Tick counter for tab-aware API poll throttling.
+    poll_tick_counter: u32,
 }
 
 impl App {
@@ -318,6 +328,11 @@ impl App {
             profile_more_id: None,
             pending_auto_updates: std::collections::VecDeque::new(),
             logs_follow: true,
+            core_starting: false,
+            core_stopping: false,
+            pending_core_restart: false,
+            force_stop_after_start: false,
+            poll_tick_counter: 0,
         };
         
         // Force initialization of log and traffic streams on startup
@@ -412,12 +427,122 @@ impl App {
         self.tray_menu_system_proxy.set_checked(self.gui_config.system_proxy_enabled);
     }
     
+    fn core_busy(&self) -> bool {
+        self.core_starting || self.core_stopping
+    }
+
+    /// Schedule an async core stop (runs off the UI thread).
+    fn task_stop_core(&mut self) -> Task<Message> {
+        self.core_stopping = true;
+        Task::perform(
+            async {
+                let _ = tokio::task::spawn_blocking(core::stop_core).await;
+            },
+            |_| Message::CoreStopFinished,
+        )
+    }
+
+    /// Schedule an async core start with a snapshot of current config.
+    fn task_start_core(&mut self) -> Task<Message> {
+        self.core_starting = true;
+        let cfg = self.gui_config.clone();
+        let log_tx = get_log_tx();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || core::start_core(&cfg, log_tx))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| r)
+            },
+            Message::CoreStartFinished,
+        )
+    }
+
+    /// Apply post-start side effects (traffic monitor, optional system proxy).
+    fn on_core_started_ok(&mut self) -> Task<Message> {
+        self.core_running = true;
+        self.log_lines
+            .push("[GUI] sing-box core started successfully.".to_string());
+
+        if self.gui_config.auto_sys_proxy && !self.sys_proxy_enabled {
+            match sysproxy::set_system_proxy(true, self.gui_config.mixed_port) {
+                Ok(_) => {
+                    self.sys_proxy_enabled = true;
+                    self.gui_config.system_proxy_enabled = true;
+                    let _ = config::save_gui_config(&self.gui_config);
+                    self.log_lines
+                        .push("[GUI] System proxy auto-enabled on core start.".to_string());
+                }
+                Err(e) => {
+                    let msg = format!("Failed to auto-enable system proxy: {}", e);
+                    self.log_lines.push(format!("[GUI] {}", msg));
+                    self.toast_error(if self.gui_config.language == state::Language::Zh {
+                        format!("自动开启系统代理失败: {}", e)
+                    } else {
+                        msg
+                    });
+                }
+            }
+        }
+
+        if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
+            let _ = cancel_tx.send(());
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.traffic_cancel_tx = Some(tx);
+        let traffic_tx = get_traffic_tx();
+        api::spawn_traffic_monitor(self.gui_config.api_port, traffic_tx, rx);
+
+        Task::perform(
+            async {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            },
+            |_| Message::Tick,
+        )
+    }
+
+    /// Tear down traffic monitor and optionally disable system proxy after stop.
+    fn on_core_stopped_cleanup(&mut self) {
+        self.core_running = false;
+        if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
+            let _ = cancel_tx.send(());
+        }
+        if self.gui_config.disable_proxy_on_core_stop && self.sys_proxy_enabled {
+            match sysproxy::set_system_proxy(false, self.gui_config.mixed_port) {
+                Ok(_) => {
+                    self.sys_proxy_enabled = false;
+                    self.gui_config.system_proxy_enabled = false;
+                    let _ = config::save_gui_config(&self.gui_config);
+                }
+                Err(e) => {
+                    self.log_lines
+                        .push(format!("[GUI] Failed to disable system proxy: {}", e));
+                    self.toast_error(if self.gui_config.language == state::Language::Zh {
+                        format!("关闭系统代理失败: {}", e)
+                    } else {
+                        format!("Failed to disable system proxy: {}", e)
+                    });
+                }
+            }
+        }
+        self.current_speed = Bandwidth::default();
+        self.total_uploaded = 0;
+        self.total_downloaded = 0;
+        self.log_lines
+            .push("[GUI] sing-box core stopped.".to_string());
+    }
+
     fn restart_core(&mut self) -> Task<Message> {
+        if self.core_busy() {
+            // Coalesce: ensure we restart once the in-flight transition ends.
+            self.pending_core_restart = true;
+            return Task::none();
+        }
         if self.core_running {
-            core::stop_core();
-            self.core_running = false;
-            self.log_lines.push("[GUI] Restarting core to apply new settings...".to_string());
-            Task::done(Message::ToggleCore)
+            self.pending_core_restart = true;
+            self.log_lines
+                .push("[GUI] Restarting core to apply new settings...".to_string());
+            self.task_stop_core()
         } else {
             Task::none()
         }
@@ -636,73 +761,54 @@ impl App {
                 Task::none()
             }
             Message::ToggleCore => {
+                if self.core_busy() {
+                    return Task::none();
+                }
                 if self.core_running {
-                    core::stop_core();
-                    self.core_running = false;
-                    
-                    // Stop traffic monitor stream
-                    if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
-                        let _ = cancel_tx.send(());
-                    }
-                    
-                    // Turn off system proxy when configured to do so
-                    if self.gui_config.disable_proxy_on_core_stop && self.sys_proxy_enabled {
-                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
-                        self.sys_proxy_enabled = false;
-                        self.gui_config.system_proxy_enabled = false;
-                        let _ = config::save_gui_config(&self.gui_config);
-                    }
-                    self.log_lines.push("[GUI] sing-box core stopped.".to_string());
-                    self.current_speed = Bandwidth::default();
-                    self.total_uploaded = 0;
-                    self.total_downloaded = 0;
-                    Task::none()
+                    self.pending_core_restart = false;
+                    self.task_stop_core()
                 } else {
-                    let log_tx = get_log_tx();
-                    match core::start_core(&self.gui_config, log_tx) {
-                        Ok(_) => {
+                    self.task_start_core()
+                }
+            }
+            Message::CoreStartFinished(res) => {
+                self.core_starting = false;
+                match res {
+                    Ok(()) => {
+                        if self.force_stop_after_start {
+                            self.force_stop_after_start = false;
+                            self.pending_core_restart = false;
                             self.core_running = true;
-                            self.log_lines.push("[GUI] sing-box core started successfully.".to_string());
-                            
-                            // Auto-enable system proxy if configured
-                            if self.gui_config.auto_sys_proxy && !self.sys_proxy_enabled {
-                                match sysproxy::set_system_proxy(true, self.gui_config.mixed_port) {
-                                    Ok(_) => {
-                                        self.sys_proxy_enabled = true;
-                                        self.gui_config.system_proxy_enabled = true;
-                                        let _ = config::save_gui_config(&self.gui_config);
-                                        self.log_lines.push("[GUI] System proxy auto-enabled on core start.".to_string());
-                                    }
-                                    Err(e) => {
-                                        self.log_lines.push(format!("[GUI] Failed to auto-enable system proxy: {}", e));
-                                    }
-                                }
-                            }
-                            
-                            // Stop existing traffic monitor if any
-                            if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
-                                let _ = cancel_tx.send(());
-                            }
-                            
-                            let (tx, rx) = tokio::sync::oneshot::channel();
-                            self.traffic_cancel_tx = Some(tx);
-                            
-                            // Start traffic monitor stream
-                            let traffic_tx = get_traffic_tx();
-                            api::spawn_traffic_monitor(self.gui_config.api_port, traffic_tx, rx);
-                            
-                            // Trigger latency load
-                            Task::perform(async move {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                            }, |_| Message::Tick)
+                            return self.task_stop_core();
                         }
-                        Err(e) => {
-                            self.log_lines.push(format!("[GUI] Error starting core: {}", e));
-                            self.toast_error(e);
-                            Task::none()
+                        if self.pending_core_restart {
+                            // Settings/profile changed while starting — recycle with latest config.
+                            self.core_running = true;
+                            self.pending_core_restart = true;
+                            return self.task_stop_core();
                         }
+                        self.on_core_started_ok()
+                    }
+                    Err(e) => {
+                        self.core_running = false;
+                        self.force_stop_after_start = false;
+                        self.log_lines
+                            .push(format!("[GUI] Error starting core: {}", e));
+                        self.toast_error(e);
+                        // Drop pending restart so we don't loop on a broken config.
+                        self.pending_core_restart = false;
+                        Task::none()
                     }
                 }
+            }
+            Message::CoreStopFinished => {
+                self.core_stopping = false;
+                self.on_core_stopped_cleanup();
+                if self.pending_core_restart {
+                    self.pending_core_restart = false;
+                    return self.task_start_core();
+                }
+                Task::none()
             }
             Message::NewLogLine(line) => {
                 self.log_lines.push(line);
@@ -872,7 +978,8 @@ impl App {
                 self.current_speed = Bandwidth { up, down };
                 self.speed_history.push((up, down));
                 if self.speed_history.len() > 30 {
-                    self.speed_history.remove(0);
+                    let excess = self.speed_history.len() - 30;
+                    self.speed_history.drain(..excess);
                 }
                 Task::none()
             }
@@ -887,6 +994,11 @@ impl App {
                     }
                     Err(e) => {
                         self.log_lines.push(format!("[GUI] System proxy error: {}", e));
+                        self.toast_error(if self.gui_config.language == state::Language::Zh {
+                            format!("系统代理切换失败: {}", e)
+                        } else {
+                            format!("System proxy error: {}", e)
+                        });
                     }
                 }
                 Task::none()
@@ -907,6 +1019,7 @@ impl App {
                 Task::perform(download_profile(url), |res| match res {
                     Ok(r) => Message::SubscriptionDownloaded {
                         id: r.id,
+                        source_url: Some(r.source_url),
                         error: None,
                         traffic_upload: r.traffic_upload,
                         traffic_download: r.traffic_download,
@@ -922,6 +1035,7 @@ impl App {
                         traffic_total: None,
                         expire_at: None,
                         display_name: None,
+                        source_url: None,
                     },
                 })
             }
@@ -933,6 +1047,7 @@ impl App {
                 traffic_total,
                 expire_at,
                 display_name,
+                source_url,
             } => {
                 self.downloading = false;
                 if let Some(err) = error {
@@ -942,15 +1057,18 @@ impl App {
                 } else {
                     self.profile_error = None;
                     self.url_input.clear();
-                    
-                    // Reload profiles list safely without overwriting other in-memory settings
-                    let loaded = config::load_gui_config();
-                    self.gui_config.subscriptions = loaded.subscriptions;
 
-                    // Refresh metadata for the profile that was just written
+                    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                    // Mutate in-memory config only (profile file already written by fetch task).
+                    // Never re-load gui_config from disk here — that races concurrent saves.
                     if !id.is_empty() {
-                        if let Some(p) = self.gui_config.subscriptions.iter_mut().find(|p| p.id == id) {
-                            p.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                        if let Some(p) = self
+                            .gui_config
+                            .subscriptions
+                            .iter_mut()
+                            .find(|p| p.id == id)
+                        {
+                            p.updated_at = now;
                             if traffic_upload.is_some() {
                                 p.traffic_upload = traffic_upload;
                             }
@@ -968,24 +1086,38 @@ impl App {
                                     p.name = name.clone();
                                 }
                             }
+                        } else {
+                            let name = display_name
+                                .filter(|n| !n.is_empty())
+                                .unwrap_or_else(|| format!("Sub_{}", &id[id.len().saturating_sub(6)..]));
+                            let path = config::get_profile_path(&id);
+                            let url = source_url.unwrap_or_default();
+                            self.gui_config.subscriptions.push(Profile {
+                                id: id.clone(),
+                                name,
+                                url,
+                                file_path: path.to_string_lossy().to_string(),
+                                is_subscription: true,
+                                updated_at: now,
+                                traffic_upload,
+                                traffic_download,
+                                traffic_total,
+                                expire_at,
+                            });
                         }
                         let _ = config::save_gui_config(&self.gui_config);
                     }
 
                     self.sync_input_buffers();
-                    
-                    // If no active profile, select this one
+
                     if self.gui_config.active_profile_id.is_none() && !id.is_empty() {
                         self.gui_config.active_profile_id = Some(id.clone());
                         let _ = config::save_gui_config(&self.gui_config);
                         self.reload_active_nodes();
                     }
-                    self.log_lines.push("[GUI] Subscription downloaded successfully.".to_string());
-                    self.toast_success(if self.gui_config.language == state::Language::Zh {
-                        "订阅下载/更新成功"
-                    } else {
-                        "Subscription downloaded successfully"
-                    });
+                    self.log_lines
+                        .push("[GUI] Subscription downloaded successfully.".to_string());
+                    self.toast_success(self.tr("toast_sub_ok"));
                 }
                 self.kick_pending_auto_update()
             }
@@ -1014,19 +1146,28 @@ impl App {
                 if let Some(id) = self.confirm_delete_profile_id.take() {
                     let path = config::get_profile_path(&id);
                     let _ = std::fs::remove_file(path);
-                    
+
+                    let was_active = self.gui_config.active_profile_id.as_ref() == Some(&id);
                     self.gui_config.subscriptions.retain(|p| p.id != id);
-                    if self.gui_config.active_profile_id.as_ref() == Some(&id) {
+                    if was_active {
                         self.gui_config.active_profile_id = None;
                         self.active_profile_nodes.clear();
                     }
                     let _ = config::save_gui_config(&self.gui_config);
                     self.log_lines.push("[GUI] Profile deleted.".to_string());
-                    self.toast_success(if self.gui_config.language == state::Language::Zh {
-                        "订阅已删除"
-                    } else {
-                        "Profile deleted"
-                    });
+                    self.toast_success(self.tr("toast_profile_deleted"));
+
+                    // Active profile deleted while core runs → stop to avoid orphan config.
+                    if was_active {
+                        self.pending_core_restart = false;
+                        if self.core_starting {
+                            self.force_stop_after_start = true;
+                            self.toast_info(self.tr("toast_core_stopped_profile_deleted"));
+                        } else if self.core_running && !self.core_stopping {
+                            self.toast_info(self.tr("toast_core_stopped_profile_deleted"));
+                            return self.task_stop_core();
+                        }
+                    }
                 }
                 Task::none()
             }
@@ -1073,22 +1214,33 @@ impl App {
                 let api_port = self.gui_config.api_port;
                 let test_url = self.gui_config.latency_test_url.clone();
                 let timeout_ms = self.gui_config.latency_test_timeout_ms;
-                
-                let tasks = self.active_profile_nodes.iter().map(|node| {
-                    let tag = node.name.clone();
-                    let test_url = test_url.clone();
-                    Task::perform(async move {
-                        let latency =
-                            api::test_node_latency(api_port, &tag, &test_url, timeout_ms).await;
-                        (tag, latency)
-                    }, |(tag, res)| {
-                        Message::NodeLatencyTested {
-                            tag,
-                            latency: res.ok(),
-                        }
+                // Cap concurrent delay probes so Clash API / UI are not stampeded.
+                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+
+                let tasks = self
+                    .active_profile_nodes
+                    .iter()
+                    .map(|node| {
+                        let tag = node.name.clone();
+                        let test_url = test_url.clone();
+                        let sem = std::sync::Arc::clone(&sem);
+                        Task::perform(
+                            async move {
+                                let _permit = sem.acquire().await;
+                                let latency = api::test_node_latency(
+                                    api_port, &tag, &test_url, timeout_ms,
+                                )
+                                .await;
+                                (tag, latency)
+                            },
+                            |(tag, res)| Message::NodeLatencyTested {
+                                tag,
+                                latency: res.ok(),
+                            },
+                        )
                     })
-                }).collect::<Vec<_>>();
-                
+                    .collect::<Vec<_>>();
+
                 Task::batch(tasks).chain(Task::done(Message::LatencyTestComplete))
             }
             Message::NodeLatencyTested { tag, latency } => {
@@ -1125,6 +1277,7 @@ impl App {
                             traffic_total: r.traffic_total,
                             expire_at: r.expire_at,
                             display_name: r.display_name,
+                            source_url: Some(r.source_url),
                         },
                         Err(e) => Message::SubscriptionDownloaded {
                             id: String::new(),
@@ -1134,6 +1287,7 @@ impl App {
                             traffic_total: None,
                             expire_at: None,
                             display_name: None,
+                            source_url: None,
                         },
                     })
                 } else {
@@ -1149,11 +1303,14 @@ impl App {
                 self.kick_pending_auto_update()
             }
             Message::Tick => {
-                // Lock-free fast path avoids contending on CURRENT_PROCESS while
-                // `start_core` is mid-grace (holds the lock up to STARTUP_GRACE_MS).
-                self.core_running = core::is_core_running_fast();
-                
-                let check_authoritative = self.core_running && self.tick_authority_counter % 5 == 0;
+                // Lock-free fast path; during async start/stop prefer the transition flags.
+                if !self.core_busy() {
+                    self.core_running = core::is_core_running_fast();
+                }
+
+                let check_authoritative = self.core_running
+                    && !self.core_busy()
+                    && self.tick_authority_counter % 5 == 0;
                 self.tick_authority_counter =
                     self.tick_authority_counter.wrapping_add(1);
 
@@ -1180,17 +1337,24 @@ impl App {
                         }
                     }
                 }
-                
-                // Periodically fetch active node and connection totals from Clash API if core is running
-                if self.core_running {
+
+                // Tab-aware API polling — avoid 1 Hz full scrapes on idle tabs.
+                if self.core_running && !self.core_busy() {
+                    self.poll_tick_counter = self.poll_tick_counter.wrapping_add(1);
+                    let tick = self.poll_tick_counter;
                     let api_port = self.gui_config.api_port;
-                    tasks.push(Task::perform(async move {
-                        api::fetch_proxies(api_port).await
-                    }, |res| {
-                        Message::ProxiesFetched(res.map(|r| r.proxies).map_err(|e| e))
-                    }));
-                    
-                    tasks.push(Task::done(Message::FetchConnections));
+                    let (want_proxies, want_connections) =
+                        should_poll_api(self.current_tab, tick);
+
+                    if want_proxies {
+                        tasks.push(Task::perform(
+                            async move { api::fetch_proxies(api_port).await },
+                            |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
+                        ));
+                    }
+                    if want_connections {
+                        tasks.push(Task::done(Message::FetchConnections));
+                    }
                 }
 
                 if check_authoritative {
@@ -1593,10 +1757,23 @@ impl App {
             }
             Message::UpdateChecked(result) => {
                 match result {
-                    Ok(tag_name) => {
+                    Ok(info) => {
                         let local_version = env!("CARGO_PKG_VERSION");
-                        if is_remote_version_newer(local_version, tag_name.trim()) {
-                            self.update_status = state::UpdateStatus::NewVersion(tag_name);
+                        if is_remote_version_newer(local_version, info.tag_name.trim()) {
+                            let tag = info.tag_name;
+                            // Prefer in-app download when a platform asset is available.
+                            if let Some(url) = info.download_url {
+                                self.update_status = state::UpdateStatus::Downloading {
+                                    tag: tag.clone(),
+                                };
+                                self.toast_info(self.tr("toast_update_downloading"));
+                                return Task::done(Message::DownloadAppUpdate { tag, url });
+                            }
+                            self.update_status = state::UpdateStatus::NewVersion {
+                                tag,
+                                download_url: None,
+                            };
+                            self.toast_info(self.tr("toast_update_no_asset"));
                         } else {
                             // Same or lower remote tag, or both unreadable → up-to-date.
                             self.update_status = state::UpdateStatus::UpToDate;
@@ -1607,6 +1784,71 @@ impl App {
                     }
                 }
                 Task::none()
+            }
+            Message::DownloadAppUpdate { tag, url } => {
+                self.update_status = state::UpdateStatus::Downloading { tag: tag.clone() };
+                let url_for_msg = url.clone();
+                Task::perform(download_app_update_binary(url), move |result| {
+                    Message::AppUpdateDownloaded {
+                        tag,
+                        url: url_for_msg,
+                        result,
+                    }
+                })
+            }
+            Message::AppUpdateDownloaded { tag, url, result } => {
+                match result {
+                    Ok(path) => {
+                        self.log_lines.push(format!(
+                            "[GUI] Update {} downloaded to {}",
+                            tag,
+                            path.display()
+                        ));
+                        self.toast_info(self.tr("toast_update_installing"));
+                        // Stop core and clear proxy before replacing the binary.
+                        self.force_stop_after_start = false;
+                        self.pending_core_restart = false;
+                        self.core_starting = false;
+                        self.core_stopping = false;
+                        core::stop_core();
+                        if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
+                            let _ = cancel_tx.send(());
+                        }
+                        self.core_running = false;
+                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                        self.sys_proxy_enabled = false;
+                        self.gui_config.system_proxy_enabled = false;
+                        let _ = config::save_gui_config(&self.gui_config);
+                        match apply_update_and_restart(&path) {
+                            Ok(()) => {
+                                self.log_lines
+                                    .push("[GUI] Update scheduled; exiting to apply.".to_string());
+                                iced::exit()
+                            }
+                            Err(e) => {
+                                self.log_lines
+                                    .push(format!("[GUI] Failed to apply update: {}", e));
+                                self.update_status = state::UpdateStatus::NewVersion {
+                                    tag,
+                                    download_url: Some(url),
+                                };
+                                self.toast_error(e);
+                                Task::none()
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.log_lines
+                            .push(format!("[GUI] Update download failed: {}", e));
+                        // Keep download URL so the user can retry in-app.
+                        self.update_status = state::UpdateStatus::NewVersion {
+                            tag,
+                            download_url: Some(url),
+                        };
+                        self.toast_error(e);
+                        Task::none()
+                    }
+                }
             }
             Message::OpenUrl(url) => {
                 // `open::that` delegates to ShellExecuteW / open / xdg-open
@@ -1623,6 +1865,8 @@ impl App {
         
         let current_tab = self.current_tab;
         let core_running = self.core_running;
+        let core_starting = self.core_starting;
+        let core_stopping = self.core_stopping;
         let sys_proxy_enabled = self.sys_proxy_enabled;
         let total_uploaded = self.total_uploaded;
         let total_downloaded = self.total_downloaded;
@@ -1678,6 +1922,8 @@ impl App {
                 Tab::Dashboard => ui::dashboard::render(
                     gui_config_ref,
                     core_running,
+                    core_starting,
+                    core_stopping,
                     sys_proxy_enabled,
                     current_speed_ref,
                     speed_history_ref,
@@ -2179,6 +2425,7 @@ fn load_icon_safe() -> Option<tray_icon::Icon> {
 
 struct ProfileFetchResult {
     id: String,
+    source_url: String,
     display_name: Option<String>,
     traffic_upload: Option<u64>,
     traffic_download: Option<u64>,
@@ -2186,7 +2433,8 @@ struct ProfileFetchResult {
     expire_at: Option<i64>,
 }
 
-/// Download or open a profile URL/path, save under a new id, register in gui config.
+/// Download or open a profile URL/path and write the profile file only.
+/// The GUI thread owns `gui_config` mutations (avoids load/save races).
 async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
     let (content, meta) = load_profile_content(&url).await?;
     config::validate_profile_content(&content)?;
@@ -2208,23 +2456,9 @@ async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
     std::fs::write(&path, &content)
         .map_err(|e| format!("Failed to save profile: {}", e))?;
 
-    let mut config = config::load_gui_config();
-    config.subscriptions.push(Profile {
-        id: id.clone(),
-        name: name.clone(),
-        url: url.clone(),
-        file_path: path.to_string_lossy().to_string(),
-        is_subscription: true,
-        updated_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-        traffic_upload: meta.traffic_upload,
-        traffic_download: meta.traffic_download,
-        traffic_total: meta.traffic_total,
-        expire_at: meta.expire_at,
-    });
-    let _ = config::save_gui_config(&config);
-
     Ok(ProfileFetchResult {
         id,
+        source_url: url,
         display_name: Some(name),
         traffic_upload: meta.traffic_upload,
         traffic_download: meta.traffic_download,
@@ -2242,6 +2476,7 @@ async fn fetch_and_save_subscription(url: String, id: String) -> Result<ProfileF
         .map_err(|e| format!("Save failed: {}", e))?;
     Ok(ProfileFetchResult {
         id,
+        source_url: url,
         display_name: meta.display_name,
         traffic_upload: meta.traffic_upload,
         traffic_download: meta.traffic_download,
@@ -2418,6 +2653,55 @@ mod tests {
     }
 
     #[test]
+    fn quote_autostart_path_wraps_spaces() {
+        let p = r#"C:\Users\Test User\App\sing-box-gui.exe"#;
+        assert_eq!(quote_autostart_path(p), format!("\"{}\"", p));
+    }
+
+    #[test]
+    fn pick_release_asset_prefers_platform_suffix() {
+        let assets = vec![
+            GithubAsset {
+                name: "sing-box-gui-v2026.7.11-windows-amd64.exe".into(),
+                browser_download_url: "https://example.com/win".into(),
+            },
+            GithubAsset {
+                name: "sing-box-gui-v2026.7.11-linux-amd64".into(),
+                browser_download_url: "https://example.com/linux".into(),
+            },
+        ];
+        assert_eq!(
+            pick_release_asset_url(&assets, "windows-amd64.exe").as_deref(),
+            Some("https://example.com/win")
+        );
+        assert_eq!(
+            pick_release_asset_url(&assets, "linux-amd64").as_deref(),
+            Some("https://example.com/linux")
+        );
+        assert!(pick_release_asset_url(&assets, "macos-universal").is_none());
+    }
+
+    #[test]
+    fn should_poll_api_is_tab_aware() {
+        // Proxies: always proxies, never connections
+        let (p, c) = should_poll_api(state::Tab::Proxies, 1);
+        assert!(p && !c);
+        // Connections: connections on even ticks only
+        let (p, c) = should_poll_api(state::Tab::Connections, 2);
+        assert!(!p && c);
+        let (p, c) = should_poll_api(state::Tab::Connections, 1);
+        assert!(!p && !c);
+        // Logs: sparse background proxies only
+        let (p, c) = should_poll_api(state::Tab::Logs, 5);
+        assert!(p && !c);
+        let (p, c) = should_poll_api(state::Tab::Logs, 1);
+        assert!(!p && !c);
+        // Dashboard: proxies every 2, connections every 3
+        let (p, c) = should_poll_api(state::Tab::Dashboard, 6);
+        assert!(p && c);
+    }
+
+    #[test]
     fn normalize_version_tag_strips_v_and_drops_suffix() {
         assert_eq!(normalize_version_tag("v2026.7.9"), vec![2026, 7, 9]);
         assert_eq!(normalize_version_tag("2026.7.9"), vec![2026, 7, 9]);
@@ -2455,13 +2739,35 @@ fn set_windows_autostart(enable: bool) -> Result<(), String> {
         if enable {
             let exe_path = std::env::current_exe()
                 .map_err(|e| format!("Failed to resolve current exe path: {}", e))?;
-            run_key.set_value("sing-box-gui", &exe_path.to_string_lossy().to_string())
+            // Quote path so spaces in user profile directories do not break Run key.
+            let quoted = quote_autostart_path(&exe_path.to_string_lossy());
+            run_key
+                .set_value("sing-box-gui", &quoted)
                 .map_err(|e| format!("Failed to write autostart registry: {}", e))?;
         } else {
             let _ = run_key.delete_value("sing-box-gui");
         }
     }
     Ok(())
+}
+
+/// Whether Tick should poll proxies / connections for the given tab and tick.
+fn should_poll_api(tab: state::Tab, tick: u32) -> (bool, bool) {
+    let want_proxies = match tab {
+        state::Tab::Proxies => true,
+        state::Tab::Dashboard => tick.is_multiple_of(2),
+        _ => tick.is_multiple_of(5),
+    };
+    let want_connections = match tab {
+        state::Tab::Connections => tick.is_multiple_of(2),
+        state::Tab::Dashboard => tick.is_multiple_of(3),
+        _ => false,
+    };
+    (want_proxies, want_connections)
+}
+
+fn quote_autostart_path(path: &str) -> String {
+    format!("\"{}\"", path)
 }
 
 fn detect_system_theme() -> bool {
@@ -2559,20 +2865,81 @@ fn open_path_in_system(path: &std::path::Path) {
     let _ = open::that(path);
 }
 
-async fn check_app_update() -> Result<String, String> {
+/// Preferred release asset name fragment for this build target.
+/// Matches CI artifact names: `sing-box-gui-v{VERSION}-{suffix}`.
+fn platform_asset_suffix() -> &'static str {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        "windows-amd64.exe"
+    }
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    {
+        "windows-arm64.exe"
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        "macos-universal"
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        "macos-universal"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        "linux-amd64"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        "linux-arm64"
+    }
+    #[cfg(not(any(
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "aarch64"),
+        target_os = "macos",
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "aarch64"),
+    )))]
+    {
+        "unknown"
+    }
+}
+
+fn pick_release_asset_url(assets: &[GithubAsset], suffix: &str) -> Option<String> {
+    // Prefer exact suffix match (CI naming), then fallback to contains.
+    assets
+        .iter()
+        .find(|a| a.name.ends_with(suffix))
+        .or_else(|| assets.iter().find(|a| a.name.contains(suffix)))
+        .map(|a| a.browser_download_url.clone())
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+}
+
+async fn check_app_update() -> Result<message::AppUpdateInfo, String> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
-    let res = client.get("https://api.github.com/repos/zangge8855/sing-box-gui/releases/latest")
+    let res = client
+        .get("https://api.github.com/repos/zangge8855/sing-box-gui/releases/latest")
         .header("User-Agent", "sing-box-gui")
         .send()
         .await
         .map_err(|e| format!("Network request failed: {}", e))?;
 
     // 404 from /releases/latest = the repo has published *no* GitHub release yet.
-    // Surface this as a friendly, non-error status instead of scaring the user.
     let status = res.status();
     if status.as_u16() == 404 {
         return Err("No GitHub release published yet".to_string());
@@ -2581,16 +2948,192 @@ async fn check_app_update() -> Result<String, String> {
         return Err(format!("Server returned error status: {}", status));
     }
 
-    #[derive(serde::Deserialize)]
-    struct GithubRelease {
-        tag_name: String,
-    }
-
-    let release: GithubRelease = res.json()
+    let release: GithubRelease = res
+        .json()
         .await
         .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
-    Ok(release.tag_name)
+    let download_url = pick_release_asset_url(&release.assets, platform_asset_suffix());
+    Ok(message::AppUpdateInfo {
+        tag_name: release.tag_name,
+        download_url,
+    })
+}
+
+/// Download the release binary to a temp path next to the current executable.
+async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let res = client
+        .get(&url)
+        .header("User-Agent", "sing-box-gui")
+        .send()
+        .await
+        .map_err(|e| format!("Download request failed: {}", e))?;
+
+    if !res.status().is_success() {
+        return Err(format!("Download failed with status: {}", res.status()));
+    }
+
+    let bytes = res
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read download body: {}", e))?;
+
+    if bytes.len() < 1024 {
+        return Err(format!(
+            "Downloaded file too small ({} bytes) — likely not a binary",
+            bytes.len()
+        ));
+    }
+
+    let current = std::env::current_exe()
+        .map_err(|e| format!("Failed to resolve current executable: {}", e))?;
+    let dir = current
+        .parent()
+        .ok_or_else(|| "Current executable has no parent directory".to_string())?;
+
+    #[cfg(target_os = "windows")]
+    let file_name = "sing-box-gui.update.exe";
+    #[cfg(not(target_os = "windows"))]
+    let file_name = "sing-box-gui.update.bin";
+
+    // Prefer beside the running binary (portable installs); fall back to temp.
+    let dest = {
+        let beside = dir.join(file_name);
+        match std::fs::write(&beside, &bytes) {
+            Ok(()) => beside,
+            Err(e_beside) => {
+                let fallback = std::env::temp_dir().join(file_name);
+                std::fs::write(&fallback, &bytes).map_err(|e| {
+                    format!(
+                        "Failed to write update file (beside exe: {}; temp: {})",
+                        e_beside, e
+                    )
+                })?;
+                fallback
+            }
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&dest)
+            .map_err(|e| format!("Failed to stat update file: {}", e))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&dest, perms)
+            .map_err(|e| format!("Failed to chmod update file: {}", e))?;
+    }
+
+    Ok(dest)
+}
+
+/// Schedule replacement of the running binary and relaunch after this process exits.
+fn apply_update_and_restart(new_binary: &std::path::Path) -> Result<(), String> {
+    let current = std::env::current_exe()
+        .map_err(|e| format!("Failed to resolve current executable: {}", e))?;
+    let pid = std::process::id();
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let script_path = current.with_extension("update.cmd");
+        let current_s = current.to_string_lossy().replace('"', "");
+        let new_s = new_binary.to_string_lossy().replace('"', "");
+        let bak = current.with_extension("exe.bak");
+        let bak_s = bak.to_string_lossy().replace('"', "");
+
+        // Wait for this PID to exit, swap binaries, relaunch, clean up.
+        let script = format!(
+            r#"@echo off
+setlocal
+set "TARGET={current}"
+set "NEW={new}"
+set "BAK={bak}"
+set "PID={pid}"
+:wait
+tasklist /FI "PID eq %PID%" 2>NUL | findstr /I "%PID%" >NUL
+if not errorlevel 1 (
+  timeout /t 1 /nobreak >NUL
+  goto wait
+)
+if exist "%BAK%" del /F /Q "%BAK%" >NUL 2>&1
+move /Y "%TARGET%" "%BAK%" >NUL 2>&1
+move /Y "%NEW%" "%TARGET%"
+if errorlevel 1 (
+  if exist "%BAK%" move /Y "%BAK%" "%TARGET%" >NUL 2>&1
+  exit /b 1
+)
+start "" "%TARGET%"
+if exist "%BAK%" del /F /Q "%BAK%" >NUL 2>&1
+del /F /Q "%~f0" >NUL 2>&1
+"#,
+            current = current_s,
+            new = new_s,
+            bak = bak_s,
+            pid = pid,
+        );
+        std::fs::write(&script_path, script)
+            .map_err(|e| format!("Failed to write update script: {}", e))?;
+
+        std::process::Command::new("cmd")
+            .args(["/C", &script_path.to_string_lossy()])
+            // DETACHED_PROCESS (0x8) | CREATE_NO_WINDOW (0x08000000)
+            .creation_flags(0x08000008)
+            .spawn()
+            .map_err(|e| format!("Failed to spawn update script: {}", e))?;
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
+        let script_path = current.with_extension("update.sh");
+        let current_s = current.to_string_lossy();
+        let new_s = new_binary.to_string_lossy();
+        let script = format!(
+            r#"#!/bin/sh
+TARGET="{current}"
+NEW="{new}"
+PID={pid}
+while kill -0 "$PID" 2>/dev/null; do sleep 1; done
+mv -f "$NEW" "$TARGET" || exit 1
+chmod +x "$TARGET"
+exec "$TARGET"
+"#,
+            current = current_s.replace('"', "\\\""),
+            new = new_s.replace('"', "\\\""),
+            pid = pid,
+        );
+        std::fs::write(&script_path, &script)
+            .map_err(|e| format!("Failed to write update script: {}", e))?;
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .map_err(|e| format!("Failed to stat update script: {}", e))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms)
+            .map_err(|e| format!("Failed to chmod update script: {}", e))?;
+
+        std::process::Command::new("sh")
+            .arg(&script_path)
+            .spawn()
+            .map_err(|e| format!("Failed to spawn update script: {}", e))?;
+        // Best-effort: remove script after a delay is handled by not needing self-delete on unix
+        // (script is overwritten next time).
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "windows", unix)))]
+    {
+        let _ = (new_binary, pid, current);
+        Err("In-app update is not supported on this platform".to_string())
+    }
 }
 
 /// Normalize a version-like string into comparable dot-separated numeric tokens

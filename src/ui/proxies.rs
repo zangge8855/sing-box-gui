@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Length, Color};
 use crate::message::Message;
 use crate::state::ProxyNode;
 use crate::ui::theme;
-use crate::ui::{page_header, PAGE_COMPACT_W};
+use crate::ui::{empty_state, page_header, PAGE_COMPACT_W};
 use crate::ui::util::truncate_chars;
 
 pub fn render<'a>(
@@ -81,7 +81,14 @@ pub fn render<'a>(
             &groups[0].name
         };
         
-        let group_info = proxy_groups.get(group_name).unwrap();
+        let Some(group_info) = proxy_groups.get(group_name) else {
+            return empty_state(
+                tr(lang, "no_proxy_groups"),
+                Some(tr(lang, "core_not_running_hint")),
+                None,
+                theme,
+            );
+        };
         
         let groups_cloned = groups.clone();
         let selected_group_cloned = group_name.to_string();
@@ -258,11 +265,7 @@ pub fn render<'a>(
                             }
                         }
                         
-                        let latency_font = iced::Font {
-                            family: iced::font::Family::Monospace,
-                            weight: iced::font::Weight::Medium,
-                            ..Default::default()
-                        };
+                        let latency_font = theme::metric_font();
                         let latency_text = match latency {
                             Some(ms) => {
                                 let col = if ms < 150 {
@@ -517,11 +520,7 @@ pub fn render<'a>(
             for node in &filtered_nodes {
                 let is_selected = Some(node.name.as_str()) == selected_node;
                 
-                let latency_font = iced::Font {
-                    family: iced::font::Family::Monospace,
-                    weight: iced::font::Weight::Medium,
-                    ..Default::default()
-                };
+                let latency_font = theme::metric_font();
                 let latency_text = match node.latency {
                     Some(ms) => {
                         if ms >= 9999 {

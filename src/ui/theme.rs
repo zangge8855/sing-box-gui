@@ -12,6 +12,19 @@ pub const RADIUS_MD: f32 = 10.0;
 pub const RADIUS_SM: f32 = 8.0;
 pub const RADIUS_XS: f32 = 6.0;
 
+/// Font for numeric metrics (latency, speeds).
+///
+/// Prefer system **SansSerif** over `Family::Monospace`: iced on Windows often
+/// fails to resolve a mono face, so digits and "ms" render as tofu blocks (□).
+/// Medium weight keeps metrics slightly emphasized without needing a mono font.
+pub fn metric_font() -> iced::Font {
+    iced::Font {
+        family: iced::font::Family::SansSerif,
+        weight: iced::font::Weight::Medium,
+        ..Default::default()
+    }
+}
+
 // ── Type scale (f32 for iced::Pixels) ────────────────────────────────────────
 pub const TYPE_TITLE: f32 = 22.0;
 pub const TYPE_SECTION: f32 = 13.0; // group labels — medium muted
@@ -856,6 +869,14 @@ mod tests {
         let c = with_alpha(SUCCESS, 0.2);
         assert!((c.r - SUCCESS.r).abs() < 0.001);
         assert!((c.a - 0.2).abs() < 0.001);
+    }
+
+    #[test]
+    fn metric_font_is_sans_not_mono() {
+        // Regression: Monospace latency text rendered as tofu (□) on Windows.
+        let f = metric_font();
+        assert!(matches!(f.family, iced::font::Family::SansSerif));
+        assert_eq!(f.weight, iced::font::Weight::Medium);
     }
 
     #[test]

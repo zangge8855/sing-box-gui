@@ -22,8 +22,16 @@ pub fn render<'a>(
     use crate::ui::i18n::tr;
     
     let theme_cloned = theme.clone();
-    let log_lines_cloned = log_lines.to_vec();
     let search_cloned = log_search.to_string();
+    let total_lines = log_lines.len();
+    // Filter once per view rebuild (not full buffer clone when search/filter reduces size).
+    let q_lower = log_search.to_lowercase();
+    let filtered_lines: Vec<String> = log_lines
+        .iter()
+        .filter(|line| log_filter.matches(line))
+        .filter(|line| q_lower.is_empty() || line.to_lowercase().contains(&q_lower))
+        .cloned()
+        .collect();
     
     let main_content = responsive(move |size| {
         let theme = &theme_cloned;
@@ -82,17 +90,9 @@ pub fn render<'a>(
         };
         
         let mut logs_col = Column::new().spacing(4);
-        let q = search_cloned.to_lowercase();
-        let mut shown = 0usize;
+        let shown = filtered_lines.len();
         
-        for line in &log_lines_cloned {
-            if !log_filter.matches(line) {
-                continue;
-            }
-            if !q.is_empty() && !line.to_lowercase().contains(&q) {
-                continue;
-            }
-            shown += 1;
+        for line in &filtered_lines {
             let line_upper = line.to_uppercase();
             let line_color = if line_upper.contains("ERROR") || line_upper.contains("FATAL") || line_upper.contains("FAILED") {
                 theme::DANGER
@@ -114,7 +114,7 @@ pub fn render<'a>(
             );
         }
         
-        let log_terminal = if log_lines_cloned.is_empty() {
+        let log_terminal = if total_lines == 0 {
             let cta = button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
                 .padding(theme::BTN_PAD_MD)
                 .style(theme::button_primary)

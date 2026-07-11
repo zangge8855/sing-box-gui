@@ -40,7 +40,7 @@ pub fn render<'a>(toast: &'a Toast, theme: &iced::Theme) -> Element<'a, Message>
 
     container(body)
         .width(Length::Shrink)
-        .max_width(360.0)
+        .max_width(480.0)
         .style(move |t| {
             let mut s = theme::tinted_banner(t, accent);
             // Solid elevated surface for readability, keep accent border

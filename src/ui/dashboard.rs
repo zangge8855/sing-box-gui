@@ -26,6 +26,8 @@ fn icon(unicode: char) -> text::Text<'static> {
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
     core_running: bool,
+    core_starting: bool,
+    core_stopping: bool,
     sys_proxy_enabled: bool,
     current_speed: &Bandwidth,
     speed_history: &[(u64, u64)],
@@ -42,6 +44,7 @@ pub fn render<'a>(
     let theme_cloned = theme.clone();
     let speed_cloned = current_speed.clone();
     let history_cloned = speed_history.to_vec();
+    let core_busy = core_starting || core_stopping;
     
     let main_content = responsive(move |size| {
         let is_compact = size.width < crate::ui::DASHBOARD_COMPACT_W;
@@ -70,19 +73,41 @@ pub fn render<'a>(
         };
 
         // 1. Core Status Card
+        let (status_color, status_active, status_label) = if core_starting {
+            (theme::WARNING, true, tr(lang, "status_starting"))
+        } else if core_stopping {
+            (theme::WARNING, true, tr(lang, "status_stopping"))
+        } else if core_running {
+            (theme::SUCCESS, true, tr(lang, "status_running"))
+        } else {
+            (text_muted, false, tr(lang, "status_stopped"))
+        };
         let status_indicator = crate::ui::status_dot(
-            if core_running { theme::SUCCESS } else { text_muted },
-            core_running,
-            if core_running {
-                tr(lang, "status_running")
-            } else {
-                tr(lang, "status_stopped")
-            },
-            if core_running { theme::SUCCESS } else { text_muted },
+            status_color,
+            status_active,
+            status_label,
+            status_color,
             theme::TYPE_BODY,
         );
         
-        let core_control_btn = if core_running {
+        let core_control_btn = if core_busy {
+            button(
+                row![
+                    icon('\u{E863}'),
+                    text(if core_starting {
+                        tr(lang, "status_starting")
+                    } else {
+                        tr(lang, "status_stopping")
+                    })
+                    .size(theme::TYPE_BTN_SM)
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center)
+            )
+            .padding(theme::BTN_PAD_SM)
+            .style(theme::button_secondary)
+            // No on_press — disabled while transitioning
+        } else if core_running {
             button(
                 row![icon('\u{E047}'), text(tr(lang, "btn_stop_core")).size(theme::TYPE_BTN_SM)]
                     .spacing(crate::ui::SP_8)
@@ -102,25 +127,32 @@ pub fn render<'a>(
             .on_press(Message::ToggleCore)
         };
 
-        let core_status_card = container(
-            column![
-                row![
-                    make_icon_badge('\u{E322}', theme::ACCENT_PURPLE),
-                    text(tr(lang, "singbox_core")).color(text_muted).size(theme::TYPE_SECTION)
-                ]
-                .spacing(crate::ui::SP_8)
-                .align_y(Alignment::Center),
-                
-                row![
-                    status_indicator,
-                    Space::new().width(Length::Fill),
-                    core_control_btn
-                ]
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
+        let mut core_card_col = column![
+            row![
+                make_icon_badge('\u{E322}', theme::ACCENT_PURPLE),
+                text(tr(lang, "singbox_core")).color(text_muted).size(theme::TYPE_SECTION)
             ]
-            .spacing(theme::GRID_GAP)
-        )
+            .spacing(crate::ui::SP_8)
+            .align_y(Alignment::Center),
+            
+            row![
+                status_indicator,
+                Space::new().width(Length::Fill),
+                core_control_btn
+            ]
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+        ]
+        .spacing(theme::GRID_GAP);
+
+        if core_starting {
+            core_card_col = core_card_col.push(crate::ui::loading_row(
+                tr(lang, "core_starting_hint"),
+                theme,
+            ));
+        }
+
+        let core_status_card = container(core_card_col)
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
         .style(theme::card_bg);
@@ -185,11 +217,7 @@ pub fn render<'a>(
                 
                 row![
                     text(format_speed(current_speed.down))
-                        .font(iced::Font {
-                            family: iced::font::Family::Monospace,
-                            weight: iced::font::Weight::Bold,
-                            ..Default::default()
-                        })
+                        .font(theme::metric_font())
                         .color(theme::ACCENT_BLUE)
                         .size(theme::TYPE_METRIC),
                     Space::new().width(Length::Fill),
@@ -218,11 +246,7 @@ pub fn render<'a>(
                 
                 row![
                     text(format_speed(current_speed.up))
-                        .font(iced::Font {
-                            family: iced::font::Family::Monospace,
-                            weight: iced::font::Weight::Bold,
-                            ..Default::default()
-                        })
+                        .font(theme::metric_font())
                         .color(theme::ACCENT_PURPLE)
                         .size(theme::TYPE_METRIC),
                     Space::new().width(Length::Fill),
@@ -514,11 +538,7 @@ pub fn render<'a>(
                 text(format!("{}", active_connections))
                     .color(theme::ACCENT_BLUE)
                     .size(theme::TYPE_TITLE)
-                    .font(iced::Font {
-                        weight: iced::font::Weight::Bold,
-                        family: iced::font::Family::Monospace,
-                        ..Default::default()
-                    }),
+                    .font(theme::metric_font()),
             ]
             .spacing(4)
             .width(Length::Fill)
