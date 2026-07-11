@@ -4,7 +4,6 @@ use crate::message::Message;
 use crate::state::ProxyNode;
 use crate::ui::theme;
 use crate::ui::{empty_state, page_header, PAGE_COMPACT_W};
-use crate::ui::util::truncate_chars;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProxySortOption {
@@ -33,7 +32,7 @@ pub fn render<'a>(
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
     
-    let text_primary = theme::text_primary(theme);
+    let _text_primary = theme::text_primary(theme);
     let text_muted = theme::text_muted(theme);
     
     let make_header_actions = move |search_query: &str, is_compact: bool| -> Element<'a, Message> {
@@ -152,7 +151,7 @@ pub fn render<'a>(
         let main_content = responsive(move |size| {
             let theme = &theme_cloned;
             let text_primary = theme::text_primary(theme);
-            let text_muted = theme::text_muted(theme);
+            let _text_muted = theme::text_muted(theme);
             let is_compact = size.width < PAGE_COMPACT_W;
             
             let header_actions = make_header_actions(&search_query_cloned, is_compact);
@@ -333,142 +332,23 @@ pub fn render<'a>(
                             }
                         }
                         
-                        let latency_font = theme::metric_font();
-                        let latency_text = match latency {
-                            Some(ms) => {
-                                let col = if ms < 150 {
-                                    theme::SUCCESS
-                                } else if ms < 300 {
-                                    theme::WARNING
-                                } else {
-                                    theme::DANGER
-                                };
-                                
-                                if ms >= 9999 {
-                                    text(tr(lang, "latency_timeout"))
-                                        .color(theme::DANGER)
-                                        .size(theme::TYPE_MONO)
-                                        .font(latency_font)
-                                } else {
-                                    text(format!("{} ms", ms))
-                                        .color(col)
-                                        .size(theme::TYPE_MONO)
-                                        .font(latency_font)
-                                }
-                            }
-                            None => text("-")
-                                .color(text_muted)
-                                .size(theme::TYPE_MONO)
-                                .font(latency_font),
-                        };
-                        
-                        let type_tag = container(
-                            text(node_type.to_uppercase())
-                                .size(theme::TYPE_MICRO)
-                                .color(text_muted)
-                                .font(iced::Font {
-                                    weight: iced::font::Weight::Bold,
-                                    ..Default::default()
-                                })
-                        )
-                        .padding([2, 6])
-                        .style(theme::badge_bg);
-                        
-                        // Inner content: padding only — chrome lives on the outer button
-                        let card_content = column![
-                            row![
-                                text(truncate_chars(node_name, 28))
-                                    .color(text_primary)
-                                    .size(theme::TYPE_BODY)
-                                    .font(iced::Font {
-                                        weight: iced::font::Weight::Medium,
-                                        ..Default::default()
-                                    })
-                                    .width(Length::Fill),
-                                latency_text
-                            ]
-                            .align_y(Alignment::Center)
-                            .spacing(8),
-                            row![type_tag]
-                        ]
-                        .spacing(8)
-                        .padding(theme::CARD_PAD);
-                        
-                        let group_clone = group_name.to_string();
-                        let node_clone = node_name.clone();
-                        
-                        let mut card_btn = button(card_content)
-                            .padding(0)
-                            .style(move |t, s| {
-                                let base = if active {
-                                    theme::card_selected(t)
-                                } else {
-                                    theme::card_bg(t)
-                                };
-                                let border_color = match s {
-                                    button::Status::Hovered if is_selector => theme::ACCENT_PURPLE,
-                                    _ => base.border.color,
-                                };
-                                button::Style {
-                                    background: base.background,
-                                    text_color: if theme::is_dark(t) { theme::TEXT_PRIMARY_DARK } else { theme::TEXT_PRIMARY_LIGHT },
-                                    border: iced::Border {
-                                        color: border_color,
-                                        width: base.border.width,
-                                        radius: base.border.radius,
-                                    },
-                                    shadow: base.shadow,
-                                    ..Default::default()
-                                }
-                            })
-                            .width(Length::Fill);
-                            
-                        if is_selector {
-                            card_btn = card_btn.on_press(Message::SelectGroupNode {
-                                group: group_clone,
-                                node: node_clone,
-                            });
-                        }
-                            
-                        card_elements.push(card_btn.into());
-                    }
-
-                    let mut grid_rows = Column::new().spacing(theme::GRID_GAP);
-                    let mut current_row = Row::new().spacing(theme::GRID_GAP);
-                    let total_cards = card_elements.len();
-                    
-                    for (i, card) in card_elements.into_iter().enumerate() {
-                        current_row = current_row.push(container(card).width(Length::FillPortion(1)));
-                        if (i + 1) % cols == 0 {
-                            grid_rows = grid_rows.push(current_row);
-                            current_row = Row::new().spacing(theme::GRID_GAP);
-                        }
-                    }
-                    let remaining_elements = total_cards % cols;
-                    if remaining_elements > 0 {
-                        for _ in remaining_elements..cols {
-                            current_row = current_row.push(container(text("")).width(Length::FillPortion(1)));
-                        }
-                        grid_rows = grid_rows.push(current_row);
-                    }
-
-                    if total_nodes > max_render {
-                        let more_count = total_nodes - max_render;
-                        let hint_str = tr(lang, "more_nodes_hint").replace("{}", &more_count.to_string());
-                        grid_rows = grid_rows.push(
-                            container(
-                                text(hint_str)
-                                    .color(text_muted)
-                                    .size(theme::TYPE_CAPTION)
-                            )
-                            .width(Length::Fill)
-                            .align_x(Alignment::Center)
-                            .padding(12)
+                        let card = render_proxy_card(
+                            node_name,
+                            &node_type,
+                            None, None,
+                            latency,
+                            active,
+                            is_selector,
+                            Some(group_name.to_string()),
+                            theme,
+                            lang,
                         );
+                        card_elements.push(card);
                     }
-                    
-                    scrollable(grid_rows).style(theme::scrollbar_style).height(Length::Fill).into()
-                }
+
+                let grid_content = build_card_grid(card_elements, cols, total_nodes, max_render, theme, lang);
+                grid_content
+            }
             } else {
                 // Group has no `all` node list (not a failed search filter).
                 crate::ui::empty_state(
@@ -612,74 +492,19 @@ pub fn render<'a>(
             for &node in display_nodes {
                 let is_selected = Some(node.name.as_str()) == selected_node;
                 
-                let latency_font = theme::metric_font();
-                let latency_text = match node.latency {
-                    Some(ms) => {
-                        if ms >= 9999 {
-                            text(tr(lang, "latency_timeout")).color(theme::DANGER).size(theme::TYPE_MONO).font(latency_font)
-                        } else {
-                            text(format!("{} ms", ms))
-                                .color(if ms < 150 {
-                                    theme::SUCCESS
-                                } else if ms < 300 {
-                                    theme::WARNING
-                                } else {
-                                    theme::DANGER
-                                  })
-                                .size(theme::TYPE_MONO)
-                                .font(latency_font)
-                        }
-                    }
-                    None => text("-").color(text_muted).size(theme::TYPE_MONO).font(latency_font),
-                };
-                
-                let card_content = column![
-                    row![
-                        text(truncate_chars(&node.name, 28)).color(text_primary).size(theme::TYPE_BODY).width(Length::Fill),
-                        latency_text
-                    ]
-                    .align_y(Alignment::Center)
-                    .spacing(8),
-                    row![
-                        text(node.node_type.to_uppercase()).color(text_muted).size(theme::TYPE_CAPTION),
-                        text(format!(" {}:{}", node.server, node.port))
-                            .color(text_muted)
-                            .size(theme::TYPE_CAPTION)
-                            .width(Length::Fill)
-                    ]
-                    .spacing(crate::ui::SP_8)
-                ]
-                .spacing(crate::ui::SP_12)
-                .padding(theme::CARD_PAD);
-                
-                let card_btn = button(card_content)
-                    .padding(0)
-                    .style(move |_theme, status| {
-                        let base = if is_selected {
-                            theme::card_selected(_theme)
-                        } else {
-                            theme::card_bg(_theme)
-                        };
-                        let border_color = match status {
-                            button::Status::Hovered => theme::ACCENT_PURPLE,
-                            _ => base.border.color,
-                        };
-                        button::Style {
-                            background: base.background,
-                            text_color: if theme::is_dark(_theme) { theme::TEXT_PRIMARY_DARK } else { theme::TEXT_PRIMARY_LIGHT },
-                            border: iced::Border {
-                                color: border_color,
-                                width: base.border.width,
-                                radius: base.border.radius,
-                            },
-                            shadow: base.shadow,
-                            ..Default::default()
-                        }
-                    })
-                    .on_press(Message::SelectNode(node.name.clone()))
-                    .width(Length::Fill);
-                    
-                card_elements.push(card_btn.into());
+                let card = render_proxy_card(
+                    &node.name,
+                    &node.node_type,
+                    Some(&node.server),
+                    Some(node.port),
+                    node.latency,
+                    is_selected,
+                    false,
+                    None,
+                    theme,
+                    lang,
+                );
+                card_elements.push(card);
             }
 
             // Calculate columns based on width
@@ -693,41 +518,7 @@ pub fn render<'a>(
                 4
             };
             
-            let mut grid_rows = Column::new().spacing(theme::GRID_GAP);
-            let mut current_row = Row::new().spacing(theme::GRID_GAP);
-            let total_cards = card_elements.len();
-            
-            for (i, card) in card_elements.into_iter().enumerate() {
-                current_row = current_row.push(container(card).width(Length::FillPortion(1)));
-                if (i + 1) % cols == 0 {
-                    grid_rows = grid_rows.push(current_row);
-                    current_row = Row::new().spacing(theme::GRID_GAP);
-                }
-            }
-            let remaining_elements = total_cards % cols;
-            if remaining_elements > 0 {
-                for _ in remaining_elements..cols {
-                    current_row = current_row.push(container(text("")).width(Length::FillPortion(1)));
-                }
-                grid_rows = grid_rows.push(current_row);
-            }
-            
-            if total_nodes > max_render {
-                let more_count = total_nodes - max_render;
-                let hint_str = tr(lang, "more_nodes_hint").replace("{}", &more_count.to_string());
-                grid_rows = grid_rows.push(
-                    container(
-                        text(hint_str)
-                            .color(text_muted)
-                            .size(theme::TYPE_CAPTION)
-                    )
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center)
-                    .padding(12)
-                );
-            }
-            
-            let grid_content: Element<'_, Message> = scrollable(grid_rows).style(theme::scrollbar_style).height(Length::Fill).into();
+            let grid_content: Element<'_, Message> = build_card_grid(card_elements, cols, total_nodes, max_render, theme, lang);
             
             let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
             
@@ -741,6 +532,171 @@ pub fn render<'a>(
             
         content.into()
     }
+}
+
+
+// --- Helper Functions for Deduplication ---
+
+fn render_proxy_card<'a>(
+    node_name: &str,
+    node_type: &str,
+    server: Option<&'a str>,
+    port: Option<u16>,
+    latency: Option<u64>,
+    is_selected: bool,
+    is_selector: bool,
+    group_clone: Option<String>,
+    theme: &iced::Theme,
+    lang: crate::state::Language,
+) -> Element<'a, Message> {
+    use crate::ui::i18n::tr;
+    use iced::widget::{button, row, column, text, container};
+    use iced::{Alignment, Length};
+    use crate::ui::theme;
+    
+    let text_primary = if theme::is_dark(theme) { theme::TEXT_PRIMARY_DARK } else { theme::TEXT_PRIMARY_LIGHT };
+    let text_muted = theme::text_muted(theme);
+    
+    let latency_font = theme::metric_font();
+    let latency_text = match latency {
+        Some(ms) => {
+            if ms >= 9999 {
+                text(tr(lang, "latency_timeout")).color(theme::DANGER).size(theme::TYPE_MONO).font(latency_font)
+            } else {
+                text(format!("{} ms", ms))
+                    .color(if ms < 150 {
+                        theme::SUCCESS
+                    } else if ms < 300 {
+                        theme::WARNING
+                    } else {
+                        theme::DANGER
+                      })
+                    .size(theme::TYPE_MONO)
+                    .font(latency_font)
+            }
+        }
+        None => text("-").color(text_muted).size(theme::TYPE_MONO).font(latency_font),
+    };
+    
+    let mut bottom_row = row![].spacing(crate::ui::SP_8);
+    if let (Some(s), Some(p)) = (server, port) {
+        bottom_row = bottom_row.push(text(node_type.to_uppercase()).color(text_muted).size(theme::TYPE_CAPTION));
+        bottom_row = bottom_row.push(text(format!(" {}:{}", s, p)).color(text_muted).size(theme::TYPE_CAPTION).width(Length::Fill));
+    } else {
+        let type_tag = container(
+            text(node_type.to_uppercase())
+                .size(theme::TYPE_MICRO)
+                .color(text_muted)
+                .font(iced::Font { weight: iced::font::Weight::Bold, ..Default::default() })
+        )
+        .padding([2, 6])
+        .style(theme::badge_bg);
+        bottom_row = bottom_row.push(type_tag);
+    }
+    
+    let card_content = column![
+        row![
+            text(crate::ui::util::truncate_chars(node_name, 28)).color(text_primary).size(theme::TYPE_BODY).width(Length::Fill),
+            latency_text
+        ]
+        .align_y(Alignment::Center)
+        .spacing(8),
+        bottom_row
+    ]
+    .spacing(if server.is_some() { crate::ui::SP_12 } else { crate::ui::SP_8 })
+    .padding(theme::CARD_PAD);
+    
+    let node_clone = node_name.to_string();
+    
+    let mut card_btn = button(card_content)
+        .padding(0)
+        .style(move |_theme, status| {
+            let base = if is_selected {
+                theme::card_selected(_theme)
+            } else {
+                theme::card_bg(_theme)
+            };
+            let border_color = match status {
+                button::Status::Hovered if is_selector => theme::ACCENT_PURPLE,
+                button::Status::Hovered if !is_selector && server.is_some() => theme::ACCENT_PURPLE,
+                _ => base.border.color,
+            };
+            button::Style {
+                background: base.background,
+                text_color: text_primary,
+                border: iced::Border {
+                    color: border_color,
+                    width: base.border.width,
+                    radius: base.border.radius,
+                },
+                shadow: base.shadow,
+                ..Default::default()
+            }
+        })
+        .width(Length::Fill);
+        
+    if let Some(gc) = group_clone {
+        if is_selector {
+            card_btn = card_btn.on_press(Message::SelectGroupNode {
+                group: gc,
+                node: node_clone,
+            });
+        }
+    } else {
+        card_btn = card_btn.on_press(Message::SelectNode(node_clone));
+    }
+        
+    card_btn.into()
+}
+
+fn build_card_grid<'a>(
+    card_elements: Vec<Element<'a, Message>>,
+    cols: usize,
+    total_nodes: usize,
+    max_render: usize,
+    theme: &iced::Theme,
+    lang: crate::state::Language,
+) -> Element<'a, Message> {
+    use iced::widget::{container, text, scrollable, Column, Row};
+    use iced::{Alignment, Length};
+    use crate::ui::theme;
+    use crate::ui::i18n::tr;
+    
+    let mut grid_rows = Column::new().spacing(theme::GRID_GAP);
+    let mut current_row = Row::new().spacing(theme::GRID_GAP);
+    let total_cards = card_elements.len();
+    
+    for (i, card) in card_elements.into_iter().enumerate() {
+        current_row = current_row.push(container(card).width(Length::FillPortion(1)));
+        if (i + 1) % cols == 0 {
+            grid_rows = grid_rows.push(current_row);
+            current_row = Row::new().spacing(theme::GRID_GAP);
+        }
+    }
+    let remaining_elements = total_cards % cols;
+    if remaining_elements > 0 {
+        for _ in remaining_elements..cols {
+            current_row = current_row.push(container(text("")).width(Length::FillPortion(1)));
+        }
+        grid_rows = grid_rows.push(current_row);
+    }
+    
+    if total_nodes > max_render {
+        let more_count = total_nodes - max_render;
+        let hint_str = tr(lang, "more_nodes_hint").replace("{}", &more_count.to_string());
+        grid_rows = grid_rows.push(
+            container(
+                text(hint_str)
+                    .color(theme::text_muted(theme))
+                    .size(theme::TYPE_CAPTION)
+            )
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
+            .padding(12)
+        );
+    }
+    
+    scrollable(grid_rows).style(theme::scrollbar_style).height(Length::Fill).into()
 }
 
 #[cfg(test)]

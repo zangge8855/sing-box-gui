@@ -648,6 +648,16 @@ pub fn console_bg(theme: &iced::Theme) -> container::Style {
     }
 }
 
+pub fn input_field_error(theme: &iced::Theme, status: text_input::Status) -> text_input::Style {
+    let mut style = input_field(theme, status);
+    style.border = iced::Border {
+        color: DANGER,
+        width: 1.0,
+        radius: RADIUS_SM.into(),
+    };
+    style
+}
+
 pub fn input_field(theme: &iced::Theme, status: text_input::Status) -> text_input::Style {
     let dark = is_dark(theme);
     let border_default = if dark {

@@ -21,6 +21,8 @@ mod config;
 mod core;
 mod api;
 mod sysproxy;
+mod platform;
+mod update;
 mod ui;
 
 use std::sync::{Mutex, OnceLock};
@@ -1633,7 +1635,7 @@ impl App {
                 // Admin-elevation sanity check: TUN inbound needs CAP_NET_ADMIN /
                 // the Windows wintun driver via an elevated process. Tell the user
                 // *now* instead of letting them discover it from a FATAL toast.
-                if self.gui_config.tun_mode && !is_running_elevated() {
+                if self.gui_config.tun_mode && !platform::is_running_elevated() {
                     self.toast_info(if self.gui_config.language == state::Language::Zh {
                         "TUN 模式需要管理员权限，内核可能启动失败。请以管理员身份重启本程序。"
                     } else {
@@ -1844,7 +1846,7 @@ impl App {
                 match result {
                     Ok(info) => {
                         let local_version = env!("CARGO_PKG_VERSION");
-                        if is_remote_version_newer(local_version, info.tag_name.trim()) {
+                        if update::is_remote_version_newer(local_version, info.tag_name.trim()) {
                             let tag = info.tag_name;
                             // Prefer in-app download when a platform asset is available.
                             if let Some(url) = info.download_url {
@@ -2766,26 +2768,19 @@ mod tests {
         assert!(p && c);
     }
 
-    #[test]
-    fn normalize_version_tag_strips_v_and_drops_suffix() {
-        assert_eq!(normalize_version_tag("v2026.7.9"), vec![2026, 7, 9]);
-        assert_eq!(normalize_version_tag("2026.7.9"), vec![2026, 7, 9]);
-        // Non-numeric tail like "+beta" is dropped, the numeric head kept.
-        assert_eq!(normalize_version_tag("v1.2.3+beta"), vec![1, 2, 3]);
-    }
 
     #[test]
     fn is_remote_version_newer_compares_numerically() {
         // Same version → not newer.
-        assert!(!is_remote_version_newer("2026.7.9", "v2026.7.9"));
+        assert!(!update::is_remote_version_newer("2026.7.9", "v2026.7.9"));
         // Remote strictly less → not newer.
-        assert!(!is_remote_version_newer("2026.7.9", "v2026.7.8"));
+        assert!(!update::is_remote_version_newer("2026.7.9", "v2026.7.8"));
         // Remote strictly greater → newer.
-        assert!(is_remote_version_newer("2026.7.9", "v2026.8.0"));
+        assert!(update::is_remote_version_newer("2026.7.9", "v2026.8.0"));
         // Prefix-trim equality of the trailing v vs no-v must not false-positive.
-        assert!(!is_remote_version_newer("1.0.0", "v1.0.0"));
+        assert!(!update::is_remote_version_newer("1.0.0", "v1.0.0"));
         // Older per-component case.
-        assert!(is_remote_version_newer("1.0.0", "v2.0.0"));
+        assert!(update::is_remote_version_newer("1.0.0", "v2.0.0"));
     }
 }
 
@@ -2867,62 +2862,6 @@ fn detect_system_theme() -> bool {
 
 /// Cheap elevation check so TUN mode can warn the user *before* the core
 /// FATALs on permission denied / missing wintun privileges.
-fn is_running_elevated() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        use std::ffi::c_void;
-        unsafe {
-            // Use OpenProcessToken + GetTokenInformation(TokenElevation).
-            #[allow(clippy::upper_case_acronyms)]
-            type BOOL = i32;
-            #[allow(clippy::upper_case_acronyms)]
-            type HANDLE = *mut c_void;
-            unsafe extern "system" {
-                fn GetCurrentProcess() -> HANDLE;
-                fn OpenProcessToken(
-                    process: HANDLE,
-                    access: u32,
-                    token: *mut HANDLE,
-                ) -> BOOL;
-                fn GetTokenInformation(
-                    token: HANDLE,
-                    class: u32,
-                    buf: *mut c_void,
-                    len: u32,
-                    ret_len: *mut u32,
-                ) -> BOOL;
-                fn CloseHandle(h: HANDLE) -> BOOL;
-            }
-            // TOKEN_QUERY = 0x0008 ; TokenElevation = 20
-            let mut token: HANDLE = std::ptr::null_mut();
-            if OpenProcessToken(GetCurrentProcess(), 0x0008, &mut token) == 0 {
-                return false;
-            }
-            let mut elevated: i32 = 0;
-            let mut ret = 0u32;
-            let ok = GetTokenInformation(
-                token,
-                20,
-                &mut elevated as *mut _ as *mut c_void,
-                std::mem::size_of::<i32>() as u32,
-                &mut ret,
-            );
-            CloseHandle(token);
-            ok != 0 && elevated != 0
-        }
-    }
-    #[cfg(unix)]
-    {
-        // On unix a process is "elevated" enough for TUN if its effective uid
-        // is 0 (CAP_NET_ADMIN) or it has the NET_ADMIN capability via file caps.
-        // We approximate with euid==0 — covers the typical sudo install case.
-        unsafe { libc::geteuid() == 0 }
-    }
-    #[cfg(not(any(target_os = "windows", unix)))]
-    {
-        true // assume elevated where we cannot check
-    }
-}
 
 fn open_path_in_system(path: &std::path::Path) {
     // Use the `open` crate rather than shelling out to `cmd /c start`, which
@@ -3203,37 +3142,10 @@ exec "$TARGET"
 
 /// Normalize a version-like string into comparable dot-separated numeric tokens
 /// so we can compare `v2026.7.9` vs `2026.7.9` etc. without false positives.
-fn normalize_version_tag(tag: &str) -> Vec<u64> {
-    tag.trim()
-        .trim_start_matches('v')
-        .split('.')
-        .filter_map(|p| p.split(|c: char| !c.is_ascii_digit()).next())
-        .filter(|p| !p.is_empty())
-        .filter_map(|p| p.parse::<u64>().ok())
-        .collect()
-}
 
 /// Returns true when `remote_tag` is *strictly* newer than `local_pkg_version`
 /// using dotted numeric comparison. Falls back to string inequality when
 /// neither side parses at all.
-fn is_remote_version_newer(local_pkg_version: &str, remote_tag: &str) -> bool {
-    let local = normalize_version_tag(&format!("v{}", local_pkg_version));
-    let remote = normalize_version_tag(remote_tag);
-    if local.is_empty() || remote.is_empty() {
-        return remote_tag.trim().trim_start_matches('v')
-            != local_pkg_version.trim().trim_start_matches('v');
-    }
-    for (l, r) in local.iter().zip(remote.iter()) {
-        match r.cmp(l) {
-            std::cmp::Ordering::Greater => return true,
-            std::cmp::Ordering::Less => return false,
-            std::cmp::Ordering::Equal => continue,
-        }
-    }
-    // Equal up to the shared length — longer remote (e.g. 2026.7.9 vs 2026.7)
-    // means newer if the trailing components are non-zero.
-    remote.len() > local.len()
-}
 
 fn main() -> iced::Result {
     #[cfg(target_os = "windows")]

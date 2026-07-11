@@ -95,32 +95,40 @@ pub fn render<'a>(
             .style(theme::card_bg);
         
         // 2. Network & DNS Settings Card (Middle Column)
+        let mixed_port_valid = mixed_port_str.parse::<u16>().is_ok();
+        let api_port_valid = api_port_str.parse::<u16>().is_ok();
+
         let mixed_port_input = text_input("2080", mixed_port_str)
             .on_input(Message::MixedPortChanged)
             .on_submit(Message::SaveSettings)
             .padding(10)
-            .style(theme::input_field);
+            .style(if mixed_port_valid { theme::input_field } else { theme::input_field_error });
             
         let api_port_input = text_input("9090", api_port_str)
             .on_input(Message::ApiPortChanged)
             .on_submit(Message::SaveSettings)
             .padding(10)
-            .style(theme::input_field);
+            .style(if api_port_valid { theme::input_field } else { theme::input_field_error });
             
-        let ports_row = row![
-            column![
-                text(tr(lang, "mixed_port_label")).color(text_muted).size(theme::TYPE_BTN_SM),
-                mixed_port_input.width(Length::Fill)
-            ]
-            .spacing(crate::ui::SP_8)
-            .width(Length::FillPortion(1)),
-            column![
-                text(tr(lang, "api_port_label")).color(text_muted).size(theme::TYPE_BTN_SM),
-                api_port_input.width(Length::Fill)
-            ]
-            .spacing(crate::ui::SP_8)
-            .width(Length::FillPortion(1)),
-        ]
+        let mut mixed_col = column![
+            text(tr(lang, "mixed_port_label")).color(text_muted).size(theme::TYPE_BTN_SM),
+            mixed_port_input.width(Length::Fill)
+        ].spacing(crate::ui::SP_8).width(Length::FillPortion(1));
+
+        if !mixed_port_valid {
+            mixed_col = mixed_col.push(text(tr(lang, "invalid_port")).size(theme::TYPE_CAPTION).color(theme::DANGER));
+        }
+
+        let mut api_col = column![
+            text(tr(lang, "api_port_label")).color(text_muted).size(theme::TYPE_BTN_SM),
+            api_port_input.width(Length::Fill)
+        ].spacing(crate::ui::SP_8).width(Length::FillPortion(1));
+
+        if !api_port_valid {
+            api_col = api_col.push(text(tr(lang, "invalid_port")).size(theme::TYPE_CAPTION).color(theme::DANGER));
+        }
+
+        let ports_row = row![mixed_col, api_col]
         .spacing(theme::GRID_GAP)
         .width(Length::Fill);
         
