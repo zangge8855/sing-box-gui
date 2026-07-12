@@ -61,7 +61,7 @@ impl Toast {
         };
         // Extra second per ~25 chars in long messages, capped at 20
         let extra = (msg.len() as u32 / 25).min(10) as u8;
-        base.saturating_add(extra).min(20).max(3)
+        base.saturating_add(extra).clamp(3, 20)
     }
 
     pub fn success(message: impl Into<String>) -> Self {

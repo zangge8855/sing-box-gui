@@ -1396,25 +1396,21 @@ pub fn mitigate_run_config(config: &mut serde_json::Value) {
         .join("cache.db")
         .to_string_lossy()
         .to_string();
-    let experimental = config
-        .as_object_mut()
-        .map(|root| {
-            root.entry("experimental")
-                .or_insert_with(|| json!({}))
-                .as_object_mut()
-                .map(|exp| {
-                    let cache = exp
-                        .entry("cache_file")
-                        .or_insert_with(|| json!({ "enabled": true }));
-                    if let Some(cache_obj) = cache.as_object_mut() {
-                        cache_obj
-                            .entry("enabled")
-                            .or_insert_with(|| json!(true));
-                        cache_obj.insert("path".to_string(), json!(cache_path));
-                    }
-                });
-        });
-    let _ = experimental;
+    if let Some(root) = config.as_object_mut()
+        && let Some(exp) = root.entry("experimental")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+    {
+        let cache = exp
+            .entry("cache_file")
+            .or_insert_with(|| json!({ "enabled": true }));
+        if let Some(cache_obj) = cache.as_object_mut() {
+            cache_obj
+                .entry("enabled")
+                .or_insert_with(|| json!(true));
+            cache_obj.insert("path".to_string(), json!(cache_path));
+        }
+    }
 }
 
 pub fn merge_native_json_profile(

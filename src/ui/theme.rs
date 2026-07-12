@@ -83,7 +83,6 @@ pub const CARD_ELEVATED_DARK: Color = Color::from_rgb(0.125, 0.132, 0.160); // #
 #[allow(dead_code)]
 pub const CARD_HOVER: Color = Color::from_rgb(0.145, 0.152, 0.185);
 /// Elevated / selected dark surface alias.
-
 pub const BORDER_DARK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.10);
 pub const BORDER_STRONG_DARK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.16);
 pub const TEXT_PRIMARY_DARK: Color = Color::from_rgb(0.96, 0.97, 0.99);
@@ -125,14 +124,11 @@ pub const DANGER_DISABLED: Color = Color::from_rgb(0.40, 0.20, 0.22);
 // ── Token accessors ──────────────────────────────────────────────────────────
 
 pub fn is_dark(theme: &iced::Theme) -> bool {
-    match theme {
-        iced::Theme::Light
+    !matches!(theme, iced::Theme::Light
         | iced::Theme::SolarizedLight
         | iced::Theme::GruvboxLight
         | iced::Theme::TokyoNightLight
-        | iced::Theme::KanagawaLotus => false,
-        _ => true,
-    }
+        | iced::Theme::KanagawaLotus)
 }
 
 pub fn bg(theme: &iced::Theme) -> Color {

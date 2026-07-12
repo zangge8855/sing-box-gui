@@ -29,8 +29,6 @@ static CORE_RUNNING_CACHED: AtomicBool = AtomicBool::new(false);
 pub const STARTUP_GRACE_MS: u64 = 3000;
 /// Max time `stop_core` waits for the child to exit gracefully before forcing.
 /// Lets sing-box flush its cache file and tear down TUN/sysproxy state.
-
-
 fn get_process_lock() -> std::sync::MutexGuard<'static, Option<Child>> {
     CURRENT_PROCESS.lock().unwrap_or_else(|e| e.into_inner())
 }

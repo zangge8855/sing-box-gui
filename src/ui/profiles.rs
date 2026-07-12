@@ -6,6 +6,7 @@ use crate::ui::theme;
 use crate::ui::{page_header, PAGE_COMPACT_W};
 use crate::ui::util::{format_traffic_usage_lang, traffic_usage_ratio, truncate_chars};
 
+#[allow(clippy::too_many_arguments)]
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
     url_input: &'a str,

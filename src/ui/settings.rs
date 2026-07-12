@@ -5,6 +5,7 @@ use crate::state::{GuiConfig, Language, AppTheme, UpdateStatus};
 use crate::ui::theme;
 use crate::ui::page_header;
 
+#[allow(clippy::too_many_arguments)]
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
     mixed_port_str: &'a str,

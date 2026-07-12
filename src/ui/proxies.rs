@@ -17,6 +17,7 @@ impl std::fmt::Display for ProxySortOption {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
     nodes: &'a [ProxyNode],
@@ -255,17 +256,13 @@ pub fn render<'a>(
                     crate::state::ProxySort::Latency => {
                         filtered_sub_nodes.sort_by(|a, b| {
                             let lat = |name: &str| -> Option<u64> {
-                                if let Some(n_info) = proxy_groups_moved.get(name) {
-                                    if let Some(ref hist) = n_info.history {
-                                        if let Some(last) = hist.last() {
-                                            if let Some(d) = last.get("delay").and_then(|d| d.as_u64()) {
-                                                if d < 9999 {
+                                if let Some(n_info) = proxy_groups_moved.get(name)
+                                    && let Some(ref hist) = n_info.history
+                                        && let Some(last) = hist.last()
+                                            && let Some(d) = last.get("delay").and_then(|d| d.as_u64())
+                                                && d < 9999 {
                                                     return Some(d);
                                                 }
-                                            }
-                                        }
-                                    }
-                                }
                                 nodes_moved.iter().find(|n| n.name == name).and_then(|n| {
                                     n.latency.filter(|&ms| ms < 9999)
                                 })
@@ -279,7 +276,7 @@ pub fn render<'a>(
                         });
                     }
                     crate::state::ProxySort::Name => {
-                        filtered_sub_nodes.sort_by(|a, b| a.cmp(b));
+                        filtered_sub_nodes.sort();
                     }
                     crate::state::ProxySort::Original => {
                         // Keep original order
@@ -315,22 +312,19 @@ pub fn render<'a>(
                         
                         if let Some(n_info) = proxy_groups_moved.get(node_name) {
                             node_type = n_info.proxy_type.clone();
-                            if let Some(ref hist) = n_info.history {
-                                if let Some(last) = hist.last() {
-                                    if let Some(d) = last.get("delay").and_then(|d| d.as_u64()) {
+                            if let Some(ref hist) = n_info.history
+                                && let Some(last) = hist.last()
+                                    && let Some(d) = last.get("delay").and_then(|d| d.as_u64()) {
                                         latency = Some(d);
                                     }
-                                }
-                            }
                         } else if let Some(n) = nodes_moved.iter().find(|n| n.name == *node_name) {
                             node_type = n.node_type.clone();
                         }
                         
-                        if latency.is_none() {
-                            if let Some(n) = nodes_moved.iter().find(|n| n.name == *node_name) {
+                        if latency.is_none()
+                            && let Some(n) = nodes_moved.iter().find(|n| n.name == *node_name) {
                                 latency = n.latency;
                             }
-                        }
                         
                         let card = render_proxy_card(
                             node_name,
@@ -346,8 +340,8 @@ pub fn render<'a>(
                         card_elements.push(card);
                     }
 
-                let grid_content = build_card_grid(card_elements, cols, total_nodes, max_render, theme, lang);
-                grid_content
+                
+                build_card_grid(card_elements, cols, total_nodes, max_render, theme, lang)
             }
             } else {
                 // Group has no `all` node list (not a failed search filter).
@@ -537,6 +531,7 @@ pub fn render<'a>(
 
 // --- Helper Functions for Deduplication ---
 
+#[allow(clippy::too_many_arguments)]
 fn render_proxy_card<'a>(
     node_name: &str,
     node_type: &str,

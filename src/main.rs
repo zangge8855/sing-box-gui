@@ -390,8 +390,8 @@ impl App {
     fn reload_active_nodes(&mut self) {
         if let Some(ref active_id) = self.gui_config.active_profile_id {
             let path = config::get_profile_path(active_id);
-            if path.exists() {
-                if let Ok(content) = std::fs::read_to_string(path) {
+            if path.exists()
+                && let Ok(content) = std::fs::read_to_string(path) {
                     let trimmed = content.trim();
                     let nodes = if trimmed.starts_with('{') || trimmed.starts_with('[') {
                         config::parse_native_json_nodes(&content).unwrap_or_default()
@@ -400,7 +400,6 @@ impl App {
                     };
                     self.active_profile_nodes = nodes;
                 }
-            }
         }
     }
     
@@ -864,7 +863,7 @@ impl App {
                         }
                         Err(e) => {
                             self.log_lines.push_back(format!("[GUI] Failed to apply update: {}", e));
-                            self.toast_error(&format!("Update failed: {}", e));
+                            self.toast_error(format!("Update failed: {}", e));
                         }
                     }
                 }
@@ -1145,11 +1144,10 @@ impl App {
                             if expire_at.is_some() {
                                 p.expire_at = expire_at;
                             }
-                            if let Some(ref name) = display_name {
-                                if !name.is_empty() {
+                            if let Some(ref name) = display_name
+                                && !name.is_empty() {
                                     p.name = name.clone();
                                 }
-                            }
                         } else {
                             let name = display_name
                                 .filter(|n| !n.is_empty())
@@ -1196,7 +1194,7 @@ impl App {
                 } else {
                     "Active profile updated"
                 });
-                return self.restart_core();
+                self.restart_core()
             }
             Message::RequestDeleteProfile(id) => {
                 self.confirm_delete_profile_id = Some(id);
@@ -1368,7 +1366,7 @@ impl App {
             }
             Message::Tick => {
                 self.theme_check_counter = self.theme_check_counter.wrapping_add(1);
-                if self.theme_check_counter % 5 == 0 {
+                if self.theme_check_counter.is_multiple_of(5) {
                     self.cached_system_is_light = detect_system_theme();
                 }
 
@@ -1384,7 +1382,7 @@ impl App {
 
                 let check_authoritative = self.core_running
                     && !self.core_busy()
-                    && self.tick_authority_counter % 5 == 0;
+                    && self.tick_authority_counter.is_multiple_of(5);
                 self.tick_authority_counter =
                     self.tick_authority_counter.wrapping_add(1);
 
@@ -1442,8 +1440,8 @@ impl App {
             Message::CoreLivenessChecked(running) => {
                 let was_running = self.core_running;
                 self.core_running = running;
-                if was_running && !self.core_running {
-                    if let Some(msg) = core::take_unexpected_core_exit() {
+                if was_running && !self.core_running
+                    && let Some(msg) = core::take_unexpected_core_exit() {
                         self.log_lines.push_back(format!("[GUI] {}", msg));
                         self.toast_error(msg);
                         if self.gui_config.disable_proxy_on_core_stop && self.sys_proxy_enabled {
@@ -1457,7 +1455,6 @@ impl App {
                         }
                         self.current_speed = Bandwidth::default();
                     }
-                }
                 Task::none()
             }
             Message::FetchConnections => {
@@ -1580,20 +1577,18 @@ impl App {
             // New type-safe configuration messages
             Message::MixedPortChanged(val) => {
                 self.mixed_port_input_str = val.clone();
-                if let Ok(p) = val.parse::<u16>() {
-                    if p > 0 {
+                if let Ok(p) = val.parse::<u16>()
+                    && p > 0 {
                         self.gui_config.mixed_port = p;
                     }
-                }
                 Task::none()
             }
             Message::ApiPortChanged(val) => {
                 self.api_port_input_str = val.clone();
-                if let Ok(p) = val.parse::<u16>() {
-                    if p > 0 {
+                if let Ok(p) = val.parse::<u16>()
+                    && p > 0 {
                         self.gui_config.api_port = p;
                     }
-                }
                 Task::none()
             }
             Message::DnsLocalChanged(val) => {
@@ -1896,7 +1891,7 @@ impl App {
                         self.force_stop_after_start = false;
                         self.pending_core_restart = false;
                         self.pending_update_path = Some(path);
-                        return self.task_stop_core();
+                        self.task_stop_core()
                     }
                     Err(e) => {
                         self.log_lines
@@ -2438,11 +2433,9 @@ fn tray_subscription() -> impl iced::futures::Stream<Item = Message> {
             while !stop_tray.load(std::sync::atomic::Ordering::SeqCst) {
                 while let Ok(event) = tray_channel.try_recv() {
                     let to_send = match event {
-                        tray_icon::TrayIconEvent::Click { button, .. }
-                            if button == tray_icon::MouseButton::Left =>
+                        tray_icon::TrayIconEvent::Click { button: tray_icon::MouseButton::Left, .. } =>
                             Some(Message::TrayIconClicked),
-                        tray_icon::TrayIconEvent::DoubleClick { button, .. }
-                            if button == tray_icon::MouseButton::Left =>
+                        tray_icon::TrayIconEvent::DoubleClick { button: tray_icon::MouseButton::Left, .. } =>
                             Some(Message::TrayIconClicked),
                         _ => None,
                     };
@@ -2587,24 +2580,21 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
         return Err(format!("Download failed with status: {}", res.status()));
     }
 
-    if let Some(userinfo) = res.headers().get("subscription-userinfo") {
-        if let Ok(s) = userinfo.to_str() {
+    if let Some(userinfo) = res.headers().get("subscription-userinfo")
+        && let Ok(s) = userinfo.to_str() {
             let (u, d, t, e) = config::parse_subscription_userinfo(s);
             meta.traffic_upload = u;
             meta.traffic_download = d;
             meta.traffic_total = t;
             meta.expire_at = e;
         }
-    }
 
     // Content-Disposition filename or content-disposition profile name
-    if let Some(cd) = res.headers().get(reqwest::header::CONTENT_DISPOSITION) {
-        if let Ok(s) = cd.to_str() {
-            if let Some(name) = parse_content_disposition_filename(s) {
+    if let Some(cd) = res.headers().get(reqwest::header::CONTENT_DISPOSITION)
+        && let Ok(s) = cd.to_str()
+            && let Some(name) = parse_content_disposition_filename(s) {
                 meta.display_name = Some(name);
             }
-        }
-    }
 
     let content = res
         .text()
@@ -2835,11 +2825,10 @@ fn detect_system_theme() -> bool {
     {
         use winreg::RegKey;
         use winreg::enums::HKEY_CURRENT_USER;
-        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize") {
-            if let Ok(val) = hkcu.get_value::<u32, _>("AppsUseLightTheme") {
+        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
+            && let Ok(val) = hkcu.get_value::<u32, _>("AppsUseLightTheme") {
                 return val == 1; // 1 = Light Mode, 0 = Dark Mode
             }
-        }
     }
     #[cfg(target_os = "macos")]
     {
@@ -2862,7 +2851,6 @@ fn detect_system_theme() -> bool {
 
 /// Cheap elevation check so TUN mode can warn the user *before* the core
 /// FATALs on permission denied / missing wintun privileges.
-
 fn open_path_in_system(path: &std::path::Path) {
     // Use the `open` crate rather than shelling out to `cmd /c start`, which
     // mishandles paths containing spaces or shell metacharacters like `&`.
@@ -3092,7 +3080,7 @@ del /F /Q "%~f0" >NUL 2>&1
             .creation_flags(0x08000008)
             .spawn()
             .map_err(|e| format!("Failed to spawn update script: {}", e))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -3142,11 +3130,9 @@ exec "$TARGET"
 
 /// Normalize a version-like string into comparable dot-separated numeric tokens
 /// so we can compare `v2026.7.9` vs `2026.7.9` etc. without false positives.
-
 /// Returns true when `remote_tag` is *strictly* newer than `local_pkg_version`
 /// using dotted numeric comparison. Falls back to string inequality when
 /// neither side parses at all.
-
 fn main() -> iced::Result {
     #[cfg(target_os = "windows")]
     let icon = None;

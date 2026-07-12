@@ -23,6 +23,7 @@ fn icon(unicode: char) -> text::Text<'static> {
         .size(crate::ui::ICON_SIZE)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
     core_running: bool,
