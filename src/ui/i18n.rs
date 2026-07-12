@@ -46,6 +46,9 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "sort_latency",
     "sort_name",
     "sort_original",
+    "nodes_unit",
+    "protocols_unit",
+    "groups_unit",
     "sort_host",
     "sort_process",
     "sort_network",
@@ -151,6 +154,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "search_nodes_placeholder" => "Search nodes by name or server...",
             "no_matching_nodes" => "No nodes match your search query.",
             "latency_timeout" => "Timeout",
+            "nodes_unit" => "nodes",
+            "protocols_unit" => "protocols",
+            "groups_unit" => "groups",
             
             // Profiles
             "profile_manager" => "Profile Manager",
@@ -404,6 +410,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "search_nodes_placeholder" => "通过名称或服务器搜索节点...",
             "no_matching_nodes" => "未找到匹配搜索条件的节点。",
             "latency_timeout" => "超时",
+            "nodes_unit" => "个节点",
+            "protocols_unit" => "种协议",
+            "groups_unit" => "个策略组",
             
             // Profiles
             "profile_manager" => "订阅列表",

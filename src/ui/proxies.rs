@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Row, responsive};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Row, Space, responsive};
 use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::ProxyNode;
@@ -35,6 +35,11 @@ pub fn render<'a>(
     
     let _text_primary = theme::text_primary(theme);
     let text_muted = theme::text_muted(theme);
+    let protocol_count = nodes
+        .iter()
+        .map(|node| node.node_type.to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
     
     let make_header_actions = move |search_query: &str, is_compact: bool| -> Element<'a, Message> {
         // Disabled (no on_press) when core is stopped or already testing
@@ -342,10 +347,19 @@ pub fn render<'a>(
             };
             
             let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
+            let summary = render_proxy_summary(
+                nodes_moved.len(),
+                protocol_count,
+                groups_moved.len(),
+                core_running,
+                theme,
+                lang,
+            );
+            let heading = column![header, summary].spacing(crate::ui::SP_8);
             
             let body: Element<'a, Message> = if is_compact {
                 column![
-                    header,
+                    heading,
                     group_selector,
                     right_pane_content
                 ]
@@ -371,8 +385,8 @@ pub fn render<'a>(
                 .height(Length::Fill)
                 .width(Length::Fill);
 
-                column![header, col_content]
-                    .spacing(20)
+                column![heading, col_content]
+                    .spacing(crate::ui::SP_20)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .into()
@@ -503,8 +517,17 @@ pub fn render<'a>(
             let grid_content: Element<'_, Message> = build_card_grid(card_elements, cols, total_nodes, max_render, theme, lang);
             
             let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
+            let summary = render_proxy_summary(
+                total_nodes,
+                protocol_count,
+                0,
+                core_running,
+                theme,
+                lang,
+            );
             
-            let col = column![header, grid_content]
+            let heading = column![header, summary].spacing(crate::ui::SP_8);
+            let col = column![heading, grid_content]
                 .spacing(crate::ui::SP_20)
                 .width(Length::Fill)
                 .height(Length::Fill);
@@ -514,6 +537,51 @@ pub fn render<'a>(
             
         content.into()
     }
+}
+
+
+fn render_proxy_summary<'a>(
+    node_count: usize,
+    protocol_count: usize,
+    group_count: usize,
+    core_running: bool,
+    theme: &iced::Theme,
+    lang: crate::state::Language,
+) -> Element<'a, Message> {
+    use crate::ui::i18n::tr;
+
+    let status_color = if core_running { theme::SUCCESS } else { theme::text_tertiary(theme) };
+    let status_dot = container(Space::new())
+        .width(8)
+        .height(8)
+        .style(move |_| container::Style {
+            background: Some(iced::Background::Color(status_color)),
+            border: iced::Border { radius: 4.0.into(), ..Default::default() },
+            ..Default::default()
+        });
+    let mut metrics = format!(
+        "{} {}  ·  {} {}",
+        node_count,
+        tr(lang, "nodes_unit"),
+        protocol_count,
+        tr(lang, "protocols_unit"),
+    );
+    if group_count > 0 {
+        metrics.push_str(&format!("  ·  {} {}", group_count, tr(lang, "groups_unit")));
+    }
+
+    row![
+        status_dot,
+        text(if core_running { tr(lang, "status_running") } else { tr(lang, "status_stopped") })
+            .size(theme::TYPE_CAPTION)
+            .color(status_color),
+        text(metrics)
+            .size(theme::TYPE_CAPTION)
+            .color(theme::text_muted(theme)),
+    ]
+    .spacing(crate::ui::SP_8)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 
