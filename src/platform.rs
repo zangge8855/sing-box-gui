@@ -54,3 +54,90 @@ pub fn is_running_elevated() -> bool {
         true // assume elevated where we cannot check
     }
 }
+
+/// Install or remove per-user launch integration on the current platform.
+pub fn set_autostart(enable: bool) -> Result<(), String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to resolve current executable: {e}"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let run_key = hkcu
+            .open_subkey_with_flags(
+                r#"Software\Microsoft\Windows\CurrentVersion\Run"#,
+                KEY_WRITE,
+            )
+            .map_err(|e| format!("Failed to open autostart registry key: {e}"))?;
+        if enable {
+            let quoted = format!("\"{}\"", exe.to_string_lossy());
+            run_key
+                .set_value("sing-box-gui", &quoted)
+                .map_err(|e| format!("Failed to write autostart registry: {e}"))?;
+        } else {
+            let _ = run_key.delete_value("sing-box-gui");
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = dirs::home_dir().ok_or_else(|| "Home directory is unavailable".to_string())?;
+        let agents = home.join("Library/LaunchAgents");
+        let path = agents.join("io.github.zangge8855.sing-box-gui.plist");
+        if enable {
+            std::fs::create_dir_all(&agents)
+                .map_err(|e| format!("Failed to create LaunchAgents directory: {e}"))?;
+            let exe = xml_escape(&exe.to_string_lossy());
+            let plist = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>io.github.zangge8855.sing-box-gui</string><key>ProgramArguments</key><array><string>{exe}</string></array><key>RunAtLoad</key><true/></dict></plist>\n"
+            );
+            crate::config::atomic_write(&path, plist.as_bytes())?;
+        } else if path.exists() {
+            std::fs::remove_file(path)
+                .map_err(|e| format!("Failed to remove LaunchAgent: {e}"))?;
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let config = dirs::config_dir().ok_or_else(|| "Config directory is unavailable".to_string())?;
+        let autostart = config.join("autostart");
+        let path = autostart.join("sing-box-gui.desktop");
+        if enable {
+            std::fs::create_dir_all(&autostart)
+                .map_err(|e| format!("Failed to create autostart directory: {e}"))?;
+            let exec = desktop_escape(&exe.to_string_lossy());
+            let entry = format!(
+                "[Desktop Entry]\nType=Application\nName=sing-box GUI\nComment=Start sing-box GUI with the desktop session\nExec=\"{exec}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
+            );
+            crate::config::atomic_write(&path, entry.as_bytes())?;
+        } else if path.exists() {
+            std::fs::remove_file(path)
+                .map_err(|e| format!("Failed to remove autostart entry: {e}"))?;
+        }
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("Autostart is not supported on this platform".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+#[cfg(target_os = "linux")]
+fn desktop_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}

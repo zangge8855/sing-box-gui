@@ -52,6 +52,7 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "sort_rule",
     "sort_download",
     "sort_upload",
+    "connections_hidden_hint",
 ];
 
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
@@ -279,6 +280,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "close_conn" => "Close",
             "no_active_connections" => "No active connections.",
             "no_matching_connections" => "No matching connections found.",
+            "connections_hidden_hint" => "additional connections hidden; refine the search to inspect them.",
             
             // Software Update
             "app_update" => "Software Update",
@@ -531,6 +533,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "close_conn" => "断开",
             "no_active_connections" => "当前没有活动的连接。",
             "no_matching_connections" => "未找到匹配的活动连接。",
+            "connections_hidden_hint" => "个额外连接已隐藏，请缩小搜索范围后查看。",
             
             // Software Update
             "app_update" => "软件更新",

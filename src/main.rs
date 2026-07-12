@@ -31,7 +31,7 @@ use iced::{Alignment, Element, Length, Subscription, Task, Font};
 use iced::widget::{button, column, container, row, text, responsive, tooltip};
 use state::{Bandwidth, GuiConfig, Profile, ProxyNode, Tab, Toast};
 use message::Message;
-use futures::SinkExt;
+use futures::{SinkExt, StreamExt};
 
 // OnceLocks for streaming logs and traffic stats asynchronously
 static LOG_RX: OnceLock<Mutex<Option<mpsc::UnboundedReceiver<String>>>> = OnceLock::new();
@@ -138,6 +138,8 @@ struct App {
     force_stop_after_start: bool,
     /// Tick counter for tab-aware API poll throttling.
     poll_tick_counter: u32,
+    proxies_fetch_in_flight: bool,
+    connections_fetch_in_flight: bool,
     
     connections_sort: state::ConnectionSort,
     connections_sort_desc: bool,
@@ -156,7 +158,7 @@ impl App {
             state::AppTheme::Dark => iced::Theme::Dark,
             state::AppTheme::Light => iced::Theme::Light,
             state::AppTheme::Auto => {
-                if detect_system_theme() {
+                if self.cached_system_is_light {
                     iced::Theme::Light
                 } else {
                     iced::Theme::Dark
@@ -172,7 +174,7 @@ impl App {
             state::AppTheme::Dark => &DARK,
             state::AppTheme::Light => &LIGHT,
             state::AppTheme::Auto => {
-                if detect_system_theme() {
+                if self.cached_system_is_light {
                     &LIGHT
                 } else {
                     &DARK
@@ -183,6 +185,7 @@ impl App {
 
     fn new() -> (Self, Task<Message>) {
         let gui_config = config::load_gui_config();
+        let cached_system_is_light = detect_system_theme();
         let core_installed = core::is_core_installed(&gui_config);
         let selected_node_tag = gui_config.selected_node_tag.clone();
         
@@ -345,11 +348,13 @@ impl App {
             pending_core_restart: false,
             force_stop_after_start: false,
             poll_tick_counter: 0,
+            proxies_fetch_in_flight: false,
+            connections_fetch_in_flight: false,
             connections_sort: state::ConnectionSort::None,
             connections_sort_desc: false,
             proxy_sort: state::ProxySort::Latency,
             
-            cached_system_is_light: false,
+            cached_system_is_light,
             theme_check_counter: 0,
             config_dirty: false,
             pending_exit: false,
@@ -658,7 +663,6 @@ impl App {
                             self.pending_exit = true;
                             return self.task_stop_core();
                         }
-                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
                         iced::exit()
                     }
                     _ => Task::none(),
@@ -679,19 +683,25 @@ impl App {
                     let api_port = self.gui_config.api_port;
                     match tab {
                         Tab::Proxies => {
-                            tasks.push(Task::perform(
-                                async move { api::fetch_proxies(api_port).await },
-                                |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
-                            ));
+                            if !self.proxies_fetch_in_flight {
+                                self.proxies_fetch_in_flight = true;
+                                tasks.push(Task::perform(
+                                    async move { api::fetch_proxies(api_port).await },
+                                    |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
+                                ));
+                            }
                         }
                         Tab::Connections => {
                             tasks.push(Task::done(Message::FetchConnections));
                         }
                         Tab::Dashboard => {
-                            tasks.push(Task::perform(
-                                async move { api::fetch_proxies(api_port).await },
-                                |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
-                            ));
+                            if !self.proxies_fetch_in_flight {
+                                self.proxies_fetch_in_flight = true;
+                                tasks.push(Task::perform(
+                                    async move { api::fetch_proxies(api_port).await },
+                                    |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
+                                ));
+                            }
                             tasks.push(Task::done(Message::FetchConnections));
                         }
                         _ => {}
@@ -787,6 +797,7 @@ impl App {
                 Task::none()
             }
             Message::ProxiesFetched(res) => {
+                self.proxies_fetch_in_flight = false;
                 match res {
                     Ok(groups_map) => {
                         self.proxy_groups = groups_map;
@@ -882,15 +893,9 @@ impl App {
                 while self.log_lines.len() > 1000 {
                     self.log_lines.pop_front();
                 }
-                // Follow tail when Logs tab is active
-                if self.logs_follow && self.current_tab == state::Tab::Logs {
-                    iced::widget::operation::snap_to(
-                        ui::logs::get_logs_scrollable_id().clone(),
-                        iced::widget::scrollable::RelativeOffset::END,
-                    )
-                } else {
-                    Task::none()
-                }
+                // Tail scrolling is throttled by Tick so a log burst does not
+                // trigger a full layout operation for every individual line.
+                Task::none()
             }
             Message::ClearLogs => {
                 self.log_lines.clear();
@@ -1366,9 +1371,6 @@ impl App {
             }
             Message::Tick => {
                 self.theme_check_counter = self.theme_check_counter.wrapping_add(1);
-                if self.theme_check_counter.is_multiple_of(5) {
-                    self.cached_system_is_light = detect_system_theme();
-                }
 
                 if self.config_dirty {
                     let _ = config::save_gui_config(&self.gui_config);
@@ -1399,6 +1401,27 @@ impl App {
                 // Auto-update scan every 60 seconds
                 self.auto_update_tick_counter = self.auto_update_tick_counter.saturating_add(1);
                 let mut tasks = Vec::new();
+                if self.gui_config.theme == state::AppTheme::Auto
+                    && self.theme_check_counter.is_multiple_of(15)
+                {
+                    tasks.push(Task::perform(
+                        async {
+                            tokio::task::spawn_blocking(detect_system_theme)
+                                .await
+                                .unwrap_or(false)
+                        },
+                        Message::SystemThemeDetected,
+                    ));
+                }
+                if self.logs_follow
+                    && self.current_tab == state::Tab::Logs
+                    && !self.log_lines.is_empty()
+                {
+                    tasks.push(iced::widget::operation::snap_to(
+                        ui::logs::get_logs_scrollable_id().clone(),
+                        iced::widget::scrollable::RelativeOffset::END,
+                    ));
+                }
                 if self.auto_update_tick_counter >= 60 {
                     self.auto_update_tick_counter = 0;
                     let hours = self.gui_config.auto_update_interval_hours;
@@ -1418,7 +1441,8 @@ impl App {
                     let (want_proxies, want_connections) =
                         should_poll_api(self.current_tab, tick);
 
-                    if want_proxies {
+                    if want_proxies && !self.proxies_fetch_in_flight {
+                        self.proxies_fetch_in_flight = true;
                         tasks.push(Task::perform(
                             async move { api::fetch_proxies(api_port).await },
                             |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
@@ -1436,6 +1460,10 @@ impl App {
                 }
 
                 Task::batch(tasks)
+            }
+            Message::SystemThemeDetected(is_light) => {
+                self.cached_system_is_light = is_light;
+                Task::none()
             }
             Message::CoreLivenessChecked(running) => {
                 let was_running = self.core_running;
@@ -1458,7 +1486,8 @@ impl App {
                 Task::none()
             }
             Message::FetchConnections => {
-                if self.core_running {
+                if self.core_running && !self.connections_fetch_in_flight {
+                    self.connections_fetch_in_flight = true;
                     let api_port = self.gui_config.api_port;
                     return Task::perform(async move {
                         api::fetch_connections(api_port).await
@@ -1467,12 +1496,14 @@ impl App {
                 Task::none()
             }
             Message::ConnectionsFetched(Ok(res)) => {
+                self.connections_fetch_in_flight = false;
                 self.active_connections = res.connections.unwrap_or_default();
                 self.total_downloaded = res.download_total;
                 self.total_uploaded = res.upload_total;
                 Task::none()
             }
             Message::ConnectionsFetched(Err(_e)) => {
+                self.connections_fetch_in_flight = false;
                 // Suppress background polling HTTP errors
                 Task::none()
             }
@@ -1640,20 +1671,15 @@ impl App {
                 self.restart_core()
             }
             Message::ToggleAutostart => {
-                self.gui_config.start_on_boot = !self.gui_config.start_on_boot;
-                self.config_dirty = true;
-                #[cfg(not(target_os = "windows"))]
-                {
-                    // No-op without an OS launch integration on mac/linux.
-                    Task::none()
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    if let Err(e) = set_windows_autostart(self.gui_config.start_on_boot) {
-                        self.toast_error(e);
+                let target = !self.gui_config.start_on_boot;
+                match platform::set_autostart(target) {
+                    Ok(()) => {
+                        self.gui_config.start_on_boot = target;
+                        self.config_dirty = true;
                     }
-                    Task::none()
+                    Err(e) => self.toast_error(e),
                 }
+                Task::none()
             }
             Message::ToggleAutoStartCore => {
                 self.gui_config.auto_start_core = !self.gui_config.auto_start_core;
@@ -2510,8 +2536,10 @@ async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
     });
 
     let path = config::get_profile_path(&id);
-    tokio::fs::write(&path, &content).await
-        .map_err(|e| format!("Failed to save profile: {}", e))?;
+    let write_path = path.clone();
+    tokio::task::spawn_blocking(move || config::atomic_write(&write_path, content.as_bytes()))
+        .await
+        .map_err(|e| format!("Profile save task failed: {e}"))??;
 
     Ok(ProfileFetchResult {
         id,
@@ -2529,8 +2557,10 @@ async fn fetch_and_save_subscription(url: String, id: String) -> Result<ProfileF
     let (content, meta) = load_profile_content(&url).await?;
     config::validate_profile_content(&content)?;
     let path = config::get_profile_path(&id);
-    tokio::fs::write(&path, &content).await
-        .map_err(|e| format!("Save failed: {}", e))?;
+    let write_path = path.clone();
+    tokio::task::spawn_blocking(move || config::atomic_write(&write_path, content.as_bytes()))
+        .await
+        .map_err(|e| format!("Profile save task failed: {e}"))??;
     Ok(ProfileFetchResult {
         id,
         source_url: url,
@@ -2580,6 +2610,11 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
         return Err(format!("Download failed with status: {}", res.status()));
     }
 
+    const MAX_PROFILE_BYTES: u64 = 16 * 1024 * 1024;
+    if res.content_length().is_some_and(|n| n > MAX_PROFILE_BYTES) {
+        return Err("Subscription is larger than the 16 MiB safety limit".to_string());
+    }
+
     if let Some(userinfo) = res.headers().get("subscription-userinfo")
         && let Ok(s) = userinfo.to_str() {
             let (u, d, t, e) = config::parse_subscription_userinfo(s);
@@ -2596,10 +2631,16 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
                 meta.display_name = Some(name);
             }
 
-    let content = res
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read content: {}", e))?;
+    let mut stream = res.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Failed to read content: {e}"))?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_PROFILE_BYTES as usize {
+            return Err("Subscription is larger than the 16 MiB safety limit".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let content = String::from_utf8_lossy(&bytes).into_owned();
     Ok((content, meta))
 }
 
@@ -2774,33 +2815,6 @@ mod tests {
     }
 }
 
-fn set_windows_autostart(enable: bool) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
-        use winreg::RegKey;
-        
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let run_key = hkcu.open_subkey_with_flags(
-            r#"Software\Microsoft\Windows\CurrentVersion\Run"#,
-            KEY_WRITE
-        ).map_err(|e| format!("Failed to open registry key: {}", e))?;
-        
-        if enable {
-            let exe_path = std::env::current_exe()
-                .map_err(|e| format!("Failed to resolve current exe path: {}", e))?;
-            // Quote path so spaces in user profile directories do not break Run key.
-            let quoted = quote_autostart_path(&exe_path.to_string_lossy());
-            run_key
-                .set_value("sing-box-gui", &quoted)
-                .map_err(|e| format!("Failed to write autostart registry: {}", e))?;
-        } else {
-            let _ = run_key.delete_value("sing-box-gui");
-        }
-    }
-    Ok(())
-}
-
 /// Whether Tick should poll proxies / connections for the given tab and tick.
 fn should_poll_api(tab: state::Tab, tick: u32) -> (bool, bool) {
     let want_proxies = match tab {
@@ -2816,6 +2830,7 @@ fn should_poll_api(tab: state::Tab, tick: u32) -> (bool, bool) {
     (want_proxies, want_connections)
 }
 
+#[cfg(test)]
 fn quote_autostart_path(path: &str) -> String {
     format!("\"{}\"", path)
 }
@@ -3169,8 +3184,8 @@ fn main() -> iced::Result {
     let config = config::load_gui_config();
     if config.close_core_on_exit {
         core::stop_core();
+        let _ = sysproxy::set_system_proxy(false, config.mixed_port);
     }
-    let _ = sysproxy::set_system_proxy(false, config.mixed_port);
     
     res
 }

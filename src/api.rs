@@ -146,7 +146,9 @@ pub async fn fetch_proxies(api_port: u16) -> Result<ProxiesResponse, String> {
     let res = with_secret(client.get(&url))
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch proxies: {}", e))?;
+        .map_err(|e| format!("Failed to fetch proxies: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("Proxy API returned an error: {e}"))?;
         
     let body = res.json::<ProxiesResponse>()
         .await
@@ -217,7 +219,9 @@ pub async fn fetch_connections(api_port: u16) -> Result<ConnectionsResponse, Str
     let res = with_secret(client.get(&url))
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch connections: {}", e))?;
+        .map_err(|e| format!("Failed to fetch connections: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("Connections API returned an error: {e}"))?;
         
     let body = res.json::<ConnectionsResponse>()
         .await
@@ -323,7 +327,7 @@ pub fn spawn_traffic_monitor(
                                                     && let Ok(info) = serde_json::from_str::<TrafficInfo>(line) {
                                                         let _ = sender.send(info);
                                                     }
-                                                line_buffer = line_buffer[pos + 1..].to_string();
+                                                line_buffer.drain(..=pos);
                                             }
                                         }
                                         _ => break,

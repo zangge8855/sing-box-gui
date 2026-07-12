@@ -7,10 +7,10 @@ use iced::{Background, Border, Color, Shadow};
 use iced::widget::{container, button, text_input, pick_list as iced_pick_list};
 
 // ── Radius language ──────────────────────────────────────────────────────────
-pub const RADIUS_LG: f32 = 14.0;
-pub const RADIUS_MD: f32 = 10.0;
-pub const RADIUS_SM: f32 = 8.0;
-pub const RADIUS_XS: f32 = 6.0;
+pub const RADIUS_LG: f32 = 10.0;
+pub const RADIUS_MD: f32 = 8.0;
+pub const RADIUS_SM: f32 = 6.0;
+pub const RADIUS_XS: f32 = 4.0;
 pub const RADIUS_MICRO: f32 = 3.0;
 
 
@@ -76,10 +76,10 @@ pub const SP_12: f32 = 12.0;
 pub const SP_40: f32 = 40.0;
 
 // ── Dark mode (cool near-black with subtle blue undertone) ───────────────────
-pub const BG_DARK: Color = Color::from_rgb(0.055, 0.057, 0.070); // #0e0f12
-pub const SIDEBAR_BG: Color = Color::from_rgb(0.040, 0.042, 0.055); // #0a0b0e
-pub const CARD_DARK: Color = Color::from_rgb(0.100, 0.105, 0.128); // #1a1b21
-pub const CARD_ELEVATED_DARK: Color = Color::from_rgb(0.125, 0.132, 0.160); // #202229
+pub const BG_DARK: Color = Color::from_rgb(0.045, 0.050, 0.061); // graphite canvas
+pub const SIDEBAR_BG: Color = Color::from_rgb(0.034, 0.038, 0.048);
+pub const CARD_DARK: Color = Color::from_rgb(0.070, 0.076, 0.091);
+pub const CARD_ELEVATED_DARK: Color = Color::from_rgb(0.090, 0.098, 0.116);
 #[allow(dead_code)]
 pub const CARD_HOVER: Color = Color::from_rgb(0.145, 0.152, 0.185);
 /// Elevated / selected dark surface alias.
@@ -92,8 +92,8 @@ pub const INPUT_BG_DARK: Color = Color::from_rgb(0.045, 0.048, 0.060);
 pub const CONSOLE_BG_DARK: Color = Color::from_rgb(0.028, 0.032, 0.045);
 
 // ── Light mode (warm off-white, readable borders) ────────────────────────────
-pub const BG_LIGHT: Color = Color::from_rgb(0.955, 0.958, 0.970); // #f4f4f7
-pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb(0.930, 0.933, 0.950);
+pub const BG_LIGHT: Color = Color::from_rgb(0.965, 0.968, 0.975);
+pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb(0.945, 0.949, 0.960);
 pub const CARD_LIGHT_BG: Color = Color::from_rgb(1.0, 1.0, 1.0);
 pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb(0.965, 0.960, 1.0);
 pub const BORDER_LIGHT: Color = Color::from_rgba(0.10, 0.12, 0.18, 0.10);
@@ -106,9 +106,9 @@ pub const CONSOLE_BG_LIGHT: Color = Color::from_rgb(0.965, 0.968, 0.978);
 
 // ── Accent + semantic (shared across modes) ──────────────────────────────────
 /// Primary brand violet — slightly richer for premium feel.
-pub const ACCENT_PURPLE: Color = Color::from_rgb(0.52, 0.38, 0.98); // ~#8561fa
-pub const ACCENT_PURPLE_HOVER: Color = Color::from_rgb(0.62, 0.48, 1.0);
-pub const ACCENT_PURPLE_PRESSED: Color = Color::from_rgb(0.44, 0.30, 0.88);
+pub const ACCENT_PURPLE: Color = Color::from_rgb(0.43, 0.36, 0.90);
+pub const ACCENT_PURPLE_HOVER: Color = Color::from_rgb(0.50, 0.43, 0.96);
+pub const ACCENT_PURPLE_PRESSED: Color = Color::from_rgb(0.36, 0.29, 0.79);
 pub const ACCENT_PURPLE_DISABLED: Color = Color::from_rgb(0.28, 0.24, 0.40);
 pub const ACCENT_BLUE: Color = Color::from_rgb(0.28, 0.52, 0.96); // #4785f5
 /// Prefer SUCCESS for health/status; kept for decorative accents if needed.
@@ -186,38 +186,6 @@ pub fn with_alpha(color: Color, alpha: f32) -> Color {
     }
 }
 
-fn card_shadow(theme: &iced::Theme) -> Shadow {
-    if is_dark(theme) {
-        Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.38),
-            offset: iced::Vector::new(0.0, 6.0),
-            blur_radius: 20.0,
-        }
-    } else {
-        Shadow {
-            color: Color::from_rgba(0.08, 0.10, 0.16, 0.10),
-            offset: iced::Vector::new(0.0, 6.0),
-            blur_radius: 18.0,
-        }
-    }
-}
-
-fn soft_shadow(theme: &iced::Theme) -> Shadow {
-    if is_dark(theme) {
-        Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.28),
-            offset: iced::Vector::new(0.0, 3.0),
-            blur_radius: 12.0,
-        }
-    } else {
-        Shadow {
-            color: Color::from_rgba(0.08, 0.10, 0.16, 0.07),
-            offset: iced::Vector::new(0.0, 3.0),
-            blur_radius: 10.0,
-        }
-    }
-}
-
 // ── Chrome styles ────────────────────────────────────────────────────────────
 
 pub fn main_bg(theme: &iced::Theme) -> container::Style {
@@ -254,7 +222,7 @@ pub fn card_bg(theme: &iced::Theme) -> container::Style {
             width: 1.0,
             radius: RADIUS_LG.into(),
         },
-        shadow: card_shadow(theme),
+        shadow: Shadow::default(),
         text_color: Some(text_primary(theme)),
         ..Default::default()
     }
@@ -279,11 +247,7 @@ pub fn card_selected(theme: &iced::Theme) -> container::Style {
             width: 1.5,
             radius: RADIUS_LG.into(),
         },
-        shadow: Shadow {
-            color: with_alpha(ACCENT_PURPLE, if dark { 0.28 } else { 0.18 }),
-            offset: iced::Vector::new(0.0, 4.0),
-            blur_radius: 16.0,
-        },
+        shadow: Shadow::default(),
         text_color: Some(text_primary(theme)),
         ..Default::default()
     }
@@ -303,7 +267,7 @@ pub fn status_card(theme: &iced::Theme) -> container::Style {
             width: 1.0,
             radius: RADIUS_LG.into(),
         },
-        shadow: soft_shadow(theme),
+        shadow: Shadow::default(),
         text_color: Some(text_primary(theme)),
         ..Default::default()
     }

@@ -100,6 +100,14 @@ pub fn render<'a>(
             };
             if connections_sort_desc { ord.reverse() } else { ord }
         });
+
+        // Iced builds widget trees eagerly. Bound the visible rows so a busy
+        // torrent/browser session cannot freeze the UI with thousands of rows.
+        const MAX_VISIBLE_CONNECTIONS: usize = 250;
+        let hidden_connections = filtered_connections
+            .len()
+            .saturating_sub(MAX_VISIBLE_CONNECTIONS);
+        filtered_connections.truncate(MAX_VISIBLE_CONNECTIONS);
         
         let search_input = text_input(tr(lang, "placeholder_connections_search"), &query_str)
             .on_input(Message::ConnectionsSearchChanged)
@@ -275,6 +283,18 @@ pub fn render<'a>(
                     
                     list = list.push(card);
                 }
+            }
+            if hidden_connections > 0 {
+                list = list.push(
+                    container(
+                        text(format!("{} {}", hidden_connections, tr(lang, "connections_hidden_hint")))
+                            .size(theme::TYPE_CAPTION)
+                            .color(text_muted),
+                    )
+                    .width(Length::Fill)
+                    .padding(12)
+                    .center_x(Length::Fill),
+                );
             }
             let col = column![page_title, scrollable(list).style(theme::scrollbar_style).height(Length::Fill)]
                 .spacing(20)
@@ -480,7 +500,22 @@ pub fn render<'a>(
             let list_content: Element<'_, Message> = container(
                 column![
                     header_styled,
-                    scrollable(list).style(theme::scrollbar_style).height(Length::Fill)
+                    scrollable(
+                        if hidden_connections > 0 {
+                            list.push(
+                                container(
+                                    text(format!("{} {}", hidden_connections, tr(lang, "connections_hidden_hint")))
+                                        .size(theme::TYPE_CAPTION)
+                                        .color(text_muted),
+                                )
+                                .width(Length::Fill)
+                                .padding(12)
+                                .center_x(Length::Fill),
+                            )
+                        } else {
+                            list
+                        }
+                    ).style(theme::scrollbar_style).height(Length::Fill)
                 ]
             )
             .style(theme::card_bg)

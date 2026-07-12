@@ -44,7 +44,7 @@ The project adheres to the classic **Elm Architecture** (The Elm Architecture), 
 
 ## 🚀 Local Development & Compilation
 
-Ensure you have Rust 1.70+ installed, then begin local development and debugging:
+Ensure you have Rust 1.85+ installed (required by Rust 2024 Edition), then begin local development and debugging:
 
 ```bash
 # Clone the repository and enter the directory
@@ -133,7 +133,7 @@ This project is open-sourced under the **GNU General Public License v3.0** (GPL-
 
 ## 🚀 本地开发与编译
 
-确保已安装 Rust 1.70+ 版本，随后进行本地开发调试：
+确保已安装 Rust 1.85+ 版本（Rust 2024 Edition 的最低要求），随后进行本地开发调试：
 
 ```bash
 # 克隆项目并进入目录
@@ -178,4 +178,3 @@ CI 配置文件位于 `.github/workflows/build.yml`.
 
 `sing-box`, `sing-box-gui`, `sing-box client`, `sing-box windows`, `rust-gui`, `iced-gui`, `proxy-client`, `clash-alternative`, `v2ray-client`, `shadowsocks-client`, `trojan-client`, `vless-client`, `vless`, `network-proxy`, `tun-mode`, `rules-routing`, `rust-proxy`, `cross-platform`, `high-aesthetic-gui`, `singbox`, `clash`, `proxy`
 -->
-

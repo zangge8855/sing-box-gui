@@ -8,6 +8,13 @@ static APP_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn get_app_dir() -> PathBuf {
     APP_DIR.get_or_init(|| {
+        if let Ok(override_dir) = std::env::var("SING_BOX_GUI_DATA_DIR") {
+            let dir = PathBuf::from(override_dir);
+            let _ = fs::create_dir_all(&dir);
+            let _ = fs::create_dir_all(dir.join("profiles"));
+            let _ = fs::create_dir_all(dir.join("bin"));
+            return dir;
+        }
         let base = dirs::data_dir()
             .or_else(dirs::config_dir)
             .or_else(|| std::env::var("APPDATA").ok().map(PathBuf::from))
@@ -94,8 +101,55 @@ pub fn save_gui_config(config: &GuiConfig) -> Result<(), String> {
     let path = get_config_path();
     let content = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    fs::write(path, content)
-        .map_err(|e| format!("Failed to write config file: {}", e))?;
+    atomic_write(&path, content.as_bytes())?;
+    Ok(())
+}
+
+/// Replace a persisted file without exposing a partially-written destination.
+/// This is used for settings and subscription files because a power loss during
+/// a direct `fs::write` would otherwise reset the application on next launch.
+pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Target file has no parent directory".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|e| format!("Failed to create data directory: {e}"))?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("data");
+    let temp_path = parent.join(format!(".{file_name}.tmp"));
+    let backup_path = parent.join(format!("{file_name}.bak"));
+
+    {
+        let mut file = fs::File::create(&temp_path)
+            .map_err(|e| format!("Failed to create temporary file: {e}"))?;
+        file.write_all(bytes)
+            .map_err(|e| format!("Failed to write temporary file: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("Failed to flush temporary file: {e}"))?;
+    }
+
+    if path.exists() {
+        let _ = fs::copy(path, &backup_path);
+    }
+
+    #[cfg(target_os = "windows")]
+    if path.exists() {
+        fs::remove_file(path)
+            .map_err(|e| format!("Failed to replace existing file: {e}"))?;
+    }
+
+    if let Err(e) = fs::rename(&temp_path, path) {
+        #[cfg(target_os = "windows")]
+        if backup_path.exists() && !path.exists() {
+            let _ = fs::copy(&backup_path, path);
+        }
+        return Err(format!("Failed to commit temporary file: {e}"));
+    }
     Ok(())
 }
 
@@ -1970,5 +2024,21 @@ proxies:
         let nodes = parse_clash_yaml_nodes(yaml).unwrap();
         let names: Vec<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, ["ok1", "ok3"]);
+    }
+
+    #[test]
+    fn atomic_write_replaces_content_and_keeps_backup() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, b"old").expect("seed file");
+
+        atomic_write(&path, b"new").expect("atomic write");
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        assert_eq!(
+            std::fs::read(dir.path().join("settings.json.bak")).unwrap(),
+            b"old"
+        );
+        assert!(!dir.path().join(".settings.json.tmp").exists());
     }
 }
