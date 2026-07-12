@@ -294,6 +294,62 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 }
             }
         }
+        "ssr" => {
+            let body = link
+                .trim_start_matches("ssr://")
+                .split('#')
+                .next()
+                .unwrap_or_default();
+            let decoded = decode_base64_padded(body)?;
+            let (server_part, query_part) = decoded
+                .split_once("/?")
+                .map_or((decoded.as_str(), ""), |(server, query)| (server, query));
+            let parts: Vec<&str> = server_part.splitn(6, ':').collect();
+            if parts.len() != 6 {
+                return None;
+            }
+            let server = parts[0];
+            let port = parts[1].parse::<u16>().ok()?;
+            let protocol = parts[2];
+            let method = parts[3];
+            let obfs = parts[4];
+            let password = decode_base64_padded(parts[5])?;
+            if server.is_empty() || method.is_empty() || password.is_empty() {
+                return None;
+            }
+
+            insert_yaml_string(&mut map, "type", "ssr");
+            insert_yaml_string(&mut map, "server", server);
+            map.insert(
+                serde_yaml::Value::String("port".to_string()),
+                serde_yaml::Value::Number(port.into()),
+            );
+            insert_yaml_string(&mut map, "cipher", method);
+            insert_yaml_string(&mut map, "password", &password);
+            insert_yaml_string(&mut map, "protocol", protocol);
+            insert_yaml_string(&mut map, "obfs", obfs);
+
+            for (key, value) in url::form_urlencoded::parse(query_part.as_bytes()) {
+                match key.as_ref() {
+                    "remarks" => {
+                        if let Some(remarks) = decode_base64_padded(value.as_ref()) {
+                            insert_yaml_string(&mut map, "name", &remarks);
+                        }
+                    }
+                    "obfsparam" => {
+                        if let Some(param) = decode_base64_padded(value.as_ref()) {
+                            insert_yaml_string(&mut map, "obfs-param", &param);
+                        }
+                    }
+                    "protoparam" => {
+                        if let Some(param) = decode_base64_padded(value.as_ref()) {
+                            insert_yaml_string(&mut map, "protocol-param", &param);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         "vmess" => {
             map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String("vmess".to_string()));
             
@@ -650,6 +706,7 @@ fn is_supported_clash_proxy_type(node_type: &str) -> bool {
     matches!(
         node_type,
         "ss"
+            | "ssr"
             | "vmess"
             | "vless"
             | "trojan"
@@ -668,7 +725,7 @@ fn clash_proxy_has_required_credentials(map: &serde_yaml::Mapping, node_type: &s
         yaml_string_any(map, keys).is_some_and(|value| !value.trim().is_empty())
     };
     match node_type {
-        "ss" => non_empty(&["cipher"]) && non_empty(&["password"]),
+        "ss" | "ssr" => non_empty(&["cipher"]) && non_empty(&["password"]),
         "vmess" | "vless" => non_empty(&["uuid"]),
         "trojan" | "hysteria2" | "anytls" => non_empty(&["password"]),
         "hysteria" => non_empty(&["auth-str", "auth_str", "password"]),
@@ -719,7 +776,7 @@ fn normalize_profile_content_inner(content: &str, allow_base64_decode: bool) -> 
             || decoded.lines().any(|line| {
                 matches!(
                     line.trim().split_once("://").map(|(scheme, _)| scheme),
-                    Some("ss" | "vmess" | "vless" | "trojan" | "hysteria" | "hysteria2" | "hy2" | "tuic" | "anytls")
+                    Some("ss" | "ssr" | "vmess" | "vless" | "trojan" | "hysteria" | "hysteria2" | "hy2" | "tuic" | "anytls")
                 )
             });
         if looks_like_profile {
@@ -1123,6 +1180,8 @@ pub fn convert_clash_to_singbox(
     let key_plugin_opts = serde_yaml::Value::String("plugin-opts".into());
     let key_plugin_opts_raw = serde_yaml::Value::String("plugin-opts-raw".into());
     let key_port = serde_yaml::Value::String("port".into());
+    let key_protocol = serde_yaml::Value::String("protocol".into());
+    let key_protocol_param = serde_yaml::Value::String("protocol-param".into());
     let key_public_key = serde_yaml::Value::String("public-key".into());
     let key_reality = serde_yaml::Value::String("reality".into());
     let key_reality_opts = serde_yaml::Value::String("reality-opts".into());
@@ -1237,6 +1296,50 @@ pub fn convert_clash_to_singbox(
                     if !raw_options.is_empty() {
                         outbound.insert("plugin_opts".to_string(), json!(raw_options));
                     }
+                }
+            }
+            "ssr" => {
+                outbound.insert("type".to_string(), json!("shadowsocksr"));
+                outbound.insert("server".to_string(), json!(server));
+                outbound.insert("server_port".to_string(), json!(port));
+
+                let method = map
+                    .get(&key_cipher)
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let password = map
+                    .get(&key_password)
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                if method.is_empty() || password.is_empty() {
+                    continue;
+                }
+                outbound.insert("method".to_string(), json!(method));
+                outbound.insert("password".to_string(), json!(password));
+
+                if let Some(protocol) = map
+                    .get(&key_protocol)
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty())
+                {
+                    outbound.insert("protocol".to_string(), json!(protocol));
+                }
+                if let Some(param) = map
+                    .get(&key_protocol_param)
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty())
+                {
+                    outbound.insert("protocol_param".to_string(), json!(param));
+                }
+                if let Some(obfs) = yaml_string_any(map, &["obfs"])
+                    .filter(|value| !value.is_empty())
+                {
+                    outbound.insert("obfs".to_string(), json!(obfs));
+                }
+                if let Some(param) = yaml_string_any(map, &["obfs-param", "obfs_param"])
+                    .filter(|value| !value.is_empty())
+                {
+                    outbound.insert("obfs_param".to_string(), json!(param));
                 }
             }
             "vmess" => {
@@ -2762,6 +2865,34 @@ proxies:
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].name, "One");
         assert_eq!(nodes[1].name, "Two");
+    }
+
+    #[test]
+    fn shadowsocksr_link_preserves_protocol_and_obfuscation() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let password = URL_SAFE_NO_PAD.encode("secret");
+        let remarks = URL_SAFE_NO_PAD.encode("SSR 香港");
+        let obfs_param = URL_SAFE_NO_PAD.encode("cdn.example.com");
+        let protocol_param = URL_SAFE_NO_PAD.encode("42:token");
+        let payload = format!(
+            "server.example.com:443:auth_aes128_md5:aes-256-cfb:tls1.2_ticket_auth:{password}/?remarks={remarks}&obfsparam={obfs_param}&protoparam={protocol_param}"
+        );
+        let link = format!("ssr://{}", URL_SAFE_NO_PAD.encode(payload));
+        let normalized = normalize_profile_content(&link);
+        let config = convert_clash_to_singbox(&normalized, &GuiConfig::default()).unwrap();
+        let outbound = config["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|outbound| outbound["type"] == "shadowsocksr")
+            .unwrap();
+        assert_eq!(outbound["tag"], "SSR 香港");
+        assert_eq!(outbound["method"], "aes-256-cfb");
+        assert_eq!(outbound["protocol"], "auth_aes128_md5");
+        assert_eq!(outbound["protocol_param"], "42:token");
+        assert_eq!(outbound["obfs"], "tls1.2_ticket_auth");
+        assert_eq!(outbound["obfs_param"], "cdn.example.com");
     }
 
     #[test]
