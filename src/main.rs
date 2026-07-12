@@ -1231,6 +1231,8 @@ impl App {
                 self.confirm_delete_profile_id = None;
                 self.gui_config.active_profile_id = Some(id);
                 self.active_profile_nodes.clear();
+                self.proxy_groups.clear();
+                self.selected_group.clear();
                 self.config_dirty = true;
                 self.log_lines.push_back("[GUI] Active profile updated.".to_string());
                 self.toast_success(if self.gui_config.language == state::Language::Zh {
