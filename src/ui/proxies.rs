@@ -326,6 +326,7 @@ pub fn render<'a>(
                             latency,
                             active,
                             is_selector,
+                            true,
                             Some(group_name.to_string()),
                             theme,
                             lang,
@@ -496,6 +497,7 @@ pub fn render<'a>(
                     node.latency,
                     is_selected,
                     false,
+                    node.selectable,
                     None,
                     theme,
                     lang,
@@ -596,6 +598,7 @@ fn render_proxy_card<'a>(
     latency: Option<u64>,
     is_selected: bool,
     is_selector: bool,
+    direct_selectable: bool,
     group_clone: Option<String>,
     theme: &iced::Theme,
     lang: crate::state::Language,
@@ -669,7 +672,7 @@ fn render_proxy_card<'a>(
             };
             let border_color = match status {
                 button::Status::Hovered if is_selector => theme::ACCENT_PURPLE,
-                button::Status::Hovered if !is_selector && server.is_some() => theme::ACCENT_PURPLE,
+                button::Status::Hovered if !is_selector && direct_selectable && server.is_some() => theme::ACCENT_PURPLE,
                 _ => base.border.color,
             };
             button::Style {
@@ -693,7 +696,7 @@ fn render_proxy_card<'a>(
                 node: node_clone,
             });
         }
-    } else {
+    } else if direct_selectable {
         card_btn = card_btn.on_press(Message::SelectNode(node_clone));
     }
         

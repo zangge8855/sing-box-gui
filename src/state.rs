@@ -304,6 +304,9 @@ pub struct ProxyNode {
     pub server: String,
     pub port: u16,
     pub latency: Option<u64>,
+    /// False for native sing-box endpoints that are informational unless a
+    /// selector exposes them through the Clash API.
+    pub selectable: bool,
 }
 
 #[derive(Debug, Default, Clone)]

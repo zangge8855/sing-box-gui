@@ -878,6 +878,7 @@ pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
                 server,
                 port,
                 latency: None,
+                selectable: true,
             });
         }
     }
@@ -888,11 +889,12 @@ pub fn parse_native_json_nodes(json_content: &str) -> Result<Vec<ProxyNode>, Str
     let val: serde_json::Value = serde_json::from_str(json_content)
         .map_err(|e| format!("JSON parsing failed: {}", e))?;
         
-    let outbounds = val.get("outbounds")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "No 'outbounds' array found".to_string())?;
-        
     let mut nodes = Vec::new();
+    let outbounds = val
+        .get("outbounds")
+        .and_then(|value| value.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or_default();
     for item in outbounds {
         if let Some(obj) = item.as_object() {
             let node_type = obj.get("type")
@@ -929,6 +931,52 @@ pub fn parse_native_json_nodes(json_content: &str) -> Result<Vec<ProxyNode>, Str
                     server,
                     port,
                     latency: None,
+                    selectable: true,
+                });
+            }
+        }
+    }
+
+    if let Some(endpoints) = val.get("endpoints").and_then(|value| value.as_array()) {
+        for item in endpoints {
+            let Some(obj) = item.as_object() else {
+                continue;
+            };
+            let endpoint_type = obj
+                .get("type")
+                .and_then(|value| value.as_str())
+                .unwrap_or("endpoint");
+            let name = obj
+                .get("tag")
+                .and_then(|value| value.as_str())
+                .unwrap_or("Unnamed endpoint")
+                .to_string();
+            let peer = obj
+                .get("peers")
+                .and_then(|value| value.as_array())
+                .and_then(|peers| peers.first())
+                .and_then(|value| value.as_object());
+            let server = obj
+                .get("server")
+                .and_then(|value| value.as_str())
+                .or_else(|| peer.and_then(|peer| peer.get("server")).and_then(|value| value.as_str()));
+            let port = obj
+                .get("server_port")
+                .and_then(|value| value.as_u64())
+                .or_else(|| {
+                    peer.and_then(|peer| peer.get("server_port"))
+                        .and_then(|value| value.as_u64())
+                });
+            if let (Some(server), Some(port)) = (server, port)
+                && (1..=65535).contains(&port)
+            {
+                nodes.push(ProxyNode {
+                    name,
+                    node_type: format!("{endpoint_type} endpoint"),
+                    server: server.to_string(),
+                    port: port as u16,
+                    latency: None,
+                    selectable: false,
                 });
             }
         }
@@ -2961,6 +3009,30 @@ proxies:
         assert!(validate_profile_content("[]").is_err());
         assert!(validate_profile_content(r#"{"log":{"level":"info"}}"#).is_err());
         assert!(validate_profile_content(r#"{"endpoints":[]}"#).is_ok());
+    }
+
+    #[test]
+    fn native_wireguard_endpoint_is_visible_but_not_directly_selectable() {
+        let json = r#"{
+          "endpoints": [{
+            "type": "wireguard",
+            "tag": "wg-home",
+            "address": ["10.0.0.2/32"],
+            "private_key": "secret",
+            "peers": [{
+              "server": "wg.example.com",
+              "server_port": 51820,
+              "public_key": "peer-key"
+            }]
+          }]
+        }"#;
+        let nodes = parse_native_json_nodes(json).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "wg-home");
+        assert_eq!(nodes[0].node_type, "wireguard endpoint");
+        assert_eq!(nodes[0].server, "wg.example.com");
+        assert_eq!(nodes[0].port, 51820);
+        assert!(!nodes[0].selectable);
     }
 
     #[test]
