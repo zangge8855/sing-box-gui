@@ -100,7 +100,7 @@ fn spawn_log_forwarder<R: Read + Send + 'static>(
                 break; // EOF
             }
             // Trim trailing newline characters (\r and \n)
-            while buf.ends_with(&[b'\n']) || buf.ends_with(&[b'\r']) {
+            while buf.ends_with(b"\n") || buf.ends_with(b"\r") {
                 buf.pop();
             }
             let line_str = decode_log_line(&buf);
@@ -422,7 +422,7 @@ pub fn start_core(
     let mut lock = get_process_lock();
     if lock.is_some() {
         // Already tracking a child — only treat as running if it is still alive.
-        if is_core_running_locked(&mut *lock) {
+        if is_core_running_locked(&mut lock) {
             return Ok(());
         }
     }
@@ -551,7 +551,7 @@ fn is_core_running_locked(lock: &mut Option<Child>) -> bool {
 
 pub fn is_core_running() -> bool {
     let mut lock = get_process_lock();
-    is_core_running_locked(&mut *lock)
+    is_core_running_locked(&mut lock)
 }
 
 /// Lock-free fast path for UI Tick / background pollers.

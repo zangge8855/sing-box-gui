@@ -912,7 +912,7 @@ impl App {
                         "logs_export_{}.txt",
                         chrono::Local::now().format("%Y%m%d_%H%M%S")
                     ));
-                    std::fs::write(&path, lines.into_iter().collect::<Vec<_>>().join("\n"))
+                    tokio::fs::write(&path, lines.into_iter().collect::<Vec<_>>().join("\n")).await
                         .map(|_| path.to_string_lossy().to_string())
                         .map_err(|e| e.to_string())
                 }, Message::LogsExported)
@@ -2517,7 +2517,7 @@ async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
     });
 
     let path = config::get_profile_path(&id);
-    std::fs::write(&path, &content)
+    tokio::fs::write(&path, &content).await
         .map_err(|e| format!("Failed to save profile: {}", e))?;
 
     Ok(ProfileFetchResult {
@@ -2536,7 +2536,7 @@ async fn fetch_and_save_subscription(url: String, id: String) -> Result<ProfileF
     let (content, meta) = load_profile_content(&url).await?;
     config::validate_profile_content(&content)?;
     let path = config::get_profile_path(&id);
-    std::fs::write(&path, &content)
+    tokio::fs::write(&path, &content).await
         .map_err(|e| format!("Save failed: {}", e))?;
     Ok(ProfileFetchResult {
         id,
@@ -2567,7 +2567,7 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
     };
 
     if std::path::Path::new(url).exists() {
-        let content = std::fs::read_to_string(url)
+        let content = tokio::fs::read_to_string(url).await
             .map_err(|e| format!("Failed to read local file: {}", e))?;
         return Ok((content, meta));
     }
@@ -3009,11 +3009,11 @@ async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, S
     // Prefer beside the running binary (portable installs); fall back to temp.
     let dest = {
         let beside = dir.join(file_name);
-        match std::fs::write(&beside, &bytes) {
+        match tokio::fs::write(&beside, &bytes).await {
             Ok(()) => beside,
             Err(e_beside) => {
                 let fallback = std::env::temp_dir().join(file_name);
-                std::fs::write(&fallback, &bytes).map_err(|e| {
+                tokio::fs::write(&fallback, &bytes).await.map_err(|e| {
                     format!(
                         "Failed to write update file (beside exe: {}; temp: {})",
                         e_beside, e
@@ -3027,11 +3027,11 @@ async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, S
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&dest)
+        let mut perms = tokio::fs::metadata(&dest).await
             .map_err(|e| format!("Failed to stat update file: {}", e))?
             .permissions();
         perms.set_mode(0o755);
-        std::fs::set_permissions(&dest, perms)
+        tokio::fs::set_permissions(&dest, perms).await
             .map_err(|e| format!("Failed to chmod update file: {}", e))?;
     }
 

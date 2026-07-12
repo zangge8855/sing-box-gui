@@ -13,17 +13,14 @@ pub enum Tab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum RoutingMode {
+    #[default]
     Rule,
     Global,
     Direct,
 }
 
-impl Default for RoutingMode {
-    fn default() -> Self {
-        RoutingMode::Rule
-    }
-}
 
 impl RoutingMode {
     /// Clash-compatible mode string for sing-box clash_api /configs.
@@ -261,13 +258,11 @@ impl Default for GuiConfig {
         {
             use winreg::RegKey;
             use winreg::enums::HKEY_CURRENT_USER;
-            if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International") {
-                if let Ok(locale) = hkcu.get_value::<String, _>("LocaleName") {
-                    if locale.to_lowercase().starts_with("zh") {
+            if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International")
+                && let Ok(locale) = hkcu.get_value::<String, _>("LocaleName")
+                    && locale.to_lowercase().starts_with("zh") {
                         lang = Language::Zh;
                     }
-                }
-            }
         }
         Self {
             subscriptions: Vec::new(),

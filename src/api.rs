@@ -319,11 +319,10 @@ pub fn spawn_traffic_monitor(
                                             
                                             while let Some(pos) = line_buffer.find('\n') {
                                                 let line = line_buffer[..pos].trim();
-                                                if !line.is_empty() {
-                                                    if let Ok(info) = serde_json::from_str::<TrafficInfo>(line) {
+                                                if !line.is_empty()
+                                                    && let Ok(info) = serde_json::from_str::<TrafficInfo>(line) {
                                                         let _ = sender.send(info);
                                                     }
-                                                }
                                                 line_buffer = line_buffer[pos + 1..].to_string();
                                             }
                                         }

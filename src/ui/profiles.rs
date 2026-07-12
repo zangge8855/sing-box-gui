@@ -140,9 +140,7 @@ pub fn render<'a>(
         .padding(theme::CARD_PAD)
         .style(theme::card_bg);
         
-        let error_banner = if let Some(err) = profile_error {
-            Some(
-                container(
+        let error_banner = profile_error.map(|err| container(
                     row![
                         text("⚠️ ").size(theme::TYPE_HEADING),
                         text(err).size(theme::TYPE_SECTION).color(theme::DANGER)
@@ -151,11 +149,7 @@ pub fn render<'a>(
                 )
                 .padding(crate::ui::SP_12)
                 .width(Length::Fill)
-                .style(|t| theme::tinted_banner(t, theme::DANGER))
-            )
-        } else {
-            None
-        };
+                .style(|t| theme::tinted_banner(t, theme::DANGER)));
         
         // Grid system for profiles list (Responsive Grid)
         let grid_content: Element<'a, Message> = if gui_config.subscriptions.is_empty() {

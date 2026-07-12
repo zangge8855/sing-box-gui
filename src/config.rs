@@ -9,7 +9,7 @@ static APP_DIR: OnceLock<PathBuf> = OnceLock::new();
 pub fn get_app_dir() -> PathBuf {
     APP_DIR.get_or_init(|| {
         let base = dirs::data_dir()
-            .or_else(|| dirs::config_dir())
+            .or_else(dirs::config_dir)
             .or_else(|| std::env::var("APPDATA").ok().map(PathBuf::from))
             .unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
@@ -77,14 +77,12 @@ pub fn load_gui_config() -> GuiConfig {
         {
             use winreg::RegKey;
             use winreg::enums::HKEY_CURRENT_USER;
-            if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International") {
-                if let Ok(locale) = hkcu.get_value::<String, _>("LocaleName") {
-                    if locale.to_lowercase().starts_with("zh") {
+            if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International")
+                && let Ok(locale) = hkcu.get_value::<String, _>("LocaleName")
+                    && locale.to_lowercase().starts_with("zh") {
                         config.language = crate::state::Language::Zh;
                         let _ = save_gui_config(&config);
                     }
-                }
-            }
         }
         let _ = fs::write(migration_file, "done");
     }
@@ -109,40 +107,36 @@ fn decode_base64_padded(input: &str) -> Option<String> {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     
     // Attempt standard decode
-    if let Ok(bytes) = STANDARD.decode(input) {
-        if let Ok(s) = String::from_utf8(bytes) {
+    if let Ok(bytes) = STANDARD.decode(input)
+        && let Ok(s) = String::from_utf8(bytes) {
             return Some(s);
         }
-    }
     
     // Attempt with padding
     let mut padded = input.to_string();
-    while padded.len() % 4 != 0 {
+    while !padded.len().is_multiple_of(4) {
         padded.push('=');
     }
-    if let Ok(bytes) = STANDARD.decode(&padded) {
-        if let Ok(s) = String::from_utf8(bytes) {
+    if let Ok(bytes) = STANDARD.decode(&padded)
+        && let Ok(s) = String::from_utf8(bytes) {
             return Some(s);
         }
-    }
     
     // Attempt URL-safe decode
     use base64::engine::general_purpose::URL_SAFE;
-    if let Ok(bytes) = URL_SAFE.decode(input) {
-        if let Ok(s) = String::from_utf8(bytes) {
+    if let Ok(bytes) = URL_SAFE.decode(input)
+        && let Ok(s) = String::from_utf8(bytes) {
             return Some(s);
         }
-    }
     
     let mut padded_url = input.to_string();
-    while padded_url.len() % 4 != 0 {
+    while !padded_url.len().is_multiple_of(4) {
         padded_url.push('=');
     }
-    if let Ok(bytes) = URL_SAFE.decode(&padded_url) {
-        if let Ok(s) = String::from_utf8(bytes) {
+    if let Ok(bytes) = URL_SAFE.decode(&padded_url)
+        && let Ok(s) = String::from_utf8(bytes) {
             return Some(s);
         }
-    }
     
     None
 }
@@ -207,8 +201,8 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
             map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String("vmess".to_string()));
             
             let body_b64 = link.trim_start_matches("vmess://").split('?').next().unwrap().split('#').next().unwrap();
-            if let Some(decoded_json) = decode_base64_padded(body_b64) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&decoded_json) {
+            if let Some(decoded_json) = decode_base64_padded(body_b64)
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&decoded_json) {
                     let name = v.get("ps").and_then(|x| x.as_str()).unwrap_or("vmess-node").to_string();
                     let server = v.get("add").and_then(|x| x.as_str()).unwrap_or("127.0.0.1").to_string();
                     let port = v.get("port").and_then(|x| x.as_u64().or_else(|| x.as_str().and_then(|s| s.parse::<u64>().ok()))).unwrap_or(443);
@@ -234,7 +228,6 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                         }
                     }
                 }
-            }
         }
         "vless" => {
             map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String("vless".to_string()));
@@ -1281,13 +1274,12 @@ pub fn rewrite_remote_rule_set_url(url: &str) -> String {
     for _ in 0..3 {
         let mut stripped = false;
         for prefix in PREFIXES {
-            if let Some(rest) = current.strip_prefix(prefix) {
-                if rest.starts_with("http://") || rest.starts_with("https://") {
+            if let Some(rest) = current.strip_prefix(prefix)
+                && (rest.starts_with("http://") || rest.starts_with("https://")) {
                     current = rest.to_string();
                     stripped = true;
                     break;
                 }
-            }
         }
         if !stripped {
             break;
@@ -1444,8 +1436,8 @@ pub fn merge_native_json_profile(
     
     if let Some(arr) = inbounds {
         for val in arr.iter_mut() {
-            if let Some(obj) = val.as_object_mut() {
-                if let Some(t) = obj.get("type").and_then(|t| t.as_str()) {
+            if let Some(obj) = val.as_object_mut()
+                && let Some(t) = obj.get("type").and_then(|t| t.as_str()) {
                     if t == "mixed" {
                         obj.insert("listen_port".to_string(), json!(gui_config.mixed_port));
                         mixed_found = true;
@@ -1457,7 +1449,6 @@ pub fn merge_native_json_profile(
                         tun_found = true;
                     }
                 }
-            }
         }
         
         // Add if not found

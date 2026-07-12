@@ -140,25 +140,25 @@ pub fn render<'a>(
             );
         };
         
-        let groups_cloned = groups.clone();
-        let selected_group_cloned = group_name.to_string();
-        let group_info_cloned = group_info.clone();
-        let nodes_cloned = nodes.to_vec();
-        let proxy_groups_cloned = proxy_groups.clone();
-        let search_query_cloned = search_query.to_string();
-        let theme_cloned = theme.clone();
+        let groups_moved = groups;
+        let selected_group_moved = group_name;
+        let group_info_moved = group_info;
+        let nodes_moved = nodes;
+        let proxy_groups_moved = proxy_groups;
+        let search_query_moved = search_query;
+        let theme_moved = theme;
         
         let main_content = responsive(move |size| {
-            let theme = &theme_cloned;
+            let theme = theme_moved;
             let text_primary = theme::text_primary(theme);
             let _text_muted = theme::text_muted(theme);
             let is_compact = size.width < PAGE_COMPACT_W;
             
-            let header_actions = make_header_actions(&search_query_cloned, is_compact);
+            let header_actions = make_header_actions(search_query_moved, is_compact);
             let group_selector = if is_compact {
                 let mut groups_row = Row::new().spacing(8);
-                for g in &groups_cloned {
-                    let is_active = g.name == selected_group_cloned;
+                for g in &groups_moved {
+                    let is_active = g.name == selected_group_moved;
                     let active_node = g.now.as_deref().unwrap_or("-");
                     
                     let g_btn = button(
@@ -192,8 +192,8 @@ pub fn render<'a>(
                 .width(Length::Fill)
             } else {
                 let mut groups_col = Column::new().spacing(10).padding(iced::Padding { top: 0.0, right: 10.0, bottom: 0.0, left: 0.0 });
-                for g in &groups_cloned {
-                    let is_active = g.name == selected_group_cloned;
+                for g in &groups_moved {
+                    let is_active = g.name == selected_group_moved;
                     let active_node = g.now.as_deref().unwrap_or("-");
                     
                     let g_btn = button(
@@ -240,12 +240,12 @@ pub fn render<'a>(
                 4
             };
             
-            let right_pane_content: Element<'a, Message> = if let Some(ref sub_nodes) = group_info_cloned.all {
-                let is_selector = group_info_cloned.proxy_type.to_lowercase() == "selector";
-                let mut filtered_sub_nodes: Vec<&String> = if search_query_cloned.trim().is_empty() {
+            let right_pane_content: Element<'a, Message> = if let Some(ref sub_nodes) = group_info_moved.all {
+                let is_selector = group_info_moved.proxy_type.to_lowercase() == "selector";
+                let mut filtered_sub_nodes: Vec<&String> = if search_query_moved.trim().is_empty() {
                     sub_nodes.iter().collect()
                 } else {
-                    let q = search_query_cloned.to_lowercase();
+                    let q = search_query_moved.to_lowercase();
                     sub_nodes.iter()
                         .filter(|n| n.to_lowercase().contains(&q))
                         .collect()
@@ -255,7 +255,7 @@ pub fn render<'a>(
                     crate::state::ProxySort::Latency => {
                         filtered_sub_nodes.sort_by(|a, b| {
                             let lat = |name: &str| -> Option<u64> {
-                                if let Some(n_info) = proxy_groups_cloned.get(name) {
+                                if let Some(n_info) = proxy_groups_moved.get(name) {
                                     if let Some(ref hist) = n_info.history {
                                         if let Some(last) = hist.last() {
                                             if let Some(d) = last.get("delay").and_then(|d| d.as_u64()) {
@@ -266,7 +266,7 @@ pub fn render<'a>(
                                         }
                                     }
                                 }
-                                nodes_cloned.iter().find(|n| n.name == name).and_then(|n| {
+                                nodes_moved.iter().find(|n| n.name == name).and_then(|n| {
                                     n.latency.filter(|&ms| ms < 9999)
                                 })
                             };
@@ -308,12 +308,12 @@ pub fn render<'a>(
 
                     let mut card_elements: Vec<Element<'a, Message>> = Vec::new();
                     for &node_name in display_nodes {
-                        let active = Some(node_name.as_str()) == group_info_cloned.now.as_deref();
+                        let active = Some(node_name.as_str()) == group_info_moved.now.as_deref();
                         
                         let mut latency = None;
                         let mut node_type = "unknown".to_string();
                         
-                        if let Some(n_info) = proxy_groups_cloned.get(node_name) {
+                        if let Some(n_info) = proxy_groups_moved.get(node_name) {
                             node_type = n_info.proxy_type.clone();
                             if let Some(ref hist) = n_info.history {
                                 if let Some(last) = hist.last() {
@@ -322,12 +322,12 @@ pub fn render<'a>(
                                     }
                                 }
                             }
-                        } else if let Some(n) = nodes_cloned.iter().find(|n| n.name == *node_name) {
+                        } else if let Some(n) = nodes_moved.iter().find(|n| n.name == *node_name) {
                             node_type = n.node_type.clone();
                         }
                         
                         if latency.is_none() {
-                            if let Some(n) = nodes_cloned.iter().find(|n| n.name == *node_name) {
+                            if let Some(n) = nodes_moved.iter().find(|n| n.name == *node_name) {
                                 latency = n.latency;
                             }
                         }
