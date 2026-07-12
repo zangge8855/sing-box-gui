@@ -2581,6 +2581,20 @@ struct ProfileContentMeta {
     expire_at: Option<i64>,
 }
 
+const MAX_PROFILE_BYTES: usize = 16 * 1024 * 1024;
+
+fn decode_profile_bytes(bytes: &[u8]) -> Result<String, String> {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return Ok(text.to_string());
+    }
+    let (decoded, _, had_errors) = encoding_rs::GBK.decode(bytes);
+    if !had_errors {
+        return Ok(decoded.into_owned());
+    }
+    Err("Profile is neither valid UTF-8 nor GBK-compatible text".to_string())
+}
+
 async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta), String> {
     let mut meta = ProfileContentMeta {
         display_name: None,
@@ -2591,8 +2605,12 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
     };
 
     if std::path::Path::new(url).exists() {
-        let content = tokio::fs::read_to_string(url).await
+        let bytes = tokio::fs::read(url).await
             .map_err(|e| format!("Failed to read local file: {}", e))?;
+        if bytes.len() > MAX_PROFILE_BYTES {
+            return Err("Profile is larger than the 16 MiB safety limit".to_string());
+        }
+        let content = decode_profile_bytes(&bytes)?;
         return Ok((content, meta));
     }
 
@@ -2611,8 +2629,10 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
         return Err(format!("Download failed with status: {}", res.status()));
     }
 
-    const MAX_PROFILE_BYTES: u64 = 16 * 1024 * 1024;
-    if res.content_length().is_some_and(|n| n > MAX_PROFILE_BYTES) {
+    if res
+        .content_length()
+        .is_some_and(|n| n > MAX_PROFILE_BYTES as u64)
+    {
         return Err("Subscription is larger than the 16 MiB safety limit".to_string());
     }
 
@@ -2636,12 +2656,12 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("Failed to read content: {e}"))?;
-        if bytes.len().saturating_add(chunk.len()) > MAX_PROFILE_BYTES as usize {
+        if bytes.len().saturating_add(chunk.len()) > MAX_PROFILE_BYTES {
             return Err("Subscription is larger than the 16 MiB safety limit".to_string());
         }
         bytes.extend_from_slice(&chunk);
     }
-    let content = String::from_utf8_lossy(&bytes).into_owned();
+    let content = decode_profile_bytes(&bytes)?;
     Ok((content, meta))
 }
 
@@ -2743,6 +2763,23 @@ mod tests {
         let due = collect_due_subscription_ids(&cfg, 6);
         assert!(due.contains(&"remote-stale".to_string()));
         assert!(!due.iter().any(|id| id == "local-file"));
+    }
+
+    #[test]
+    fn decode_profile_bytes_strips_utf8_bom_and_preserves_cjk() {
+        let bytes = b"\xEF\xBB\xBFproxies:\n  - name: \xE8\x8A\x82\xE7\x82\xB9\n";
+        let decoded = decode_profile_bytes(bytes).unwrap();
+        assert!(decoded.starts_with("proxies:"));
+        assert!(decoded.contains("节点"));
+        assert!(!decoded.starts_with('\u{feff}'));
+    }
+
+    #[test]
+    fn decode_profile_bytes_supports_gbk_subscription_names() {
+        let (encoded, _, had_errors) = encoding_rs::GBK.encode("proxies:\n  - name: 香港节点\n");
+        assert!(!had_errors);
+        let decoded = decode_profile_bytes(&encoded).unwrap();
+        assert!(decoded.contains("香港节点"));
     }
 
     #[test]

@@ -663,9 +663,24 @@ fn is_supported_clash_proxy_type(node_type: &str) -> bool {
     )
 }
 
-pub fn normalize_profile_content(content: &str) -> String {
+fn clash_proxy_has_required_credentials(map: &serde_yaml::Mapping, node_type: &str) -> bool {
+    let non_empty = |keys: &[&str]| {
+        yaml_string_any(map, keys).is_some_and(|value| !value.trim().is_empty())
+    };
+    match node_type {
+        "ss" => non_empty(&["cipher"]) && non_empty(&["password"]),
+        "vmess" | "vless" => non_empty(&["uuid"]),
+        "trojan" | "hysteria2" | "anytls" => non_empty(&["password"]),
+        "hysteria" => non_empty(&["auth-str", "auth_str", "password"]),
+        "tuic" => non_empty(&["uuid"]) && non_empty(&["password"]),
+        "socks" | "socks5" | "http" => true,
+        _ => false,
+    }
+}
+
+fn normalize_profile_content_inner(content: &str, allow_base64_decode: bool) -> String {
     let content = content.trim();
-    if content.starts_with('{') || content.starts_with('[') {
+    if content.starts_with('{') {
         return content.to_string();
     }
     
@@ -691,8 +706,32 @@ pub fn normalize_profile_content(content: &str) -> String {
             return yaml_str;
         }
     }
+
+    // Many subscription providers return one Base64-encoded blob containing
+    // newline-separated sharing links (or, less commonly, encoded YAML/JSON).
+    // Decode at most once to avoid recursive ambiguity on arbitrary text.
+    if allow_base64_decode
+        && let Some(decoded) = decode_base64_padded(content)
+    {
+        let decoded = decoded.trim_start_matches('\u{feff}').trim();
+        let looks_like_profile = decoded.starts_with('{')
+            || decoded.contains("proxies:")
+            || decoded.lines().any(|line| {
+                matches!(
+                    line.trim().split_once("://").map(|(scheme, _)| scheme),
+                    Some("ss" | "vmess" | "vless" | "trojan" | "hysteria" | "hysteria2" | "hy2" | "tuic" | "anytls")
+                )
+            });
+        if looks_like_profile {
+            return normalize_profile_content_inner(decoded, false);
+        }
+    }
     
     content.to_string()
+}
+
+pub fn normalize_profile_content(content: &str) -> String {
+    normalize_profile_content_inner(content, true)
 }
 
 pub fn get_profile_path(profile_id: &str) -> PathBuf {
@@ -716,6 +755,7 @@ pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
         .ok_or_else(|| "No 'proxies' key found in config file".to_string())?;
         
     let mut nodes = Vec::new();
+    let mut used_names = BTreeSet::new();
     for item in proxies {
         if let Some(map) = item.as_mapping() {
             let name = map.get(&key_name)
@@ -729,6 +769,9 @@ pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
                 .to_ascii_lowercase();
 
             if !is_supported_clash_proxy_type(&node_type) {
+                continue;
+            }
+            if !clash_proxy_has_required_credentials(map, &node_type) {
                 continue;
             }
                 
@@ -745,8 +788,20 @@ pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
             }
             let port = port_u64 as u16;
                 
+            let base_name = if name.trim().is_empty() {
+                "Unnamed".to_string()
+            } else {
+                name
+            };
+            let mut unique_name = base_name.clone();
+            let mut suffix = 2usize;
+            while !used_names.insert(unique_name.clone()) {
+                unique_name = format!("{base_name} ({suffix})");
+                suffix += 1;
+            }
+
             nodes.push(ProxyNode {
-                name,
+                name: unique_name,
                 node_type,
                 server,
                 port,
@@ -812,8 +867,19 @@ pub fn parse_native_json_nodes(json_content: &str) -> Result<Vec<ProxyNode>, Str
 pub fn validate_profile_content(content: &str) -> Result<(), String> {
     let content = content.trim();
     if content.starts_with('{') || content.starts_with('[') {
-        let _: serde_json::Value = serde_json::from_str(content)
+        let value: serde_json::Value = serde_json::from_str(content)
             .map_err(|e| format!("Invalid JSON structure: {}", e))?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| "Native sing-box JSON must be a configuration object".to_string())?;
+        let has_outbounds = object.get("outbounds").is_some_and(|value| value.is_array());
+        let has_endpoints = object.get("endpoints").is_some_and(|value| value.is_array());
+        if !has_outbounds && !has_endpoints {
+            return Err(
+                "Native sing-box JSON must contain an 'outbounds' or 'endpoints' array"
+                    .to_string(),
+            );
+        }
         Ok(())
     } else {
         let normalized = normalize_profile_content(content);
@@ -1081,6 +1147,7 @@ pub fn convert_clash_to_singbox(
         
     let mut outbounds = Vec::new();
     let mut node_tags = Vec::new();
+    let mut used_tags = BTreeSet::new();
     let mut unsupported_types = BTreeSet::new();
     
     for item in proxies_arr {
@@ -1119,8 +1186,6 @@ pub fn convert_clash_to_singbox(
             continue;
         }
 
-        outbound.insert("tag".to_string(), json!(name));
-            
         let skip_cert_verify = map.get(&key_skip_cert_verify)
             .and_then(|v| v.as_bool().or_else(|| v.as_str().map(parse_query_bool)))
             .unwrap_or(false);
@@ -1564,8 +1629,20 @@ pub fn convert_clash_to_singbox(
         if gui_config.tcp_multipath {
             outbound.insert("tcp_multipath".to_string(), json!(true));
         }
-        
-        node_tags.push(name);
+
+        let base_tag = if name.trim().is_empty() {
+            "Unnamed".to_string()
+        } else {
+            name
+        };
+        let mut tag = base_tag.clone();
+        let mut suffix = 2usize;
+        while !used_tags.insert(tag.clone()) {
+            tag = format!("{base_tag} ({suffix})");
+            suffix += 1;
+        }
+        outbound.insert("tag".to_string(), json!(tag));
+        node_tags.push(tag);
         outbounds.push(serde_json::Value::Object(outbound));
     }
 
@@ -2669,6 +2746,51 @@ proxies:
             .unwrap()
             .iter()
             .any(|outbound| outbound["type"] == "vless"));
+    }
+
+    #[test]
+    fn whole_subscription_base64_bundle_is_decoded() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let links = concat!(
+            "vless://00000000-0000-0000-0000-000000000000@one.example.com:443?security=tls#One\n",
+            "trojan://secret@two.example.com:443?sni=two.example.com#Two\n"
+        );
+        let encoded = STANDARD.encode(links);
+        let normalized = normalize_profile_content(&encoded);
+        let nodes = parse_clash_yaml_nodes(&normalized).unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].name, "One");
+        assert_eq!(nodes[1].name, "Two");
+    }
+
+    #[test]
+    fn duplicate_clash_names_receive_stable_unique_tags() {
+        let yaml = r#"
+proxies:
+  - { name: duplicate, type: ss, server: one.example.com, port: 8388, cipher: aes-128-gcm, password: one }
+  - { name: duplicate, type: ss, server: two.example.com, port: 8388, cipher: aes-128-gcm, password: two }
+"#;
+        let nodes = parse_clash_yaml_nodes(yaml).unwrap();
+        assert_eq!(nodes[0].name, "duplicate");
+        assert_eq!(nodes[1].name, "duplicate (2)");
+
+        let config = convert_clash_to_singbox(yaml, &GuiConfig::default()).unwrap();
+        let tags: Vec<&str> = config["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|outbound| outbound["type"] == "shadowsocks")
+            .filter_map(|outbound| outbound["tag"].as_str())
+            .collect();
+        assert_eq!(tags, ["duplicate", "duplicate (2)"]);
+    }
+
+    #[test]
+    fn native_json_requires_config_object_and_outbounds_or_endpoints() {
+        assert!(validate_profile_content("[]").is_err());
+        assert!(validate_profile_content(r#"{"log":{"level":"info"}}"#).is_err());
+        assert!(validate_profile_content(r#"{"endpoints":[]}"#).is_ok());
     }
 
     #[test]
