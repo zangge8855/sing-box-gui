@@ -53,6 +53,12 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "invalid_ip_rule",
     "duplicate_rule",
     "invalid_dns_server",
+    "port_empty_error",
+    "port_invalid_error",
+    "port_reserved_error",
+    "port_conflict_error",
+    "settings_saved_toast",
+    "profile_selected_toast",
     "sort_host",
     "sort_process",
     "sort_network",
@@ -165,6 +171,12 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "invalid_ip_rule" => "Enter a valid IPv4/IPv6 address or CIDR range.",
             "duplicate_rule" => "This rule already exists.",
             "invalid_dns_server" => "Enter a valid DNS server address, hostname, or DNS URL.",
+            "port_empty_error" => "Port numbers cannot be empty.",
+            "port_invalid_error" => "Ports must be valid numbers between 1 and 65535.",
+            "port_reserved_error" => "Ports below 1024 are reserved; choose higher ports.",
+            "port_conflict_error" => "Mixed proxy and Clash API ports must be different.",
+            "settings_saved_toast" => "Settings saved and applied.",
+            "profile_selected_toast" => "Active profile updated.",
             
             // Profiles
             "profile_manager" => "Profile Manager",
@@ -425,6 +437,12 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "invalid_ip_rule" => "请输入有效的 IPv4/IPv6 地址或 CIDR 网段。",
             "duplicate_rule" => "该规则已经存在。",
             "invalid_dns_server" => "请输入有效的 DNS 服务器 IP、主机名或 DNS URL。",
+            "port_empty_error" => "端口号不能为空。",
+            "port_invalid_error" => "端口必须是 1 到 65535 之间的有效数字。",
+            "port_reserved_error" => "1024 以下为系统保留端口，请选择更高的端口。",
+            "port_conflict_error" => "混合代理端口和 Clash API 端口不能相同。",
+            "settings_saved_toast" => "设置已保存并应用。",
+            "profile_selected_toast" => "已切换活动订阅。",
             
             // Profiles
             "profile_manager" => "订阅列表",

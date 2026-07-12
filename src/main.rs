@@ -1235,11 +1235,7 @@ impl App {
                 self.selected_group.clear();
                 self.config_dirty = true;
                 self.log_lines.push_back("[GUI] Active profile updated.".to_string());
-                self.toast_success(if self.gui_config.language == state::Language::Zh {
-                    "已切换活动订阅"
-                } else {
-                    "Active profile updated"
-                });
+                self.toast_success(self.tr("profile_selected_toast"));
                 Task::batch(vec![self.load_active_nodes_task(), self.restart_core()])
             }
             Message::ActiveNodesLoaded { profile_id, result } => {
@@ -1841,11 +1837,7 @@ impl App {
             }
             Message::SaveSettings => {
                 if self.mixed_port_input_str.trim().is_empty() || self.api_port_input_str.trim().is_empty() {
-                    let err = if self.gui_config.language == state::Language::Zh {
-                        "端口号不能为空！".to_string()
-                    } else {
-                        "Port numbers cannot be empty!".to_string()
-                    };
+                    let err = self.tr("port_empty_error").to_string();
                     self.log_lines.push_back(format!("[GUI ERROR] {}", err));
                     self.core_install_msg = Some(err);
                     return Task::none();
@@ -1855,11 +1847,7 @@ impl App {
                 let api_parsed = self.api_port_input_str.trim().parse::<u16>();
                 
                 if mixed_parsed.is_err() || api_parsed.is_err() {
-                    let err = if self.gui_config.language == state::Language::Zh {
-                        "端口必须是 1 到 65535 之间的有效数字！".to_string()
-                    } else {
-                        "Ports must be valid numbers between 1 and 65535!".to_string()
-                    };
+                    let err = self.tr("port_invalid_error").to_string();
                     self.log_lines.push_back(format!("[GUI ERROR] {}", err));
                     self.core_install_msg = Some(err);
                     return Task::none();
@@ -1869,22 +1857,14 @@ impl App {
                 // the latter would collide on 127.0.0.1:port and FATAL the core.
                 let mixed_p = mixed_parsed.as_ref().unwrap();
                 let api_p = api_parsed.as_ref().unwrap();
-                let reserved_msg = if self.gui_config.language == state::Language::Zh {
-                    "端口不能小于 1024 (系统保留端口)！".to_string()
-                } else {
-                    "Ports below 1024 are reserved, pick a higher number.".to_string()
-                };
+                let reserved_msg = self.tr("port_reserved_error").to_string();
                 if *mixed_p < 1024 || *api_p < 1024 {
                     self.log_lines.push_back(format!("[GUI ERROR] {}", reserved_msg));
                     self.core_install_msg = Some(reserved_msg);
                     return Task::none();
                 }
                 if mixed_p == api_p {
-                    let err = if self.gui_config.language == state::Language::Zh {
-                        "混合代理端口和 Clash API 端口不能相同，否则内核启动会 FATAL！".to_string()
-                    } else {
-                        "Mixed proxy port and Clash API port must differ, otherwise the core will FATAL.".to_string()
-                    };
+                    let err = self.tr("port_conflict_error").to_string();
                     self.log_lines.push_back(format!("[GUI ERROR] {}", err));
                     self.core_install_msg = Some(err);
                     return Task::none();
@@ -1916,11 +1896,7 @@ impl App {
                 self.core_installed = core::is_core_installed(&self.gui_config);
                 self.config_dirty = true;
                 self.log_lines.push_back("[GUI] Settings saved and applied successfully.".to_string());
-                self.toast_success(if self.gui_config.language == state::Language::Zh {
-                    "设置已保存并应用"
-                } else {
-                    "Settings saved and applied"
-                });
+                self.toast_success(self.tr("settings_saved_toast"));
                 self.restart_core()
             }
             Message::CheckUpdate => {
