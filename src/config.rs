@@ -351,7 +351,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     return None;
                 }
             if map
-                .get(&serde_yaml::Value::String("uuid".to_string()))
+                .get(serde_yaml::Value::String("uuid".to_string()))
                 .and_then(|v| v.as_str())
                 .is_none_or(str::is_empty)
             {
@@ -838,7 +838,7 @@ fn yaml_value_any<'a>(
     keys: &[&str],
 ) -> Option<&'a serde_yaml::Value> {
     keys.iter().find_map(|key| {
-        map.get(&serde_yaml::Value::String((*key).to_string()))
+        map.get(serde_yaml::Value::String((*key).to_string()))
     })
 }
 
@@ -1353,17 +1353,17 @@ pub fn convert_clash_to_singbox(
                 }
                 if let Some(up_mbps) = yaml_u64_any(map, &["up_mbps", "up-mbps"]) {
                     outbound.insert("up_mbps".to_string(), json!(up_mbps));
-                } else if let Some(up) = yaml_value_any(map, &["up", "up-speed"]) {
-                    if let Ok(value) = serde_json::to_value(up) {
-                        outbound.insert("up".to_string(), value);
-                    }
+                } else if let Some(up) = yaml_value_any(map, &["up", "up-speed"])
+                    && let Ok(value) = serde_json::to_value(up)
+                {
+                    outbound.insert("up".to_string(), value);
                 }
                 if let Some(down_mbps) = yaml_u64_any(map, &["down_mbps", "down-mbps"]) {
                     outbound.insert("down_mbps".to_string(), json!(down_mbps));
-                } else if let Some(down) = yaml_value_any(map, &["down", "down-speed"]) {
-                    if let Ok(value) = serde_json::to_value(down) {
-                        outbound.insert("down".to_string(), value);
-                    }
+                } else if let Some(down) = yaml_value_any(map, &["down", "down-speed"])
+                    && let Ok(value) = serde_json::to_value(down)
+                {
+                    outbound.insert("down".to_string(), value);
                 }
                 if let Some(ports) = yaml_string_any(map, &["ports"]).filter(|value| !value.is_empty()) {
                     outbound.insert("server_ports".to_string(), json!(ports));
