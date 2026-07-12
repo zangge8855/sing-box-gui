@@ -771,10 +771,53 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
             insert_yaml_string(&mut map, "user", &user);
             insert_yaml_string(&mut map, "password", &password);
         }
+        "shadowtls" | "shadow-tls" => {
+            insert_yaml_string(&mut map, "type", "shadowtls");
+            let password = urlencoding::decode(url.username())
+                .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
+                .into_owned();
+            let mut version = 3u64;
+            for (key, value) in url.query_pairs() {
+                match key.as_ref() {
+                    "version" => version = value.parse::<u64>().unwrap_or(3),
+                    "sni" | "peer" => insert_yaml_string(&mut map, "sni", value.as_ref()),
+                    "alpn" => insert_yaml_string(&mut map, "alpn", value.as_ref()),
+                    "fp" | "fingerprint" => {
+                        insert_yaml_string(&mut map, "client-fingerprint", value.as_ref())
+                    }
+                    "insecure" | "allowInsecure" | "skipCertVerify"
+                        if parse_query_bool(value.as_ref()) =>
+                    {
+                        map.insert(
+                            serde_yaml::Value::String("skip-cert-verify".to_string()),
+                            serde_yaml::Value::Bool(true),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            if version >= 3 && password.is_empty() {
+                return None;
+            }
+            map.insert(
+                serde_yaml::Value::String("version".to_string()),
+                serde_yaml::Value::Number(version.into()),
+            );
+            insert_yaml_string(&mut map, "password", &password);
+        }
         _ => return None,
     }
     
     Some(map)
+}
+
+fn canonical_clash_proxy_type(node_type: &str) -> String {
+    match node_type.trim().to_ascii_lowercase().as_str() {
+        "shadowsocks" => "ss".to_string(),
+        "hy2" => "hysteria2".to_string(),
+        "shadow-tls" | "shadow_tls" => "shadowtls".to_string(),
+        value => value.to_string(),
+    }
 }
 
 fn is_supported_clash_proxy_type(node_type: &str) -> bool {
@@ -794,6 +837,7 @@ fn is_supported_clash_proxy_type(node_type: &str) -> bool {
             | "anytls"
             | "naive"
             | "ssh"
+            | "shadowtls"
     )
 }
 
@@ -812,6 +856,10 @@ fn clash_proxy_has_required_credentials(map: &serde_yaml::Mapping, node_type: &s
             non_empty(&["user", "username"])
                 && (non_empty(&["password"])
                     || non_empty(&["private-key", "private_key", "private-key-path", "private_key_path"]))
+        }
+        "shadowtls" => {
+            yaml_u64_any(map, &["version"]).unwrap_or(3) < 3
+                || non_empty(&["password"])
         }
         "socks" | "socks5" | "http" => true,
         _ => false,
@@ -859,7 +907,7 @@ fn normalize_profile_content_inner(content: &str, allow_base64_decode: bool) -> 
             || decoded.lines().any(|line| {
                 matches!(
                     line.trim().split_once("://").map(|(scheme, _)| scheme),
-                    Some("ss" | "ssr" | "vmess" | "vless" | "trojan" | "hysteria" | "hysteria2" | "hy2" | "tuic" | "anytls" | "naive+https" | "naive" | "ssh")
+                    Some("ss" | "ssr" | "vmess" | "vless" | "trojan" | "hysteria" | "hysteria2" | "hy2" | "tuic" | "anytls" | "naive+https" | "naive" | "ssh" | "shadowtls" | "shadow-tls")
                 )
             });
         if looks_like_profile {
@@ -905,8 +953,8 @@ pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
                 
             let node_type = map.get(&key_type)
                 .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_ascii_lowercase();
+                .map(canonical_clash_proxy_type)
+                .unwrap_or_else(|| "unknown".to_string());
 
             if !is_supported_clash_proxy_type(&node_type) {
                 continue;
@@ -1368,8 +1416,8 @@ pub fn convert_clash_to_singbox(
             
         let node_type = map.get(&key_type)
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_ascii_lowercase();
+            .map(canonical_clash_proxy_type)
+            .unwrap_or_else(|| "unknown".to_string());
 
         if !is_supported_clash_proxy_type(&node_type) {
             unsupported_types.insert(node_type.clone());
@@ -1940,6 +1988,36 @@ pub fn convert_clash_to_singbox(
                 {
                     continue;
                 }
+            }
+            "shadowtls" => {
+                outbound.insert("type".to_string(), json!("shadowtls"));
+                outbound.insert("server".to_string(), json!(server));
+                outbound.insert("server_port".to_string(), json!(port));
+                let version = yaml_u64_any(map, &["version"]).unwrap_or(3);
+                if !(1..=3).contains(&version) {
+                    continue;
+                }
+                outbound.insert("version".to_string(), json!(version));
+                let password = map
+                    .get(&key_password)
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                if version >= 3 && password.is_empty() {
+                    continue;
+                }
+                if !password.is_empty() {
+                    outbound.insert("password".to_string(), json!(password));
+                }
+                let sni = map
+                    .get(&key_sni)
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(&server);
+                let mut tls_opts = serde_json::Map::new();
+                tls_opts.insert("enabled".to_string(), json!(true));
+                tls_opts.insert("server_name".to_string(), json!(sni));
+                tls_opts.insert("insecure".to_string(), json!(skip_cert_verify));
+                enrich_tls_options(&mut tls_opts, map);
+                outbound.insert("tls".to_string(), serde_json::Value::Object(tls_opts));
             }
             _ => {
                 continue;
@@ -3163,6 +3241,40 @@ proxies:
         assert_eq!(ssh["user"], "alice");
         assert_eq!(ssh["password"], "password");
         assert_eq!(ssh["server_port"], 22);
+    }
+
+    #[test]
+    fn shadowtls_link_and_clash_aliases_are_supported() {
+        let link = "shadowtls://secret@shadow.example.com:443?version=3&sni=cover.example.com&fp=chrome#ShadowTLS";
+        let config = convert_clash_to_singbox(link, &GuiConfig::default()).unwrap();
+        let shadowtls = config["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|outbound| outbound["type"] == "shadowtls")
+            .unwrap();
+        assert_eq!(shadowtls["password"], "secret");
+        assert_eq!(shadowtls["version"], 3);
+        assert_eq!(shadowtls["tls"]["server_name"], "cover.example.com");
+        assert_eq!(shadowtls["tls"]["utls"]["fingerprint"], "chrome");
+
+        let yaml = r#"
+proxies:
+  - name: ss-alias
+    type: shadowsocks
+    server: ss.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: secret
+  - name: hy2-alias
+    type: hy2
+    server: hy.example.com
+    port: 443
+    password: secret
+"#;
+        let nodes = parse_clash_yaml_nodes(yaml).unwrap();
+        assert_eq!(nodes[0].node_type, "ss");
+        assert_eq!(nodes[1].node_type, "hysteria2");
     }
 
     #[test]
