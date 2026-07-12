@@ -38,6 +38,10 @@ pub enum Message {
         source_url: Option<String>,
     },
     SelectProfile(String),
+    ActiveNodesLoaded {
+        profile_id: String,
+        result: Result<Vec<crate::state::ProxyNode>, String>,
+    },
     RequestDeleteProfile(String),
     ConfirmDeleteProfile,
     CancelDeleteProfile,

@@ -365,9 +365,6 @@ impl App {
         let _ = get_log_tx();
         let _ = get_traffic_tx();
         
-        // Load active profile nodes if profile exists
-        app.reload_active_nodes();
-        
         // Sync system proxy checkbox status with system state
         let sys_proxy = sysproxy::check_system_proxy(app.gui_config.mixed_port).unwrap_or(false);
         app.sys_proxy_enabled = sys_proxy;
@@ -377,6 +374,9 @@ impl App {
         app.update_tray_menu();
         
         let mut tasks = Vec::new();
+        if app.gui_config.active_profile_id.is_some() {
+            tasks.push(app.load_active_nodes_task());
+        }
         if app.gui_config.auto_start_core && app.gui_config.active_profile_id.is_some() && app.core_installed {
             tasks.push(Task::done(Message::ToggleCore));
         }
@@ -393,20 +393,32 @@ impl App {
         (app, Task::batch(tasks))
     }
     
-    fn reload_active_nodes(&mut self) {
-        if let Some(ref active_id) = self.gui_config.active_profile_id {
-            let path = config::get_profile_path(active_id);
-            if path.exists()
-                && let Ok(content) = std::fs::read_to_string(path) {
+    fn load_active_nodes_task(&self) -> Task<Message> {
+        let Some(profile_id) = self.gui_config.active_profile_id.clone() else {
+            return Task::none();
+        };
+        let result_profile_id = profile_id.clone();
+        let path = config::get_profile_path(&profile_id);
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let content = std::fs::read_to_string(&path)
+                        .map_err(|error| format!("Failed to read active profile: {error}"))?;
                     let trimmed = content.trim();
-                    let nodes = if trimmed.starts_with('{') || trimmed.starts_with('[') {
-                        config::parse_native_json_nodes(&content).unwrap_or_default()
+                    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                        config::parse_native_json_nodes(&content)
                     } else {
-                        config::parse_clash_yaml_nodes(&content).unwrap_or_default()
-                    };
-                    self.active_profile_nodes = nodes;
-                }
-        }
+                        config::parse_clash_yaml_nodes(&content)
+                    }
+                })
+                .await
+                .map_err(|error| format!("Profile parse task failed: {error}"))?
+            },
+            move |result| Message::ActiveNodesLoaded {
+                profile_id: result_profile_id.clone(),
+                result,
+            },
+        )
     }
     
     fn sync_input_buffers(&mut self) {
@@ -1139,6 +1151,7 @@ impl App {
                 source_url,
             } => {
                 self.downloading = false;
+                let mut load_nodes = false;
                 if let Some(err) = error {
                     self.profile_error = Some(err.clone());
                     self.log_lines.push_back(format!("[GUI] Download failed: {}", err));
@@ -1201,26 +1214,45 @@ impl App {
                     if self.gui_config.active_profile_id.is_none() && !id.is_empty() {
                         self.gui_config.active_profile_id = Some(id.clone());
                         self.config_dirty = true;
-                        self.reload_active_nodes();
+                        load_nodes = true;
                     }
                     self.log_lines
             .push_back("[GUI] Subscription downloaded successfully.".to_string());
                     self.toast_success(self.tr("toast_sub_ok"));
                 }
-                self.kick_pending_auto_update()
+                let next_update = self.kick_pending_auto_update();
+                if load_nodes {
+                    Task::batch(vec![self.load_active_nodes_task(), next_update])
+                } else {
+                    next_update
+                }
             }
             Message::SelectProfile(id) => {
                 self.confirm_delete_profile_id = None;
                 self.gui_config.active_profile_id = Some(id);
+                self.active_profile_nodes.clear();
                 self.config_dirty = true;
-                self.reload_active_nodes();
                 self.log_lines.push_back("[GUI] Active profile updated.".to_string());
                 self.toast_success(if self.gui_config.language == state::Language::Zh {
                     "已切换活动订阅"
                 } else {
                     "Active profile updated"
                 });
-                self.restart_core()
+                Task::batch(vec![self.load_active_nodes_task(), self.restart_core()])
+            }
+            Message::ActiveNodesLoaded { profile_id, result } => {
+                if self.gui_config.active_profile_id.as_deref() != Some(profile_id.as_str()) {
+                    return Task::none();
+                }
+                match result {
+                    Ok(nodes) => self.active_profile_nodes = nodes,
+                    Err(error) => {
+                        self.active_profile_nodes.clear();
+                        self.log_lines
+                            .push_back(format!("[GUI] Failed to load active nodes: {error}"));
+                    }
+                }
+                Task::none()
             }
             Message::RequestDeleteProfile(id) => {
                 self.confirm_delete_profile_id = Some(id);
