@@ -443,13 +443,9 @@ pub fn render<'a>(
             }
 
             // Calculate columns based on width
-            let cols = if size.width < 650.0 {
-                1
-            } else if size.width < 950.0 {
-                2
-            } else {
-                3
-            };
+            // Profiles are operational records, not promotional cards. A
+            // single aligned list scans faster and avoids a dashboard mosaic.
+            let cols = 1;
 
             let mut grid_rows = Column::new().spacing(theme::GRID_GAP);
             let mut current_row = iced::widget::Row::new().spacing(theme::GRID_GAP);

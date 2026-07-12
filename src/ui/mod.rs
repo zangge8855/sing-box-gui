@@ -181,14 +181,17 @@ pub fn page_header<'a>(
         header_row.into()
     };
 
-    container(content)
+    let divider = container(Space::new())
+        .height(1)
         .width(Length::Fill)
-        .padding(iced::Padding {
-            top: 0.0,
-            right: 0.0,
-            bottom: SP_12,
-            left: 0.0,
-        })
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(ui_theme::border_color(t))),
+            ..Default::default()
+        });
+
+    column![content, divider]
+        .spacing(SP_12)
+        .width(Length::Fill)
         .into()
 }
 
@@ -381,4 +384,3 @@ pub fn status_dot<'a, Message: Clone + 'a>(
     .align_y(Alignment::Center)
     .into()
 }
-

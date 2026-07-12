@@ -2316,9 +2316,9 @@ impl App {
                         .align_y(Alignment::Center)
                     ]
                 )
-                .width(Length::Fixed(240.0))
+                .width(Length::Fixed(224.0))
                 .height(Length::Fill)
-                .padding(24)
+                .padding(20)
                 .style(ui::theme::sidebar_bg)
             };
 

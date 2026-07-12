@@ -156,7 +156,7 @@ pub fn render<'a>(
         let core_status_card = container(core_card_col)
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
-        .style(theme::card_bg);
+        .style(theme::section_plain);
 
         // 2. System Proxy Card
         let sys_proxy_indicator = crate::ui::status_dot(
@@ -204,7 +204,7 @@ pub fn render<'a>(
         )
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
-        .style(theme::card_bg);
+        .style(theme::section_plain);
 
         // 3. Download Speed Card
         let download_card = container(
@@ -233,7 +233,7 @@ pub fn render<'a>(
         )
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
-        .style(theme::card_bg);
+        .style(theme::section_plain);
 
         // 4. Upload Speed Card
         let upload_card = container(
@@ -262,7 +262,7 @@ pub fn render<'a>(
         )
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
-        .style(theme::card_bg);
+        .style(theme::section_plain);
 
         // 5. Routing Mode Card
         let mode_options = vec![
@@ -312,7 +312,7 @@ pub fn render<'a>(
         )
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
-        .style(theme::card_bg);
+        .style(theme::section_plain);
 
         // Layout the control status cards responsively
         let control_row: Element<'_, Message> = if is_compact {
@@ -334,6 +334,9 @@ pub fn render<'a>(
             .width(Length::Fill)
             .into()
         };
+        let control_panel = container(control_row)
+            .width(Length::Fill)
+            .style(theme::card_bg);
 
         // Layout the traffic metric cards responsively
         let traffic_row: Element<'_, Message> = if is_compact {
@@ -353,6 +356,9 @@ pub fn render<'a>(
             .width(Length::Fill)
             .into()
         };
+        let traffic_panel = container(traffic_row)
+            .width(Length::Fill)
+            .style(theme::card_bg);
 
         // Render dynamic SVG chart of speed history
         let max_speed = speed_history.iter()
@@ -556,9 +562,9 @@ pub fn render<'a>(
         };
 
         let mut content_col = column![
-            control_row,
+            control_panel,
             summary_card,
-            traffic_row,
+            traffic_panel,
             chart_card
         ]
         .spacing(crate::ui::SP_20)

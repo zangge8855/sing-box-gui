@@ -27,22 +27,16 @@ pub fn metric_font() -> iced::Font {
     }
 }
 
-/// Font for monospaced / terminal text (logs, JSON code previews).
+/// Font for logs and configuration previews.
 ///
-/// Under Windows, iced's default `Family::Monospace` (Consolas/Courier New) often
-/// fails to render Chinese/Unicode characters correctly, showing tofu blocks (□).
-/// Using `Family::SansSerif` on Windows avoids this while keeping text readable.
+/// Use the platform UI sans family everywhere. Iced's monospace resolution can
+/// select a Latin-only face on any desktop, which makes Chinese profile names
+/// and core logs render as tofu blocks. The system sans family provides the
+/// closest native appearance and the most reliable CJK fallback.
 pub fn mono_font() -> iced::Font {
-    #[cfg(target_os = "windows")]
-    {
-        iced::Font {
-            family: iced::font::Family::SansSerif,
-            ..Default::default()
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        iced::Font::MONOSPACE
+    iced::Font {
+        family: iced::font::Family::SansSerif,
+        ..Default::default()
     }
 }
 
@@ -223,6 +217,15 @@ pub fn card_bg(theme: &iced::Theme) -> container::Style {
             radius: RADIUS_LG.into(),
         },
         shadow: Shadow::default(),
+        text_color: Some(text_primary(theme)),
+        ..Default::default()
+    }
+}
+
+/// Cardless inner section used when a single outer surface already groups the
+/// content. Keeps typography consistent without stacking borders and shadows.
+pub fn section_plain(theme: &iced::Theme) -> container::Style {
+    container::Style {
         text_color: Some(text_primary(theme)),
         ..Default::default()
     }
@@ -911,12 +914,9 @@ mod tests {
     }
 
     #[test]
-    fn mono_font_fallback_on_windows() {
+    fn log_font_uses_native_sans_for_cjk_fallback() {
         let f = mono_font();
-        #[cfg(target_os = "windows")]
         assert!(matches!(f.family, iced::font::Family::SansSerif));
-        #[cfg(not(target_os = "windows"))]
-        assert!(matches!(f.family, iced::font::Family::Monospace));
     }
 
     #[test]
