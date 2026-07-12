@@ -371,6 +371,7 @@ impl App {
         // Sync system proxy checkbox status with system state
         let sys_proxy = sysproxy::check_system_proxy(app.gui_config.mixed_port).unwrap_or(false);
         app.sys_proxy_enabled = sys_proxy;
+        app.gui_config.system_proxy_enabled = sys_proxy;
         
         // Initial tray menu synchronization
         app.update_tray_menu();
@@ -532,7 +533,10 @@ impl App {
         if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
             let _ = cancel_tx.send(());
         }
-        if self.gui_config.disable_proxy_on_core_stop && self.sys_proxy_enabled {
+        if self.gui_config.disable_proxy_on_core_stop
+            && self.sys_proxy_enabled
+            && sysproxy::is_system_proxy_owned()
+        {
             match sysproxy::set_system_proxy(false, self.gui_config.mixed_port) {
                 Ok(_) => {
                     self.sys_proxy_enabled = false;
@@ -860,12 +864,16 @@ impl App {
                 self.core_stopping = false;
                 self.on_core_stopped_cleanup();
                 if self.pending_exit {
-                    let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                    if sysproxy::is_system_proxy_owned() {
+                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                    }
                     return iced::exit();
                 }
                 
                 if let Some(path) = self.pending_update_path.take() {
-                    let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                    if sysproxy::is_system_proxy_owned() {
+                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                    }
                     match apply_update_and_restart(&path) {
                         Ok(()) => {
                             self.log_lines
@@ -1472,7 +1480,10 @@ impl App {
                     && let Some(msg) = core::take_unexpected_core_exit() {
                         self.log_lines.push_back(format!("[GUI] {}", msg));
                         self.toast_error(msg);
-                        if self.gui_config.disable_proxy_on_core_stop && self.sys_proxy_enabled {
+                        if self.gui_config.disable_proxy_on_core_stop
+                            && self.sys_proxy_enabled
+                            && sysproxy::is_system_proxy_owned()
+                        {
                             let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
                             self.sys_proxy_enabled = false;
                             self.gui_config.system_proxy_enabled = false;
@@ -3184,7 +3195,9 @@ fn main() -> iced::Result {
     let config = config::load_gui_config();
     if config.close_core_on_exit {
         core::stop_core();
-        let _ = sysproxy::set_system_proxy(false, config.mixed_port);
+        if sysproxy::is_system_proxy_owned() {
+            let _ = sysproxy::set_system_proxy(false, config.mixed_port);
+        }
     }
     
     res
