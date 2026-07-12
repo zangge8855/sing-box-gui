@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Row, responsive};
-use iced::{Alignment, Element, Length, Color};
+use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::ProxyNode;
 use crate::ui::theme;
@@ -167,21 +167,15 @@ pub fn render<'a>(
                             text(g.name.clone()).size(theme::TYPE_BTN_SM).font(iced::Font {
                                 weight: iced::font::Weight::Bold,
                                 ..Default::default()
-                            }).color(if is_active { Color::WHITE } else { text_primary }),
+                            }).color(if is_active { theme::ACCENT_PURPLE } else { text_primary }),
                             text(crate::ui::util::truncate_chars(active_node, 16))
                                 .size(theme::TYPE_CAPTION)
-                                .color(if is_active { Color::WHITE } else { theme::ACCENT_BLUE })
+                                .color(if is_active { theme::ACCENT_PURPLE } else { theme::text_muted(theme) })
                         ]
                         .spacing(2)
                     )
                     .padding(theme::BTN_PAD_SM)
-                    .style(move |t, s| {
-                        if is_active {
-                            theme::button_primary(t, s)
-                        } else {
-                            theme::button_secondary(t, s)
-                        }
-                    })
+                    .style(theme::button_tab(is_active))
                     .on_press(Message::SelectGroup(g.name.clone()));
                     
                     groups_row = groups_row.push(g_btn);
@@ -202,22 +196,16 @@ pub fn render<'a>(
                             text(g.name.clone()).size(theme::TYPE_SECTION).font(iced::Font {
                                 weight: iced::font::Weight::Bold,
                                 ..Default::default()
-                            }).color(if is_active { Color::WHITE } else { text_primary }),
+                            }).color(if is_active { theme::ACCENT_PURPLE } else { text_primary }),
                             text(crate::ui::util::truncate_chars(active_node, 20))
                                 .size(theme::TYPE_CAPTION)
-                                .color(if is_active { Color::WHITE } else { theme::ACCENT_BLUE })
+                                .color(if is_active { theme::ACCENT_PURPLE } else { theme::text_muted(theme) })
                         ]
                         .spacing(3)
                     )
                     .padding(theme::BTN_PAD_MD)
                     .width(Length::Fill)
-                    .style(move |t, s| {
-                        if is_active {
-                            theme::button_primary(t, s)
-                        } else {
-                            theme::button_secondary(t, s)
-                        }
-                    })
+                    .style(theme::button_tab(is_active))
                     .on_press(Message::SelectGroup(g.name.clone()));
                     
                     groups_col = groups_col.push(g_btn);
