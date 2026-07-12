@@ -49,6 +49,9 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "nodes_unit",
     "protocols_unit",
     "groups_unit",
+    "invalid_domain_rule",
+    "invalid_ip_rule",
+    "duplicate_rule",
     "sort_host",
     "sort_process",
     "sort_network",
@@ -157,6 +160,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "nodes_unit" => "nodes",
             "protocols_unit" => "protocols",
             "groups_unit" => "groups",
+            "invalid_domain_rule" => "Enter a valid domain suffix, for example example.com or *.example.com.",
+            "invalid_ip_rule" => "Enter a valid IPv4/IPv6 address or CIDR range.",
+            "duplicate_rule" => "This rule already exists.",
             
             // Profiles
             "profile_manager" => "Profile Manager",
@@ -413,6 +419,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "nodes_unit" => "个节点",
             "protocols_unit" => "种协议",
             "groups_unit" => "个策略组",
+            "invalid_domain_rule" => "请输入有效的域名后缀，例如 example.com 或 *.example.com。",
+            "invalid_ip_rule" => "请输入有效的 IPv4/IPv6 地址或 CIDR 网段。",
+            "duplicate_rule" => "该规则已经存在。",
             
             // Profiles
             "profile_manager" => "订阅列表",

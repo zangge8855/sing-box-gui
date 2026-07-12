@@ -769,20 +769,33 @@ impl App {
                 Task::none()
             }
             Message::AddRule { field } => {
+                let raw = match field {
+                    state::RuleField::BypassDomains => &self.bypass_domain_input,
+                    state::RuleField::ProxyDomains => &self.proxy_domain_input,
+                    state::RuleField::BypassIps => &self.bypass_ip_input,
+                    state::RuleField::ProxyIps => &self.proxy_ip_input,
+                };
+                let normalized = match normalize_custom_rule(field, raw) {
+                    Ok(value) => value,
+                    Err(key) => {
+                        self.toast_error(self.tr(key));
+                        return Task::none();
+                    }
+                };
                 let (val, list) = match field {
                     state::RuleField::BypassDomains => (&mut self.bypass_domain_input, &mut self.gui_config.custom_bypass_domains),
                     state::RuleField::ProxyDomains => (&mut self.proxy_domain_input, &mut self.gui_config.custom_proxy_domains),
                     state::RuleField::BypassIps => (&mut self.bypass_ip_input, &mut self.gui_config.custom_bypass_ips),
                     state::RuleField::ProxyIps => (&mut self.proxy_ip_input, &mut self.gui_config.custom_proxy_ips),
                 };
-                let trimmed = val.trim().to_string();
-                if !trimmed.is_empty() && !list.contains(&trimmed) {
-                    list.push(trimmed.clone());
+                if !list.iter().any(|item| item.eq_ignore_ascii_case(&normalized)) {
+                    list.push(normalized.clone());
                     val.clear();
                     self.config_dirty = true;
-                    self.log_lines.push_back(format!("[GUI] Added custom rule to {}: {}", field.as_str(), trimmed));
+                    self.log_lines.push_back(format!("[GUI] Added custom rule to {}: {}", field.as_str(), normalized));
                     return self.restart_core();
                 }
+                self.toast_info(self.tr("duplicate_rule"));
                 Task::none()
             }
             Message::RemoveRule { field, index } => {
@@ -2716,6 +2729,56 @@ fn collect_due_subscription_ids(gui_config: &GuiConfig, hours: u32) -> Vec<Strin
     due
 }
 
+fn normalize_custom_rule(
+    field: state::RuleField,
+    value: &str,
+) -> Result<String, &'static str> {
+    let value = value.trim();
+    if field.is_ip() {
+        let (address_text, prefix_text) = value
+            .split_once('/')
+            .map_or((value, None), |(address, prefix)| (address, Some(prefix)));
+        let address: std::net::IpAddr = address_text
+            .parse()
+            .map_err(|_| "invalid_ip_rule")?;
+        let max_prefix: u8 = if address.is_ipv4() { 32 } else { 128 };
+        let prefix = match prefix_text {
+            Some(prefix) => prefix
+                .parse::<u8>()
+                .ok()
+                .filter(|prefix| *prefix <= max_prefix)
+                .ok_or("invalid_ip_rule")?,
+            None => max_prefix,
+        };
+        return Ok(format!("{address}/{prefix}"));
+    }
+
+    let domain = value
+        .trim_start_matches("*.")
+        .trim_start_matches('.')
+        .trim_end_matches('.')
+        .to_lowercase();
+    let valid = !domain.is_empty()
+        && domain.len() <= 253
+        && !domain
+            .chars()
+            .any(|character| character.is_whitespace() || matches!(character, '/' | ':' | '?' | '#'))
+        && domain.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '-' || character == '_')
+        });
+    if valid {
+        Ok(domain)
+    } else {
+        Err("invalid_domain_rule")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2780,6 +2843,30 @@ mod tests {
         assert!(!had_errors);
         let decoded = decode_profile_bytes(&encoded).unwrap();
         assert!(decoded.contains("香港节点"));
+    }
+
+    #[test]
+    fn custom_rule_normalization_handles_domains_and_ip_cidr() {
+        assert_eq!(
+            normalize_custom_rule(state::RuleField::BypassDomains, " *.Example.COM. "),
+            Ok("example.com".to_string())
+        );
+        assert_eq!(
+            normalize_custom_rule(state::RuleField::ProxyIps, "192.0.2.1"),
+            Ok("192.0.2.1/32".to_string())
+        );
+        assert_eq!(
+            normalize_custom_rule(state::RuleField::ProxyIps, "2001:db8::/48"),
+            Ok("2001:db8::/48".to_string())
+        );
+        assert_eq!(
+            normalize_custom_rule(state::RuleField::ProxyIps, "192.0.2.1/64"),
+            Err("invalid_ip_rule")
+        );
+        assert_eq!(
+            normalize_custom_rule(state::RuleField::BypassDomains, "https://example.com"),
+            Err("invalid_domain_rule")
+        );
     }
 
     #[test]
