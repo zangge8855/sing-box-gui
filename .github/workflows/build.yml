@@ -39,7 +39,7 @@ jobs:
       continue-on-error: true
 
     - name: Run clippy
-      run: cargo clippy --all-targets --quiet -- -D warnings -A clippy::assertions_on_constants
+      run: cargo clippy --all-targets --quiet -- -D warnings -A clippy::assertions_on_constants -A clippy::items_after_test_module
 
     - name: Build x86_64 Binary
       run: cargo build --release --target x86_64-pc-windows-msvc

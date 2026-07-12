@@ -1875,8 +1875,10 @@ mod tests {
 
     #[test]
     fn test_default_mode_in_generated_config() {
-        let mut gui_config = GuiConfig::default();
-        gui_config.routing_mode = RoutingMode::Global;
+        let gui_config = GuiConfig {
+            routing_mode: RoutingMode::Global,
+            ..GuiConfig::default()
+        };
         let clash_yaml = r#"
 proxies:
   - name: "test-node"
@@ -1948,9 +1950,11 @@ proxies:
 
     #[test]
     fn test_custom_domains_dns_injection() {
-        let mut gui_config = GuiConfig::default();
-        gui_config.custom_bypass_domains = vec!["bypass.me".to_string()];
-        gui_config.custom_proxy_domains = vec!["proxy.me".to_string()];
+        let gui_config = GuiConfig {
+            custom_bypass_domains: vec!["bypass.me".to_string()],
+            custom_proxy_domains: vec!["proxy.me".to_string()],
+            ..GuiConfig::default()
+        };
         
         let clash_yaml = r#"
 proxies:

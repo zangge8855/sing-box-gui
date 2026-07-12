@@ -1879,20 +1879,10 @@ impl App {
                     Ok(info) => {
                         let local_version = env!("CARGO_PKG_VERSION");
                         if update::is_remote_version_newer(local_version, info.tag_name.trim()) {
-                            let tag = info.tag_name;
-                            // Prefer in-app download when a platform asset is available.
-                            if let Some(url) = info.download_url {
-                                self.update_status = state::UpdateStatus::Downloading {
-                                    tag: tag.clone(),
-                                };
-                                self.toast_info(self.tr("toast_update_downloading"));
-                                return Task::done(Message::DownloadAppUpdate { tag, url });
-                            }
                             self.update_status = state::UpdateStatus::NewVersion {
-                                tag,
-                                download_url: None,
+                                tag: info.tag_name,
+                                download_url: info.download_url,
                             };
-                            self.toast_info(self.tr("toast_update_no_asset"));
                         } else {
                             // Same or lower remote tag, or both unreadable → up-to-date.
                             self.update_status = state::UpdateStatus::UpToDate;
@@ -2997,10 +2987,23 @@ async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, S
         return Err(format!("Download failed with status: {}", res.status()));
     }
 
-    let bytes = res
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read download body: {}", e))?;
+    const MAX_UPDATE_BYTES: usize = 128 * 1024 * 1024;
+    if res
+        .content_length()
+        .is_some_and(|size| size > MAX_UPDATE_BYTES as u64)
+    {
+        return Err("Update package exceeds the 128 MiB safety limit".to_string());
+    }
+
+    let mut stream = res.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Failed to read download body: {e}"))?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_UPDATE_BYTES {
+            return Err("Update package exceeds the 128 MiB safety limit".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
 
     if bytes.len() < 1024 {
         return Err(format!(
