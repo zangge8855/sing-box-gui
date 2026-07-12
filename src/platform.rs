@@ -42,17 +42,33 @@ pub fn is_running_elevated() -> bool {
             ok != 0 && elevated != 0
         }
     }
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
-        // On unix a process is "elevated" enough for TUN if its effective uid
-        // is 0 (CAP_NET_ADMIN) or it has the NET_ADMIN capability via file caps.
-        // We approximate with euid==0 — covers the typical sudo install case.
+        if unsafe { libc::geteuid() == 0 } {
+            return true;
+        }
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .is_some_and(|status| linux_status_has_cap_net_admin(&status))
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
         unsafe { libc::geteuid() == 0 }
     }
     #[cfg(not(any(target_os = "windows", unix)))]
     {
         true // assume elevated where we cannot check
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_status_has_cap_net_admin(status: &str) -> bool {
+    const CAP_NET_ADMIN_BIT: u32 = 12;
+    status.lines().find_map(|line| {
+        let value = line.strip_prefix("CapEff:")?.trim();
+        let capabilities = u64::from_str_radix(value, 16).ok()?;
+        Some(capabilities & (1u64 << CAP_NET_ADMIN_BIT) != 0)
+    }).unwrap_or(false)
 }
 
 /// Install or remove per-user launch integration on the current platform.
@@ -140,4 +156,18 @@ fn xml_escape(value: &str) -> String {
 #[cfg(target_os = "linux")]
 fn desktop_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn detects_linux_net_admin_capability() {
+        assert!(super::linux_status_has_cap_net_admin(
+            "Name:\ttest\nCapEff:\t0000000000001000\n"
+        ));
+        assert!(!super::linux_status_has_cap_net_admin(
+            "Name:\ttest\nCapEff:\t0000000000000000\n"
+        ));
+    }
 }
