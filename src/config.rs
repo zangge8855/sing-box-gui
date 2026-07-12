@@ -711,6 +711,66 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 }
             }
         }
+        "naive+https" | "naive" => {
+            insert_yaml_string(&mut map, "type", "naive");
+            let username = urlencoding::decode(url.username())
+                .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
+                .into_owned();
+            let password = url
+                .password()
+                .and_then(|value| urlencoding::decode(value).ok())
+                .map(|value| value.into_owned())
+                .unwrap_or_default();
+            if username.is_empty() || password.is_empty() {
+                return None;
+            }
+            insert_yaml_string(&mut map, "username", &username);
+            insert_yaml_string(&mut map, "password", &password);
+            map.insert(
+                serde_yaml::Value::String("tls".to_string()),
+                serde_yaml::Value::Bool(true),
+            );
+            for (key, value) in url.query_pairs() {
+                match key.as_ref() {
+                    "sni" | "peer" => insert_yaml_string(&mut map, "sni", value.as_ref()),
+                    "alpn" => insert_yaml_string(&mut map, "alpn", value.as_ref()),
+                    "fp" | "fingerprint" => {
+                        insert_yaml_string(&mut map, "client-fingerprint", value.as_ref())
+                    }
+                    "insecure" | "allowInsecure" | "skipCertVerify"
+                        if parse_query_bool(value.as_ref()) =>
+                    {
+                        map.insert(
+                            serde_yaml::Value::String("skip-cert-verify".to_string()),
+                            serde_yaml::Value::Bool(true),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "ssh" => {
+            insert_yaml_string(&mut map, "type", "ssh");
+            if url.port().is_none() {
+                map.insert(
+                    serde_yaml::Value::String("port".to_string()),
+                    serde_yaml::Value::Number(22.into()),
+                );
+            }
+            let user = urlencoding::decode(url.username())
+                .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
+                .into_owned();
+            let password = url
+                .password()
+                .and_then(|value| urlencoding::decode(value).ok())
+                .map(|value| value.into_owned())
+                .unwrap_or_default();
+            if user.is_empty() || password.is_empty() {
+                return None;
+            }
+            insert_yaml_string(&mut map, "user", &user);
+            insert_yaml_string(&mut map, "password", &password);
+        }
         _ => return None,
     }
     
@@ -732,6 +792,8 @@ fn is_supported_clash_proxy_type(node_type: &str) -> bool {
             | "http"
             | "tuic"
             | "anytls"
+            | "naive"
+            | "ssh"
     )
 }
 
@@ -745,6 +807,12 @@ fn clash_proxy_has_required_credentials(map: &serde_yaml::Mapping, node_type: &s
         "trojan" | "hysteria2" | "anytls" => non_empty(&["password"]),
         "hysteria" => non_empty(&["auth-str", "auth_str", "password"]),
         "tuic" => non_empty(&["uuid"]) && non_empty(&["password"]),
+        "naive" => non_empty(&["username", "user"]) && non_empty(&["password"]),
+        "ssh" => {
+            non_empty(&["user", "username"])
+                && (non_empty(&["password"])
+                    || non_empty(&["private-key", "private_key", "private-key-path", "private_key_path"]))
+        }
         "socks" | "socks5" | "http" => true,
         _ => false,
     }
@@ -791,7 +859,7 @@ fn normalize_profile_content_inner(content: &str, allow_base64_decode: bool) -> 
             || decoded.lines().any(|line| {
                 matches!(
                     line.trim().split_once("://").map(|(scheme, _)| scheme),
-                    Some("ss" | "ssr" | "vmess" | "vless" | "trojan" | "hysteria" | "hysteria2" | "hy2" | "tuic" | "anytls")
+                    Some("ss" | "ssr" | "vmess" | "vless" | "trojan" | "hysteria" | "hysteria2" | "hy2" | "tuic" | "anytls" | "naive+https" | "naive" | "ssh")
                 )
             });
         if looks_like_profile {
@@ -1783,6 +1851,95 @@ pub fn convert_clash_to_singbox(
                 tls_opts.insert("insecure".to_string(), json!(skip_cert_verify));
                 enrich_tls_options(&mut tls_opts, map);
                 outbound.insert("tls".to_string(), serde_json::Value::Object(tls_opts));
+            }
+            "naive" => {
+                outbound.insert("type".to_string(), json!("naive"));
+                outbound.insert("server".to_string(), json!(server));
+                outbound.insert("server_port".to_string(), json!(port));
+                let username = yaml_string_any(map, &["username", "user"]).unwrap_or("");
+                let password = map
+                    .get(&key_password)
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                if username.is_empty() || password.is_empty() {
+                    continue;
+                }
+                outbound.insert("username".to_string(), json!(username));
+                outbound.insert("password".to_string(), json!(password));
+                if let Some(concurrency) = yaml_u64_any(map, &["insecure-concurrency", "insecure_concurrency"])
+                {
+                    outbound.insert("insecure_concurrency".to_string(), json!(concurrency));
+                }
+                let sni = map
+                    .get(&key_sni)
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(&server);
+                let mut tls_opts = serde_json::Map::new();
+                tls_opts.insert("enabled".to_string(), json!(true));
+                tls_opts.insert("server_name".to_string(), json!(sni));
+                tls_opts.insert("insecure".to_string(), json!(skip_cert_verify));
+                enrich_tls_options(&mut tls_opts, map);
+                outbound.insert("tls".to_string(), serde_json::Value::Object(tls_opts));
+            }
+            "ssh" => {
+                outbound.insert("type".to_string(), json!("ssh"));
+                outbound.insert("server".to_string(), json!(server));
+                outbound.insert("server_port".to_string(), json!(port));
+                let user = yaml_string_any(map, &["user", "username"]).unwrap_or("");
+                if user.is_empty() {
+                    continue;
+                }
+                outbound.insert("user".to_string(), json!(user));
+                if let Some(password) = map
+                    .get(&key_password)
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty())
+                {
+                    outbound.insert("password".to_string(), json!(password));
+                }
+                if let Some(private_key) = yaml_string_any(map, &["private-key", "private_key"])
+                    .filter(|value| !value.is_empty())
+                {
+                    outbound.insert("private_key".to_string(), json!(private_key));
+                }
+                if let Some(path) = yaml_string_any(map, &["private-key-path", "private_key_path"])
+                    .filter(|value| !value.is_empty())
+                {
+                    outbound.insert("private_key_path".to_string(), json!(path));
+                }
+                if let Some(passphrase) = yaml_string_any(
+                    map,
+                    &["private-key-passphrase", "private_key_passphrase"],
+                )
+                    .filter(|value| !value.is_empty())
+                {
+                    outbound.insert("private_key_passphrase".to_string(), json!(passphrase));
+                }
+                let host_keys = yaml_string_list_any(map, &["host-key", "host_key"]);
+                if !host_keys.is_empty() {
+                    outbound.insert("host_key".to_string(), json!(host_keys));
+                }
+                let host_key_algorithms = yaml_string_list_any(
+                    map,
+                    &["host-key-algorithms", "host_key_algorithms"],
+                );
+                if !host_key_algorithms.is_empty() {
+                    outbound.insert(
+                        "host_key_algorithms".to_string(),
+                        json!(host_key_algorithms),
+                    );
+                }
+                if let Some(version) = yaml_string_any(map, &["client-version", "client_version"])
+                    .filter(|value| !value.is_empty())
+                {
+                    outbound.insert("client_version".to_string(), json!(version));
+                }
+                if outbound.get("password").is_none()
+                    && outbound.get("private_key").is_none()
+                    && outbound.get("private_key_path").is_none()
+                {
+                    continue;
+                }
             }
             _ => {
                 continue;
@@ -2980,6 +3137,32 @@ proxies:
         assert_eq!(outbound["protocol_param"], "42:token");
         assert_eq!(outbound["obfs"], "tls1.2_ticket_auth");
         assert_eq!(outbound["obfs_param"], "cdn.example.com");
+    }
+
+    #[test]
+    fn naive_and_ssh_links_convert_to_native_outbounds() {
+        let content = concat!(
+            "naive+https://user:secret@naive.example.com:443?sni=edge.example.com&alpn=h3#Naive\n",
+            "ssh://alice:password@ssh.example.com#SSH\n"
+        );
+        let config = convert_clash_to_singbox(content, &GuiConfig::default()).unwrap();
+        let outbounds = config["outbounds"].as_array().unwrap();
+        let naive = outbounds
+            .iter()
+            .find(|outbound| outbound["type"] == "naive")
+            .unwrap();
+        assert_eq!(naive["username"], "user");
+        assert_eq!(naive["password"], "secret");
+        assert_eq!(naive["tls"]["server_name"], "edge.example.com");
+        assert_eq!(naive["tls"]["alpn"][0], "h3");
+
+        let ssh = outbounds
+            .iter()
+            .find(|outbound| outbound["type"] == "ssh")
+            .unwrap();
+        assert_eq!(ssh["user"], "alice");
+        assert_eq!(ssh["password"], "password");
+        assert_eq!(ssh["server_port"], 22);
     }
 
     #[test]
