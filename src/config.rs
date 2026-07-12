@@ -300,6 +300,26 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                             map.insert(serde_yaml::Value::String("sni".to_string()), serde_yaml::Value::String(host_sni));
                         }
                     }
+                    if let Some(path) = v.get("path").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+                        map.insert(
+                            serde_yaml::Value::String("path".to_string()),
+                            serde_yaml::Value::String(path.to_string()),
+                        );
+                    }
+                    if let Some(host) = v.get("host").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+                        map.insert(
+                            serde_yaml::Value::String("host".to_string()),
+                            serde_yaml::Value::String(host.to_string()),
+                        );
+                    }
+                    if network == "grpc"
+                        && let Some(service) = v.get("path").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+                    {
+                        map.insert(
+                            serde_yaml::Value::String("serviceName".to_string()),
+                            serde_yaml::Value::String(service.to_string()),
+                        );
+                    }
                 } else {
                     return None;
                 }
@@ -396,28 +416,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 map.insert(serde_yaml::Value::String("flow".to_string()), serde_yaml::Value::String(flow));
             }
             if !network.is_empty() {
-                    map.insert(serde_yaml::Value::String("network".to_string()), serde_yaml::Value::String(network));
-
-                    if let Some(path) = v.get("path").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
-                        map.insert(
-                            serde_yaml::Value::String("path".to_string()),
-                            serde_yaml::Value::String(path.to_string()),
-                        );
-                    }
-                    if let Some(host) = v.get("host").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
-                        map.insert(
-                            serde_yaml::Value::String("host".to_string()),
-                            serde_yaml::Value::String(host.to_string()),
-                        );
-                    }
-                    if v.get("net").and_then(|x| x.as_str()) == Some("grpc")
-                        && let Some(service) = v.get("path").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
-                    {
-                        map.insert(
-                            serde_yaml::Value::String("serviceName".to_string()),
-                            serde_yaml::Value::String(service.to_string()),
-                        );
-                    }
+                map.insert(serde_yaml::Value::String("network".to_string()), serde_yaml::Value::String(network));
             }
             if !path.is_empty() {
                 map.insert(serde_yaml::Value::String("path".to_string()), serde_yaml::Value::String(path));

@@ -625,24 +625,14 @@ mod tests {
 
     #[test]
     fn wait_grace_reports_early_exit_from_real_child() {
-        // Drive the same grace/poll helper start_core uses, with a process that
-        // dies immediately. We use a minimal, instantly-exiting command instead
-        // of `echo ... 1>&2 & exit 7` because that form races the stderr pipe
-        // forwarder on CI runners and may observe Ok within grace.
-        //
-        // `format_core_early_exit_error` always includes `code <n>` for the
-        // status, so the assertions below cover the FATAL-text path indirectly.
-        #[cfg(target_os = "windows")]
-        let mut child = Command::new("cmd")
-            .args(["/C", "exit /B 7"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn dying child");
-
-        #[cfg(not(target_os = "windows"))]
-        let mut child = Command::new("sh")
-            .args(["-c", "exit 7"])
+        // Drive the same grace/poll helper start_core uses with a real process
+        // that exits promptly. The test harness itself is portable and avoids
+        // platform-shell quoting and process-lifecycle differences.
+        // Re-run this test harness in list-only mode. It is an actual child
+        // process that exits promptly on every supported platform, avoiding
+        // shell-specific quoting and lifecycle behavior on Windows runners.
+        let mut child = Command::new(std::env::current_exe().expect("test executable path"))
+            .arg("--list")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -658,12 +648,9 @@ mod tests {
 
         let err = wait_core_startup_grace(&mut child, &early_buf, 5000)
             .expect_err("child should exit during grace");
-        // Status code propagated to the error message regardless of log capture.
-        assert!(
-            err.contains("403") || err.contains("FATAL") || err.contains("code 7"),
-            "unexpected error text: {err}"
-        );
-        assert!(err.contains("code 7") || err.contains("startup"), "msg={err}");
+        // Status code is propagated regardless of how much output was captured.
+        assert!(err.contains("code 0"), "unexpected error text: {err}");
+        assert!(err.contains("startup"), "msg={err}");
 
         // Drain channel so the forwarder threads can exit cleanly.
         while rx.try_recv().is_ok() {}
