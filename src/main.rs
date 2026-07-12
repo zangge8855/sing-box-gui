@@ -34,23 +34,23 @@ use message::Message;
 use futures::{SinkExt, StreamExt};
 
 // OnceLocks for streaming logs and traffic stats asynchronously
-static LOG_RX: OnceLock<Mutex<Option<mpsc::UnboundedReceiver<String>>>> = OnceLock::new();
-static LOG_TX: OnceLock<mpsc::UnboundedSender<String>> = OnceLock::new();
+static LOG_RX: OnceLock<Mutex<Option<mpsc::Receiver<String>>>> = OnceLock::new();
+static LOG_TX: OnceLock<mpsc::Sender<String>> = OnceLock::new();
 
-static TRAFFIC_RX: OnceLock<Mutex<Option<mpsc::UnboundedReceiver<api::TrafficInfo>>>> = OnceLock::new();
-static TRAFFIC_TX: OnceLock<mpsc::UnboundedSender<api::TrafficInfo>> = OnceLock::new();
+static TRAFFIC_RX: OnceLock<Mutex<Option<mpsc::Receiver<api::TrafficInfo>>>> = OnceLock::new();
+static TRAFFIC_TX: OnceLock<mpsc::Sender<api::TrafficInfo>> = OnceLock::new();
 
-pub fn get_log_tx() -> mpsc::UnboundedSender<String> {
+pub fn get_log_tx() -> mpsc::Sender<String> {
     LOG_TX.get_or_init(|| {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(2048);
         let _ = LOG_RX.set(Mutex::new(Some(rx)));
         tx
     }).clone()
 }
 
-pub fn get_traffic_tx() -> mpsc::UnboundedSender<api::TrafficInfo> {
+pub fn get_traffic_tx() -> mpsc::Sender<api::TrafficInfo> {
     TRAFFIC_TX.get_or_init(|| {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(8);
         let _ = TRAFFIC_RX.set(Mutex::new(Some(rx)));
         tx
     }).clone()

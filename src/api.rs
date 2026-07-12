@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use std::sync::OnceLock;
 
 fn get_client() -> &'static reqwest::Client {
@@ -295,7 +295,7 @@ pub async fn close_all_connections(api_port: u16) -> Result<(), String> {
 
 pub fn spawn_traffic_monitor(
     api_port: u16,
-    sender: UnboundedSender<TrafficInfo>,
+    sender: Sender<TrafficInfo>,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
     tokio::spawn(async move {
@@ -325,7 +325,7 @@ pub fn spawn_traffic_monitor(
                                                 let line = line_buffer[..pos].trim();
                                                 if !line.is_empty()
                                                     && let Ok(info) = serde_json::from_str::<TrafficInfo>(line) {
-                                                        let _ = sender.send(info);
+                                                        let _ = sender.try_send(info);
                                                     }
                                                 line_buffer.drain(..=pos);
                                             }

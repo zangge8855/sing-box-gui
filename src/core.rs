@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use crate::config::{get_app_dir, get_profile_path};
 use crate::state::GuiConfig;
 
@@ -87,7 +87,7 @@ fn decode_log_line(bytes: &[u8]) -> String {
 
 fn spawn_log_forwarder<R: Read + Send + 'static>(
     pipe: R,
-    sender: UnboundedSender<String>,
+    sender: Sender<String>,
     early_buf: Arc<Mutex<Vec<String>>>,
 ) {
     thread::spawn(move || {
@@ -115,7 +115,7 @@ fn spawn_log_forwarder<R: Read + Send + 'static>(
                 }
                 buf_guard.push(line_str.clone());
             }
-            let _ = sender.send(line_str);
+            let _ = sender.try_send(line_str);
         }
     });
 }
@@ -181,7 +181,7 @@ pub fn is_core_installed(gui_config: &GuiConfig) -> bool {
 /// Download official sing-box into the managed bin folder.
 /// When `force` is true, replace an existing binary (reinstall / upgrade pin).
 pub async fn download_core(
-    progress_sender: UnboundedSender<String>,
+    progress_sender: Sender<String>,
     force: bool,
 ) -> Result<(), String> {
     let app_dir = get_app_dir();
@@ -194,12 +194,12 @@ pub async fn download_core(
         return Ok(());
     }
     if force && dest_path.exists() {
-        let _ = progress_sender.send("Removing existing core for reinstall...".to_string());
+        let _ = progress_sender.try_send("Removing existing core for reinstall...".to_string());
         fs::remove_file(&dest_path)
             .map_err(|e| format!("Failed to remove existing core: {}", e))?;
     }
     
-    let _ = progress_sender.send("Downloading sing-box core...".to_string());
+    let _ = progress_sender.try_send("Downloading sing-box core...".to_string());
     
     let version = "1.13.14";
     
@@ -260,7 +260,7 @@ pub async fn download_core(
             file.write_all(&chunk).map_err(|e| format!("Failed to write chunk: {}", e))?;
         }
             
-        let _ = progress_sender.send("Extracting core...".to_string());
+        let _ = progress_sender.try_send("Extracting core...".to_string());
         
         #[cfg(target_os = "windows")]
         {
@@ -331,7 +331,7 @@ pub async fn download_core(
 
     match res {
         Ok(_) => {
-            let _ = progress_sender.send("Core installed successfully!".to_string());
+            let _ = progress_sender.try_send("Core installed successfully!".to_string());
             Ok(())
         }
         Err(e) => Err(e),
@@ -415,7 +415,7 @@ pub fn check_core_config(gui_config: &GuiConfig) -> Result<(), String> {
 
 pub fn start_core(
     gui_config: &GuiConfig,
-    log_sender: UnboundedSender<String>,
+    log_sender: Sender<String>,
 ) -> Result<(), String> {
     let mut lock = get_process_lock();
     if lock.is_some() {
@@ -652,7 +652,7 @@ mod tests {
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         // Re-use production forwarder path (sender is a throwaway channel).
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(128);
         spawn_log_forwarder(stdout, tx.clone(), Arc::clone(&early_buf));
         spawn_log_forwarder(stderr, tx, Arc::clone(&early_buf));
 
