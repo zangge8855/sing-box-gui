@@ -391,6 +391,20 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                         serde_yaml::Value::String("network".to_string()),
                         serde_yaml::Value::String(network.clone()),
                     );
+                    if let Some(alpn) = v
+                        .get("alpn")
+                        .and_then(|value| value.as_str())
+                        .filter(|value| !value.is_empty())
+                    {
+                        insert_yaml_string(&mut map, "alpn", alpn);
+                    }
+                    if let Some(fingerprint) = v
+                        .get("fp")
+                        .and_then(|value| value.as_str())
+                        .filter(|value| !value.is_empty())
+                    {
+                        insert_yaml_string(&mut map, "client-fingerprint", fingerprint);
+                    }
                     
                     if tls == "tls" {
                         map.insert(serde_yaml::Value::String("tls".to_string()), serde_yaml::Value::Bool(true));
@@ -479,6 +493,12 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 if k == "serviceName" {
                     service_name = v.to_string();
                 }
+                if k == "alpn" {
+                    insert_yaml_string(&mut map, "alpn", v.as_ref());
+                }
+                if k == "fp" || k == "fingerprint" {
+                    insert_yaml_string(&mut map, "client-fingerprint", v.as_ref());
+                }
                 if k == "pbk" {
                     public_key = v.to_string();
                 }
@@ -506,9 +526,9 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 if !short_id.is_empty() {
                     map.insert(serde_yaml::Value::String("short-id".to_string()), serde_yaml::Value::String(short_id));
                 }
-                if !fingerprint.is_empty() {
-                    map.insert(serde_yaml::Value::String("fingerprint".to_string()), serde_yaml::Value::String(fingerprint));
-                }
+            }
+            if !fingerprint.is_empty() {
+                map.insert(serde_yaml::Value::String("fingerprint".to_string()), serde_yaml::Value::String(fingerprint));
             }
             if !flow.is_empty() {
                 map.insert(serde_yaml::Value::String("flow".to_string()), serde_yaml::Value::String(flow));
@@ -566,6 +586,12 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 if k == "serviceName" {
                     service_name = v.to_string();
                 }
+                if k == "alpn" {
+                    insert_yaml_string(&mut map, "alpn", v.as_ref());
+                }
+                if k == "fp" || k == "fingerprint" {
+                    insert_yaml_string(&mut map, "client-fingerprint", v.as_ref());
+                }
                 if k == "skipCertVerify" || k == "allowInsecure" {
                     skip_cert_verify = v.parse::<bool>().unwrap_or(false);
                 }
@@ -608,6 +634,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     "upmbps" | "up_mbps" => insert_yaml_number_or_string(&mut map, "up_mbps", v.as_ref()),
                     "downmbps" | "down_mbps" => insert_yaml_number_or_string(&mut map, "down_mbps", v.as_ref()),
                     "alpn" => insert_yaml_string(&mut map, "alpn", v.as_ref()),
+                    "fp" | "fingerprint" => insert_yaml_string(&mut map, "client-fingerprint", v.as_ref()),
                     "mport" | "ports" => insert_yaml_string(&mut map, "ports", v.as_ref()),
                     "insecure" | "allowInsecure" | "skipCertVerify" if parse_query_bool(v.as_ref()) => {
                         map.insert(serde_yaml::Value::String("skip-cert-verify".to_string()), serde_yaml::Value::Bool(true));
@@ -633,6 +660,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     "upmbps" | "up_mbps" => insert_yaml_number_or_string(&mut map, "up_mbps", v.as_ref()),
                     "downmbps" | "down_mbps" => insert_yaml_number_or_string(&mut map, "down_mbps", v.as_ref()),
                     "alpn" => insert_yaml_string(&mut map, "alpn", v.as_ref()),
+                    "fp" | "fingerprint" => insert_yaml_string(&mut map, "client-fingerprint", v.as_ref()),
                     "mport" | "ports" => insert_yaml_string(&mut map, "ports", v.as_ref()),
                     "insecure" | "allowInsecure" | "skipCertVerify" if parse_query_bool(v.as_ref()) => {
                         map.insert(serde_yaml::Value::String("skip-cert-verify".to_string()), serde_yaml::Value::Bool(true));
@@ -663,6 +691,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     "udp_relay_mode" => insert_yaml_string(&mut map, "udp_relay_mode", v.as_ref()),
                     "heartbeat" => insert_yaml_string(&mut map, "heartbeat", v.as_ref()),
                     "alpn" => insert_yaml_string(&mut map, "alpn", v.as_ref()),
+                    "fp" | "fingerprint" => insert_yaml_string(&mut map, "client-fingerprint", v.as_ref()),
                     "reduce_rtt" | "zero_rtt_handshake" if parse_query_bool(v.as_ref()) => {
                         map.insert(serde_yaml::Value::String("zero_rtt_handshake".to_string()), serde_yaml::Value::Bool(true));
                     }
@@ -698,6 +727,10 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                             serde_yaml::Value::String("sni".to_string()),
                             serde_yaml::Value::String(v.into_owned()),
                         );
+                    }
+                    "alpn" => insert_yaml_string(&mut map, "alpn", v.as_ref()),
+                    "fp" | "fingerprint" => {
+                        insert_yaml_string(&mut map, "client-fingerprint", v.as_ref())
                     }
                     "insecure" | "allowInsecure" | "skipCertVerify" => {
                         if matches!(v.as_ref(), "1" | "true") {
@@ -853,6 +886,9 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 match key.as_ref() {
                     "sni" => insert_yaml_string(&mut map, "sni", value.as_ref()),
                     "alpn" => insert_yaml_string(&mut map, "alpn", value.as_ref()),
+                    "fp" | "fingerprint" => {
+                        insert_yaml_string(&mut map, "client-fingerprint", value.as_ref())
+                    }
                     "insecure" | "allowInsecure" | "skipCertVerify"
                         if parse_query_bool(value.as_ref()) =>
                     {
@@ -3438,6 +3474,30 @@ proxies:
             .find(|o| o["type"] == "vless")
             .unwrap();
         assert!(outbound.get("tls").is_none());
+    }
+
+    #[test]
+    fn sharing_links_preserve_alpn_and_utls_fingerprints() {
+        let content = concat!(
+            "vless://00000000-0000-0000-0000-000000000000@vless.example.com:443?security=tls&sni=cover.example.com&alpn=h2%2Ch3&fp=firefox#VLESS-TLS\n",
+            "anytls://secret@any.example.com:443?sni=any.example.com&alpn=h2&fp=chrome#AnyTLS-FP\n"
+        );
+        let config = convert_clash_to_singbox(content, &GuiConfig::default()).unwrap();
+        let outbounds = config["outbounds"].as_array().unwrap();
+        let vless = outbounds
+            .iter()
+            .find(|outbound| outbound["tag"] == "VLESS-TLS")
+            .unwrap();
+        assert_eq!(vless["tls"]["alpn"][0], "h2");
+        assert_eq!(vless["tls"]["alpn"][1], "h3");
+        assert_eq!(vless["tls"]["utls"]["fingerprint"], "firefox");
+
+        let anytls = outbounds
+            .iter()
+            .find(|outbound| outbound["tag"] == "AnyTLS-FP")
+            .unwrap();
+        assert_eq!(anytls["tls"]["alpn"][0], "h2");
+        assert_eq!(anytls["tls"]["utls"]["fingerprint"], "chrome");
     }
 
     #[test]
