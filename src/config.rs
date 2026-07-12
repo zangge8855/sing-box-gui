@@ -249,11 +249,15 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 if let Some(decoded) = decode_base64_padded(raw_body) {
                     let decoded_link = format!("ss://{}", decoded);
                     if let Ok(temp_url) = Url::parse(&decoded_link) {
-                        let userinfo = temp_url.username();
-                        let parts: Vec<&str> = userinfo.splitn(2, ':').collect();
-                        if parts.len() == 2 {
-                            let cipher = urlencoding::decode(parts[0]).unwrap_or(std::borrow::Cow::Borrowed(parts[0])).into_owned();
-                            let password = urlencoding::decode(parts[1]).unwrap_or(std::borrow::Cow::Borrowed(parts[1])).into_owned();
+                        let cipher = urlencoding::decode(temp_url.username())
+                            .unwrap_or(std::borrow::Cow::Borrowed(temp_url.username()))
+                            .into_owned();
+                        let password = temp_url
+                            .password()
+                            .and_then(|value| urlencoding::decode(value).ok())
+                            .map(|value| value.into_owned())
+                            .unwrap_or_default();
+                        if !cipher.is_empty() && !password.is_empty() {
                             map.insert(serde_yaml::Value::String("cipher".to_string()), serde_yaml::Value::String(cipher));
                             map.insert(serde_yaml::Value::String("password".to_string()), serde_yaml::Value::String(password));
                         }
@@ -264,12 +268,23 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     }
                 }
             } else {
-                let userinfo_b64 = url.username();
-                if let Some(decoded) = decode_base64_padded(userinfo_b64) {
+                let username = urlencoding::decode(url.username())
+                    .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
+                    .into_owned();
+                if let Some(decoded) = decode_base64_padded(&username) {
                     let parts: Vec<&str> = decoded.splitn(2, ':').collect();
                     if parts.len() == 2 {
                         let cipher = urlencoding::decode(parts[0]).unwrap_or(std::borrow::Cow::Borrowed(parts[0])).into_owned();
                         let password = urlencoding::decode(parts[1]).unwrap_or(std::borrow::Cow::Borrowed(parts[1])).into_owned();
+                        map.insert(serde_yaml::Value::String("cipher".to_string()), serde_yaml::Value::String(cipher));
+                        map.insert(serde_yaml::Value::String("password".to_string()), serde_yaml::Value::String(password));
+                    }
+                } else if let Some(raw_password) = url.password() {
+                    let cipher = username;
+                    let password = urlencoding::decode(raw_password)
+                        .unwrap_or(std::borrow::Cow::Borrowed(raw_password))
+                        .into_owned();
+                    if !cipher.is_empty() && !password.is_empty() {
                         map.insert(serde_yaml::Value::String("cipher".to_string()), serde_yaml::Value::String(cipher));
                         map.insert(serde_yaml::Value::String("password".to_string()), serde_yaml::Value::String(password));
                     }
@@ -2617,6 +2632,30 @@ proxies:
         assert_eq!(nodes_ss[0].node_type, "ss");
         assert_eq!(nodes_ss[0].server, "2.2.2.2");
         assert_eq!(nodes_ss[0].port, 443);
+    }
+
+    #[test]
+    fn shadowsocks_compact_and_plain_userinfo_links_keep_credentials() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let compact = format!(
+            "ss://{}#compact",
+            URL_SAFE_NO_PAD.encode("aes-128-gcm:secret@compact.example.com:8388")
+        );
+        let plain = "ss://aes-256-gcm:plain-secret@plain.example.com:443#plain";
+        let content = format!("{compact}\n{plain}");
+        let config = convert_clash_to_singbox(&content, &GuiConfig::default()).unwrap();
+        let nodes: Vec<&serde_json::Value> = config["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|outbound| outbound["type"] == "shadowsocks")
+            .collect();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0]["method"], "aes-128-gcm");
+        assert_eq!(nodes[0]["password"], "secret");
+        assert_eq!(nodes[1]["method"], "aes-256-gcm");
+        assert_eq!(nodes[1]["password"], "plain-secret");
     }
 
     #[test]
