@@ -1665,29 +1665,19 @@ impl App {
             
             // New type-safe configuration messages
             Message::MixedPortChanged(val) => {
-                self.mixed_port_input_str = val.clone();
-                if let Ok(p) = val.parse::<u16>()
-                    && p > 0 {
-                        self.gui_config.mixed_port = p;
-                    }
+                self.mixed_port_input_str = val;
                 Task::none()
             }
             Message::ApiPortChanged(val) => {
-                self.api_port_input_str = val.clone();
-                if let Ok(p) = val.parse::<u16>()
-                    && p > 0 {
-                        self.gui_config.api_port = p;
-                    }
+                self.api_port_input_str = val;
                 Task::none()
             }
             Message::DnsLocalChanged(val) => {
-                self.dns_server_local_input_str = val.clone();
-                self.gui_config.dns_server_local = val;
+                self.dns_server_local_input_str = val;
                 Task::none()
             }
             Message::DnsRemoteChanged(val) => {
-                self.dns_server_remote_input_str = val.clone();
-                self.gui_config.dns_server_remote = val;
+                self.dns_server_remote_input_str = val;
                 Task::none()
             }
             Message::CorePathChanged(val) => {
@@ -1900,7 +1890,23 @@ impl App {
                     return Task::none();
                 }
 
+                let dns_local = self.dns_server_local_input_str.trim();
+                let dns_remote = self.dns_server_remote_input_str.trim();
+                if !is_valid_dns_server_address(dns_local)
+                    || !is_valid_dns_server_address(dns_remote)
+                {
+                    let err = self.tr("invalid_dns_server").to_string();
+                    self.log_lines.push_back(format!("[GUI ERROR] {err}"));
+                    self.core_install_msg = Some(err.clone());
+                    self.toast_error(err);
+                    return Task::none();
+                }
+
                 self.core_install_msg = None;
+                self.gui_config.mixed_port = *mixed_p;
+                self.gui_config.api_port = *api_p;
+                self.gui_config.dns_server_local = dns_local.to_string();
+                self.gui_config.dns_server_remote = dns_remote.to_string();
                 let trimmed_core = self.core_path_input_str.trim();
                 if trimmed_core.is_empty() {
                     self.gui_config.core_path = None;
@@ -2845,6 +2851,39 @@ fn normalize_custom_rule(
     }
 }
 
+fn is_valid_dns_server_address(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty()
+        || value.len() > 2048
+        || value.chars().any(char::is_whitespace)
+    {
+        return false;
+    }
+    if value.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    if value.contains("://") {
+        return url::Url::parse(value).is_ok_and(|url| {
+            !url.scheme().is_empty()
+                && (url.host_str().is_some()
+                    || matches!(url.scheme(), "local" | "dhcp" | "rcode"))
+        });
+    }
+    if url::Url::parse(&format!("udp://{value}")).is_ok_and(|url| url.host_str().is_some()) {
+        return true;
+    }
+    value.len() <= 253
+        && value.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '-')
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2949,6 +2988,24 @@ mod tests {
             normalize_custom_rule(state::RuleField::BypassDomains, "https://example.com"),
             Err("invalid_domain_rule")
         );
+    }
+
+    #[test]
+    fn dns_server_validation_accepts_native_forms_and_rejects_bad_input() {
+        for valid in [
+            "223.5.5.5",
+            "8.8.8.8:53",
+            "dns.google",
+            "https://cloudflare-dns.com/dns-query",
+            "tls://1.1.1.1",
+            "dhcp://auto",
+            "rcode://success",
+        ] {
+            assert!(is_valid_dns_server_address(valid), "valid={valid}");
+        }
+        for invalid in ["", "https://", "bad host", "http://"] {
+            assert!(!is_valid_dns_server_address(invalid), "invalid={invalid}");
+        }
     }
 
     #[test]
