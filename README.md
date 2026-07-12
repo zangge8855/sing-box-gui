@@ -38,7 +38,7 @@ A native-style, cross-platform desktop client for [sing-box](https://github.com/
 | Naive | Yes | Yes | Passthrough |
 | SSH | Yes | Yes | Passthrough |
 | ShadowTLS | Yes | Yes | Passthrough |
-| SOCKS / HTTP | Clash YAML | Yes | Passthrough |
+| SOCKS / HTTP(S) | Yes | Yes | Passthrough |
 | WireGuard endpoint and custom types | Native JSON | No fabricated legacy outbound | Passthrough |
 
 Converted transport metadata includes WebSocket, HTTP/H2, HTTPUpgrade, QUIC, and gRPC. TLS conversion preserves SNI, insecure mode, ALPN, uTLS fingerprint, and Reality options where supported. Hysteria-family and TUIC imports preserve common bandwidth, obfuscation, port-hopping, congestion, UDP relay, 0-RTT, and heartbeat options.

@@ -529,7 +529,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 map.insert(serde_yaml::Value::String("skip-cert-verify".to_string()), serde_yaml::Value::Bool(true));
             }
         }
-        "trojan" => {
+        "trojan" | "trojan-go" => {
             map.insert(serde_yaml::Value::String("type".to_string()), serde_yaml::Value::String("trojan".to_string()));
             
             let password = url.username().to_string();
@@ -805,6 +805,66 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
             );
             insert_yaml_string(&mut map, "password", &password);
         }
+        "socks" | "socks5" => {
+            insert_yaml_string(&mut map, "type", "socks5");
+            if url.port().is_none() {
+                map.insert(
+                    serde_yaml::Value::String("port".to_string()),
+                    serde_yaml::Value::Number(1080.into()),
+                );
+            }
+            let username = urlencoding::decode(url.username())
+                .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
+                .into_owned();
+            let password = url
+                .password()
+                .and_then(|value| urlencoding::decode(value).ok())
+                .map(|value| value.into_owned())
+                .unwrap_or_default();
+            insert_yaml_string(&mut map, "username", &username);
+            insert_yaml_string(&mut map, "password", &password);
+        }
+        "http" | "https" => {
+            insert_yaml_string(&mut map, "type", "http");
+            if url.port().is_none() {
+                let default_port = if scheme == "https" { 443 } else { 80 };
+                map.insert(
+                    serde_yaml::Value::String("port".to_string()),
+                    serde_yaml::Value::Number(default_port.into()),
+                );
+            }
+            let username = urlencoding::decode(url.username())
+                .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
+                .into_owned();
+            let password = url
+                .password()
+                .and_then(|value| urlencoding::decode(value).ok())
+                .map(|value| value.into_owned())
+                .unwrap_or_default();
+            insert_yaml_string(&mut map, "username", &username);
+            insert_yaml_string(&mut map, "password", &password);
+            if scheme == "https" {
+                map.insert(
+                    serde_yaml::Value::String("tls".to_string()),
+                    serde_yaml::Value::Bool(true),
+                );
+            }
+            for (key, value) in url.query_pairs() {
+                match key.as_ref() {
+                    "sni" => insert_yaml_string(&mut map, "sni", value.as_ref()),
+                    "alpn" => insert_yaml_string(&mut map, "alpn", value.as_ref()),
+                    "insecure" | "allowInsecure" | "skipCertVerify"
+                        if parse_query_bool(value.as_ref()) =>
+                    {
+                        map.insert(
+                            serde_yaml::Value::String("skip-cert-verify".to_string()),
+                            serde_yaml::Value::Bool(true),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
         _ => return None,
     }
     
@@ -907,7 +967,7 @@ fn normalize_profile_content_inner(content: &str, allow_base64_decode: bool) -> 
             || decoded.lines().any(|line| {
                 matches!(
                     line.trim().split_once("://").map(|(scheme, _)| scheme),
-                    Some("ss" | "ssr" | "vmess" | "vless" | "trojan" | "hysteria" | "hysteria2" | "hy2" | "tuic" | "anytls" | "naive+https" | "naive" | "ssh" | "shadowtls" | "shadow-tls")
+                    Some("ss" | "ssr" | "vmess" | "vless" | "trojan" | "trojan-go" | "hysteria" | "hysteria2" | "hy2" | "tuic" | "anytls" | "naive+https" | "naive" | "ssh" | "shadowtls" | "shadow-tls" | "socks" | "socks5" | "http" | "https")
                 )
             });
         if looks_like_profile {
@@ -3275,6 +3335,41 @@ proxies:
         let nodes = parse_clash_yaml_nodes(yaml).unwrap();
         assert_eq!(nodes[0].node_type, "ss");
         assert_eq!(nodes[1].node_type, "hysteria2");
+    }
+
+    #[test]
+    fn socks_https_and_trojan_go_share_links_are_imported() {
+        let content = concat!(
+            "socks5://user:secret@socks.example.com:1081#SOCKS\n",
+            "https://web:proxy@http.example.com?sni=cover.example.com#HTTPS\n",
+            "trojan-go://password@trojan.example.com:443?sni=trojan.example.com&type=ws&path=%2Fws#TrojanGo\n"
+        );
+        let config = convert_clash_to_singbox(content, &GuiConfig::default()).unwrap();
+        let outbounds = config["outbounds"].as_array().unwrap();
+
+        let socks = outbounds
+            .iter()
+            .find(|outbound| outbound["tag"] == "SOCKS")
+            .unwrap();
+        assert_eq!(socks["type"], "socks");
+        assert_eq!(socks["server_port"], 1081);
+        assert_eq!(socks["username"], "user");
+
+        let http = outbounds
+            .iter()
+            .find(|outbound| outbound["tag"] == "HTTPS")
+            .unwrap();
+        assert_eq!(http["type"], "http");
+        assert_eq!(http["server_port"], 443);
+        assert_eq!(http["tls"]["server_name"], "cover.example.com");
+
+        let trojan = outbounds
+            .iter()
+            .find(|outbound| outbound["tag"] == "TrojanGo")
+            .unwrap();
+        assert_eq!(trojan["type"], "trojan");
+        assert_eq!(trojan["transport"]["type"], "ws");
+        assert_eq!(trojan["transport"]["path"], "/ws");
     }
 
     #[test]
