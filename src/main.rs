@@ -2692,8 +2692,18 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
             meta.expire_at = e;
         }
 
+    if let Some(title) = res
+        .headers()
+        .get("profile-title")
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_profile_title_header)
+    {
+        meta.display_name = Some(title);
+    }
+
     // Content-Disposition filename or content-disposition profile name
-    if let Some(cd) = res.headers().get(reqwest::header::CONTENT_DISPOSITION)
+    if meta.display_name.is_none()
+        && let Some(cd) = res.headers().get(reqwest::header::CONTENT_DISPOSITION)
         && let Ok(s) = cd.to_str()
             && let Some(name) = parse_content_disposition_filename(s) {
                 meta.display_name = Some(name);
@@ -2710,6 +2720,28 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
     }
     let content = decode_profile_bytes(&bytes)?;
     Ok((content, meta))
+}
+
+fn parse_profile_title_header(header: &str) -> Option<String> {
+    use base64::{Engine as _, engine::general_purpose};
+
+    let raw = header.trim().trim_matches('"');
+    let decoded = if let Some(encoded) = raw.strip_prefix("base64:") {
+        general_purpose::STANDARD
+            .decode(encoded.trim())
+            .or_else(|_| general_purpose::STANDARD_NO_PAD.decode(encoded.trim()))
+            .or_else(|_| general_purpose::URL_SAFE.decode(encoded.trim()))
+            .or_else(|_| general_purpose::URL_SAFE_NO_PAD.decode(encoded.trim()))
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())?
+    } else {
+        urlencoding::decode(raw).ok()?.into_owned()
+    };
+    let title = decoded.trim().trim_matches('"');
+    if title.is_empty() {
+        return None;
+    }
+    Some(title.chars().take(128).collect())
 }
 
 fn parse_content_disposition_filename(header: &str) -> Option<String> {
@@ -2877,6 +2909,22 @@ mod tests {
         assert!(!had_errors);
         let decoded = decode_profile_bytes(&encoded).unwrap();
         assert!(decoded.contains("香港节点"));
+    }
+
+    #[test]
+    fn profile_title_header_supports_url_and_base64_encodings() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
+
+        assert_eq!(
+            parse_profile_title_header("%E9%A6%99%E6%B8%AF%E8%8A%82%E7%82%B9"),
+            Some("香港节点".to_string())
+        );
+        let encoded = STANDARD_NO_PAD.encode("高级订阅");
+        assert_eq!(
+            parse_profile_title_header(&format!("base64:{encoded}")),
+            Some("高级订阅".to_string())
+        );
+        assert_eq!(parse_profile_title_header("   "), None);
     }
 
     #[test]
