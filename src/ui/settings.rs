@@ -239,7 +239,16 @@ pub fn render<'a>(
             .into()
         };
         
-        let app_prefs_card = container(app_prefs_content)
+        let app_prefs_card = container(
+            column![
+                text(tr(lang, "appearance_settings"))
+                    .color(text_primary)
+                    .size(theme::TYPE_HEADING)
+                    .font(theme::ui_font(iced::font::Weight::Semibold)),
+                app_prefs_content
+            ]
+            .spacing(crate::ui::SP_12)
+        )
             .padding(theme::CARD_PAD)
             .width(Length::Fill)
             .style(theme::card_bg);
@@ -387,7 +396,7 @@ pub fn render<'a>(
 
         let core_mgmt_card = container(
             column![
-                text(tr(lang, "core_components")).color(text_muted).size(theme::TYPE_SECTION),
+                text(tr(lang, "core_components")).color(text_primary).size(theme::TYPE_HEADING).font(theme::ui_font(iced::font::Weight::Semibold)),
                 core_downloader,
                 core_path_row,
                 latency_block,

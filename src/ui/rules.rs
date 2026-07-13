@@ -69,7 +69,7 @@ pub fn render<'a>(
             
             let list_content: Element<'_, Message> = if items.is_empty() {
                 container(
-                    text(tr(lang, "rules_desc"))
+                    text(tr(lang, "no_custom_rules"))
                         .color(theme::text_tertiary(theme))
                         .size(theme::TYPE_BTN_SM)
                         .align_x(Alignment::Center)
@@ -102,12 +102,17 @@ pub fn render<'a>(
                 .style(theme::input_field);
                 
             let add_btn = button(
-                text(crate::ui::icons::ICON_ADD.to_string())
-                    .font(iced::Font::with_name("Material Icons"))
-                    .size(crate::ui::ICON_SIZE_LG),
+                row![
+                    text(crate::ui::icons::ICON_ADD.to_string())
+                        .font(iced::Font::with_name("Material Icons"))
+                        .size(crate::ui::ICON_SIZE),
+                    text(tr(lang, "btn_add_rule")).size(theme::TYPE_BTN_MD)
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
             )
                 .style(theme::button_primary)
-                .padding([9, 14])
+                .padding(theme::BTN_PAD_MD)
                 .on_press(Message::AddRule { field });
                 
             container(
