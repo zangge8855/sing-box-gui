@@ -5,6 +5,7 @@ pub fn normalize_version_tag(tag: &str) -> Vec<u64> {
         Some((core, suffix)) if suffix.chars().all(|c| c.is_ascii_digit()) => {
             (core, suffix.parse::<u64>().unwrap_or(0))
         }
+        Some((core, _)) => (core, 0),
         _ => (without_build, 0),
     };
 
