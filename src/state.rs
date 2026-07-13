@@ -253,6 +253,7 @@ pub enum AppTheme {
 
 impl Default for GuiConfig {
     fn default() -> Self {
+        #[allow(unused_mut)]
         let mut lang = Language::En;
         #[cfg(target_os = "windows")]
         {

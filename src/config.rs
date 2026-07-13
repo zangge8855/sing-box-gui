@@ -60,6 +60,7 @@ pub fn get_config_path() -> PathBuf {
 
 pub fn load_gui_config() -> GuiConfig {
     let path = get_config_path();
+    #[allow(unused_mut)]
     let mut config = if path.exists() {
         if let Ok(content) = fs::read_to_string(&path) {
             match serde_json::from_str::<GuiConfig>(&content) {

@@ -1,11 +1,20 @@
 pub fn normalize_version_tag(tag: &str) -> Vec<u64> {
-    tag.trim()
-        .trim_start_matches('v')
+    let normalized = tag.trim().trim_start_matches('v');
+    let without_build = normalized.split('+').next().unwrap_or(normalized);
+    let (core, revision) = match without_build.rsplit_once('-') {
+        Some((core, suffix)) if suffix.chars().all(|c| c.is_ascii_digit()) => {
+            (core, suffix.parse::<u64>().unwrap_or(0))
+        }
+        Some((core, _)) => (core, 0),
+        _ => (without_build, 0),
+    };
+
+    let mut parts: Vec<u64> = core
         .split('.')
-        .filter_map(|p| p.split(|c: char| !c.is_ascii_digit()).next())
-        .filter(|p| !p.is_empty())
         .filter_map(|p| p.parse::<u64>().ok())
-        .collect()
+        .collect();
+    parts.push(revision);
+    parts
 }
 
 
@@ -33,10 +42,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_version_tag_strips_v_and_drops_suffix() {
-        assert_eq!(normalize_version_tag("v2026.7.9"), vec![2026, 7, 9]);
-        assert_eq!(normalize_version_tag("2026.7.9"), vec![2026, 7, 9]);
-        // Non-numeric tail like "+beta" is dropped, the numeric head kept.
-        assert_eq!(normalize_version_tag("v1.2.3+beta"), vec![1, 2, 3]);
+    fn normalize_version_tag_supports_same_day_revisions() {
+        assert_eq!(normalize_version_tag("v2026.7.9"), vec![2026, 7, 9, 0]);
+        assert_eq!(normalize_version_tag("2026.7.9-2"), vec![2026, 7, 9, 2]);
+        assert_eq!(normalize_version_tag("v1.2.3+beta"), vec![1, 2, 3, 0]);
+        assert_eq!(normalize_version_tag("v1.2.3-preview"), vec![1, 2, 3, 0]);
+    }
+
+    #[test]
+    fn same_day_revision_ordering_is_numeric() {
+        assert!(is_remote_version_newer("2026.7.13", "v2026.7.13-1"));
+        assert!(is_remote_version_newer("2026.7.13-1", "v2026.7.13-2"));
+        assert!(!is_remote_version_newer("2026.7.13-2", "v2026.7.13-1"));
     }
 }

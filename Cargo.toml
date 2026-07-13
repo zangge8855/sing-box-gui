@@ -1,11 +1,11 @@
 [package]
 name = "sing-box-gui"
-version = "2026.7.13-1"
+version = "2026.7.13-2"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
 [dependencies]
-iced = { version = "0.14.0", features = ["tokio", "canvas", "image", "svg"] }
+iced = { version = "0.14.0", default-features = false, features = ["tokio", "tiny-skia", "crisp", "image", "svg", "linux-theme-detection", "x11", "wayland"] }
 tokio = { version = "1.38", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

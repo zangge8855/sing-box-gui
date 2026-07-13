@@ -40,9 +40,12 @@ static LOG_TX: OnceLock<mpsc::Sender<String>> = OnceLock::new();
 static TRAFFIC_RX: OnceLock<Mutex<Option<mpsc::Receiver<api::TrafficInfo>>>> = OnceLock::new();
 static TRAFFIC_TX: OnceLock<mpsc::Sender<api::TrafficInfo>> = OnceLock::new();
 
+const MAX_LOG_LINES: usize = 500;
+const MAX_CONNECTION_SNAPSHOT: usize = 1_000;
+
 pub fn get_log_tx() -> mpsc::Sender<String> {
     LOG_TX.get_or_init(|| {
-        let (tx, rx) = mpsc::channel(2048);
+        let (tx, rx) = mpsc::channel(512);
         let _ = LOG_RX.set(Mutex::new(Some(rx)));
         tx
     }).clone()
@@ -841,7 +844,8 @@ impl App {
             Message::ProxiesFetched(res) => {
                 self.proxies_fetch_in_flight = false;
                 match res {
-                    Ok(groups_map) => {
+                    Ok(mut groups_map) => {
+                        compact_proxy_history(&mut groups_map);
                         self.last_proxies_fetch = Some(std::time::Instant::now());
                         if self.proxy_groups != groups_map {
                             self.proxy_groups = groups_map;
@@ -939,7 +943,7 @@ impl App {
                 // When the GUI log window oversize its cap, drop the oldest 10%
                 // entries in a single drain (one memmove) to keep memory bounded
                 // without paying per-line overhead on every message.
-                while self.log_lines.len() > 1000 {
+                while self.log_lines.len() > MAX_LOG_LINES {
                     self.log_lines.pop_front();
                 }
                 // Tail scrolling is throttled by Tick so a log burst does not
@@ -1589,7 +1593,8 @@ impl App {
             Message::ConnectionsFetched(Ok(res)) => {
                 self.connections_fetch_in_flight = false;
                 self.last_connections_fetch = Some(std::time::Instant::now());
-                let connections = res.connections.unwrap_or_default();
+                let mut connections = res.connections.unwrap_or_default();
+                connections.truncate(MAX_CONNECTION_SNAPSHOT);
                 if self.active_connections != connections {
                     self.active_connections = connections;
                 }
@@ -3071,6 +3076,35 @@ mod tests {
         assert!(p && c);
     }
 
+    #[test]
+    fn memory_bounds_are_conservative() {
+        assert!(MAX_LOG_LINES <= 500);
+        assert!(MAX_CONNECTION_SNAPSHOT <= 1_000);
+        let manifest = include_str!("../Cargo.toml");
+        assert!(manifest.contains("default-features = false"));
+        assert!(manifest.contains("\"tiny-skia\""));
+        assert!(!manifest.contains("\"canvas\""));
+    }
+
+    #[test]
+    fn proxy_history_compaction_keeps_only_latest_sample() {
+        let mut groups = std::collections::HashMap::from([(
+            "node".to_string(),
+            api::ProxyInfo {
+                name: "node".to_string(),
+                proxy_type: "ss".to_string(),
+                udp: None,
+                history: Some(vec![serde_json::json!({"delay": 10}), serde_json::json!({"delay": 20})]),
+                now: None,
+                all: None,
+            },
+        )]);
+        compact_proxy_history(&mut groups);
+        let history = groups["node"].history.as_ref().unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["delay"], 20);
+    }
+
 
     #[test]
     fn is_remote_version_newer_compares_numerically() {
@@ -3084,6 +3118,7 @@ mod tests {
         assert!(!update::is_remote_version_newer("1.0.0", "v1.0.0"));
         // Older per-component case.
         assert!(update::is_remote_version_newer("1.0.0", "v2.0.0"));
+        assert!(update::is_remote_version_newer("2026.7.13-1", "v2026.7.13-2"));
     }
 }
 
@@ -3100,6 +3135,18 @@ fn should_poll_api(tab: state::Tab, tick: u32) -> (bool, bool) {
         _ => false,
     };
     (want_proxies, want_connections)
+}
+
+fn compact_proxy_history(groups: &mut std::collections::HashMap<String, api::ProxyInfo>) {
+    for proxy in groups.values_mut() {
+        if let Some(history) = proxy.history.as_mut()
+            && history.len() > 1
+        {
+            let latest = history.pop();
+            history.clear();
+            history.extend(latest);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3241,6 +3288,7 @@ async fn check_app_update() -> Result<message::AppUpdateInfo, String> {
 
 /// Download the release binary to a temp path next to the current executable.
 async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, String> {
+    use tokio::io::AsyncWriteExt;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .redirect(reqwest::redirect::Policy::limited(10))
@@ -3266,23 +3314,6 @@ async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, S
         return Err("Update package exceeds the 128 MiB safety limit".to_string());
     }
 
-    let mut stream = res.bytes_stream();
-    let mut bytes = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Failed to read download body: {e}"))?;
-        if bytes.len().saturating_add(chunk.len()) > MAX_UPDATE_BYTES {
-            return Err("Update package exceeds the 128 MiB safety limit".to_string());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-
-    if bytes.len() < 1024 {
-        return Err(format!(
-            "Downloaded file too small ({} bytes) — likely not a binary",
-            bytes.len()
-        ));
-    }
-
     let current = std::env::current_exe()
         .map_err(|e| format!("Failed to resolve current executable: {}", e))?;
     let dir = current
@@ -3295,22 +3326,43 @@ async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, S
     let file_name = "sing-box-gui.update.bin";
 
     // Prefer beside the running binary (portable installs); fall back to temp.
-    let dest = {
-        let beside = dir.join(file_name);
-        match tokio::fs::write(&beside, &bytes).await {
-            Ok(()) => beside,
-            Err(e_beside) => {
-                let fallback = std::env::temp_dir().join(file_name);
-                tokio::fs::write(&fallback, &bytes).await.map_err(|e| {
-                    format!(
-                        "Failed to write update file (beside exe: {}; temp: {})",
-                        e_beside, e
-                    )
-                })?;
-                fallback
-            }
+    let beside = dir.join(file_name);
+    let (dest, mut file) = match tokio::fs::File::create(&beside).await {
+        Ok(file) => (beside, file),
+        Err(e_beside) => {
+            let fallback = std::env::temp_dir().join(file_name);
+            let file = tokio::fs::File::create(&fallback).await.map_err(|e| {
+                format!("Failed to create update file (beside exe: {e_beside}; temp: {e})")
+            })?;
+            (fallback, file)
         }
     };
+
+    let mut stream = res.bytes_stream();
+    let mut downloaded = 0usize;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Failed to read download body: {e}"))?;
+        downloaded = downloaded.saturating_add(chunk.len());
+        if downloaded > MAX_UPDATE_BYTES {
+            drop(file);
+            let _ = tokio::fs::remove_file(&dest).await;
+            return Err("Update package exceeds the 128 MiB safety limit".to_string());
+        }
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Failed to write update file: {e}"))?;
+    }
+    file.flush()
+        .await
+        .map_err(|e| format!("Failed to flush update file: {e}"))?;
+    drop(file);
+
+    if downloaded < 1024 {
+        let _ = tokio::fs::remove_file(&dest).await;
+        return Err(format!(
+            "Downloaded file too small ({downloaded} bytes) — likely not a binary"
+        ));
+    }
 
     #[cfg(unix)]
     {
