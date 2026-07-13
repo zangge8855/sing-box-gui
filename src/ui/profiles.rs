@@ -137,9 +137,12 @@ pub fn render<'a>(
         
         let error_banner = profile_error.map(|err| container(
                     row![
-                        text("⚠️ ").size(theme::TYPE_HEADING),
+                        crate::ui::material_icon(crate::ui::icons::ICON_WARNING)
+                            .size(theme::TYPE_HEADING)
+                            .color(theme::DANGER),
                         text(err).size(theme::TYPE_SECTION).color(theme::DANGER)
                     ]
+                    .spacing(crate::ui::SP_8)
                     .align_y(Alignment::Center)
                 )
                 .padding(crate::ui::SP_12)
@@ -148,21 +151,10 @@ pub fn render<'a>(
         
         // Grid system for profiles list (Responsive Grid)
         let grid_content: Element<'a, Message> = if gui_config.subscriptions.is_empty() {
-            let cta = row![
-                button(text(tr(lang, "btn_import_clipboard")).size(theme::TYPE_BTN_MD))
-                    .padding(theme::BTN_PAD_MD)
-                    .style(theme::button_primary)
-                    .on_press(Message::ImportFromClipboard),
-                button(text(tr(lang, "btn_import_file")).size(theme::TYPE_BTN_MD))
-                    .padding(theme::BTN_PAD_MD)
-                    .style(theme::button_secondary)
-                    .on_press(Message::ImportLocalFile),
-            ]
-            .spacing(crate::ui::SP_12);
             crate::ui::empty_state(
                 tr(lang, "no_profiles"),
                 Some(tr(lang, "empty_profiles_hint")),
-                Some(cta.into()),
+                None,
                 theme,
             )
         } else {

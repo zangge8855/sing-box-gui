@@ -786,6 +786,7 @@ pub fn toggler_style(theme: &iced::Theme, status: iced::widget::toggler::Status)
 
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module, clippy::assertions_on_constants)]
 mod tests {
     use super::*;
 

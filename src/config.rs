@@ -2847,14 +2847,20 @@ mod tests {
 
     #[test]
     fn test_mitigate_full_path_matches_active_profile_shape() {
-        // Drive shipped mitigate_run_config on a config shaped like the user's
-        // active native profile (DIRECT outbound + gh-proxy rule-sets).
-        let appdata = std::env::var("APPDATA").unwrap_or_default();
-        let src = std::path::PathBuf::from(&appdata)
-            .join("sing-box-gui")
-            .join("run_config.json");
-        if !src.exists() {
-            // CI / machines without the user profile — unit shape tests above still cover logic.
+        // Optional end-to-end check for developers. Never read the user's real
+        // application data or launch their installed core during normal tests.
+        let Some(src) = std::env::var_os("SING_BOX_GUI_INTEGRATION_CONFIG")
+            .map(std::path::PathBuf::from)
+        else {
+            // Hermetic unit-shape tests above cover mitigation in normal CI.
+            return;
+        };
+        let Some(core) = std::env::var_os("SING_BOX_GUI_INTEGRATION_CORE")
+            .map(std::path::PathBuf::from)
+        else {
+            return;
+        };
+        if !src.is_file() || !core.is_file() {
             return;
         }
         let raw = std::fs::read_to_string(&src).expect("read run_config");
@@ -2880,24 +2886,13 @@ mod tests {
         assert!(!url.contains("gh-proxy.com"), "url still proxied: {url}");
 
         // Persist full mitigate output for start-verify (same JSON start_core would write).
-        let scratch = std::env::temp_dir().join("grok-goal-b63a7b864ef0").join("implementer");
+        let scratch = std::env::temp_dir().join("sing-box-gui-integration-test");
         let _ = std::fs::create_dir_all(&scratch);
         let out_path = scratch.join("run_config_mitigated_full.json");
         let pretty = serde_json::to_string_pretty(&config).unwrap();
         std::fs::write(&out_path, &pretty).expect("write mitigated config");
 
-        // If managed core is present, require `sing-box check` + short `run` survival.
-        let core = std::path::PathBuf::from(&appdata)
-            .join("sing-box-gui")
-            .join("bin")
-            .join(if cfg!(windows) {
-                "sing-box.exe"
-            } else {
-                "sing-box"
-            });
-        if !core.exists() {
-            return;
-        }
+        // Explicit integration core: require `sing-box check` + short `run` survival.
         let check = std::process::Command::new(&core)
             .args(["check", "-c", &out_path.to_string_lossy()])
             .output()
@@ -2908,10 +2903,10 @@ mod tests {
             String::from_utf8_lossy(&check.stderr)
         );
 
-        let workdir = std::path::PathBuf::from(&appdata).join("sing-box-gui");
+        let workdir = src.parent().unwrap_or_else(|| std::path::Path::new("."));
         let mut child = std::process::Command::new(&core)
             .args(["run", "-c", &out_path.to_string_lossy()])
-            .current_dir(&workdir)
+            .current_dir(workdir)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()

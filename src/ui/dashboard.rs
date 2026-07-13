@@ -29,6 +29,7 @@ pub fn render<'a>(
     core_running: bool,
     core_starting: bool,
     core_stopping: bool,
+    core_installed: bool,
     sys_proxy_enabled: bool,
     current_speed: &Bandwidth,
     speed_history: &[(u64, u64)],
@@ -117,6 +118,30 @@ pub fn render<'a>(
             .padding(theme::BTN_PAD_SM)
             .style(theme::button_danger)
             .on_press(Message::ToggleCore)
+        } else if gui_config.active_profile_id.is_none() {
+            button(
+                row![
+                    icon(crate::ui::icons::ICON_VPN),
+                    text(tr(lang, "btn_goto_profiles")).size(theme::TYPE_BTN_SM)
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
+            )
+            .padding(theme::BTN_PAD_SM)
+            .style(theme::button_primary)
+            .on_press(Message::TabChanged(crate::state::Tab::Profiles))
+        } else if !core_installed {
+            button(
+                row![
+                    icon(crate::ui::icons::ICON_SETTINGS),
+                    text(tr(lang, "btn_goto_settings")).size(theme::TYPE_BTN_SM)
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
+            )
+            .padding(theme::BTN_PAD_SM)
+            .style(theme::button_primary)
+            .on_press(Message::TabChanged(crate::state::Tab::Settings))
         } else {
             button(
                 row![icon(crate::ui::icons::ICON_START), text(tr(lang, "btn_start_core")).size(theme::TYPE_BTN_SM)]
