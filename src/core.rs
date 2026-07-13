@@ -1,6 +1,8 @@
 use std::fs::{self, File};
 use futures::StreamExt;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(target_os = "windows")]
+use std::io;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
