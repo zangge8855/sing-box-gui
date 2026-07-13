@@ -13,6 +13,7 @@ env:
 
 permissions:
   contents: read
+  checks: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -30,14 +31,18 @@ jobs:
       with:
         components: clippy, rustfmt
     - uses: Swatinem/rust-cache@v2
+    - name: Security audit
+      uses: rustsec/audit-check@v2.0.0
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
     - name: Check formatting (informative)
       run: cargo fmt --all -- --check
       continue-on-error: true
-    - run: cargo test --quiet
+    - run: cargo test --quiet --locked
     - name: Run clippy (informative)
-      run: cargo clippy --all-targets --quiet
+      run: cargo clippy --all-targets --quiet --locked
       continue-on-error: true
-    - run: cargo check
+    - run: cargo check --locked
 
   check-windows:
     name: Check Windows x86_64
@@ -48,7 +53,7 @@ jobs:
       with:
         targets: x86_64-pc-windows-msvc
     - uses: Swatinem/rust-cache@v2
-    - run: cargo check --target x86_64-pc-windows-msvc
+    - run: cargo check --locked --target x86_64-pc-windows-msvc
 
   build-windows:
     name: Build Windows Binaries
@@ -69,13 +74,13 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run unit tests
-      run: cargo test --quiet
+      run: cargo test --quiet --locked
 
     - name: Build x86_64 Binary
-      run: cargo build --release --target x86_64-pc-windows-msvc
+      run: cargo build --release --locked --target x86_64-pc-windows-msvc
 
     - name: Build ARM64 Binary
-      run: cargo build --release --target aarch64-pc-windows-msvc
+      run: cargo build --release --locked --target aarch64-pc-windows-msvc
 
     - name: Prepare Artifacts
       shell: bash
@@ -109,13 +114,13 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run unit tests
-      run: cargo test --quiet
+      run: cargo test --quiet --locked
 
     - name: Build Intel Binary
-      run: cargo build --release --target x86_64-apple-darwin
+      run: cargo build --release --locked --target x86_64-apple-darwin
 
     - name: Build Apple Silicon Binary
-      run: cargo build --release --target aarch64-apple-darwin
+      run: cargo build --release --locked --target aarch64-apple-darwin
 
     - name: Create Universal Binary
       run: |
@@ -154,10 +159,10 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run unit tests
-      run: cargo test --quiet
+      run: cargo test --quiet --locked
 
     - name: Build in Release mode
-      run: cargo build --release
+      run: cargo build --release --locked
 
     - name: Prepare Artifact
       run: |
@@ -193,10 +198,10 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run unit tests
-      run: cargo test --quiet
+      run: cargo test --quiet --locked
 
     - name: Build in Release mode
-      run: cargo build --release
+      run: cargo build --release --locked
 
     - name: Prepare Artifact
       run: |

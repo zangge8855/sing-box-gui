@@ -6,5 +6,6 @@ pub const ICON_SPEED: char = '\u{E32A}';
 pub const ICON_DOWN: char = '\u{E5DB}';
 pub const ICON_UP: char = '\u{E5D8}';
 pub const ICON_SETTINGS: char = '\u{E8B8}';
+pub const ICON_WARNING: char = '\u{E002}';
 pub const ICON_DELETE: &str = "\u{E5CD}";
 pub const ICON_ADD: &str = "\u{E145}";

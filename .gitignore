@@ -1,4 +1,5 @@
 /target
+/vendor/wayland-scanner/target/
 .system_generated/
 
 # App runtime artifacts (cache file written by sing-box under the data dir).

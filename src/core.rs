@@ -1,6 +1,6 @@
-use std::fs::{self, File};
 use futures::StreamExt;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Read};
 #[cfg(target_os = "windows")]
 use std::io;
 use std::path::PathBuf;
@@ -180,6 +180,50 @@ pub fn is_core_installed(gui_config: &GuiConfig) -> bool {
     get_core_path(gui_config).exists()
 }
 
+const MAX_CORE_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
+const MAX_CORE_BINARY_BYTES: u64 = 128 * 1024 * 1024;
+
+fn staged_core_path(dest_path: &std::path::Path) -> PathBuf {
+    let file_name = dest_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("sing-box");
+    dest_path.with_file_name(format!("{file_name}.new"))
+}
+
+fn install_staged_core(staged_path: &std::path::Path, dest_path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let file_name = dest_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("sing-box.exe");
+        let backup_path = dest_path.with_file_name(format!("{file_name}.bak"));
+        let _ = fs::remove_file(&backup_path);
+
+        if dest_path.exists() {
+            fs::rename(dest_path, &backup_path)
+                .map_err(|e| format!("Failed to stage the existing core for replacement: {e}"))?;
+        }
+
+        if let Err(error) = fs::rename(staged_path, dest_path) {
+            if backup_path.exists() {
+                let _ = fs::rename(&backup_path, dest_path);
+            }
+            return Err(format!("Failed to install the downloaded core: {error}"));
+        }
+
+        let _ = fs::remove_file(backup_path);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        fs::rename(staged_path, dest_path)
+            .map_err(|e| format!("Failed to install the downloaded core: {e}"))
+    }
+}
+
 /// Download official sing-box into the managed bin folder.
 /// When `force` is true, replace an existing binary (reinstall / upgrade pin).
 pub async fn download_core(
@@ -195,14 +239,9 @@ pub async fn download_core(
     if dest_path.exists() && !force {
         return Ok(());
     }
-    if force && dest_path.exists() {
-        let _ = progress_sender.try_send("Removing existing core for reinstall...".to_string());
-        fs::remove_file(&dest_path)
-            .map_err(|e| format!("Failed to remove existing core: {}", e))?;
-    }
-    
+
     let _ = progress_sender.try_send("Downloading sing-box core...".to_string());
-    
+
     let version = "1.13.14";
     
     #[cfg(target_os = "windows")]
@@ -218,118 +257,193 @@ pub async fn download_core(
     };
     
     #[cfg(target_os = "macos")]
-    let (url, archive_name, arch) = {
+    let (url, archive_name) = {
         #[cfg(target_arch = "aarch64")]
         let arch = "darwin-arm64";
         #[cfg(not(target_arch = "aarch64"))]
         let arch = "darwin-amd64";
         (
             format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.tar.gz", version, version, arch),
-            "temp_core.tar.gz",
-            arch
+            "temp_core.tar.gz"
         )
     };
     
     #[cfg(target_os = "linux")]
-    let (url, archive_name, arch) = {
+    let (url, archive_name) = {
         #[cfg(target_arch = "aarch64")]
         let arch = "linux-arm64";
         #[cfg(not(target_arch = "aarch64"))]
         let arch = "linux-amd64";
         (
             format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.tar.gz", version, version, arch),
-            "temp_core.tar.gz",
-            arch
+            "temp_core.tar.gz"
         )
     };
     
     let temp_archive_path = app_dir.join(archive_name);
-    
+    let staged_path = staged_core_path(&dest_path);
+
     let res = async {
-        let response = reqwest::get(&url).await
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(300))
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .map_err(|e| format!("Failed to build core download client: {e}"))?;
+        let response = client
+            .get(&url)
+            .send()
+            .await
             .map_err(|e| format!("Failed to download core: {}", e))?;
-            
+
         if !response.status().is_success() {
             return Err(format!("Server returned error: {}", response.status()));
         }
-        
-        let mut file = File::create(&temp_archive_path)
+
+        if response
+            .content_length()
+            .is_some_and(|size| size > MAX_CORE_ARCHIVE_BYTES as u64)
+        {
+            return Err("Downloaded core archive exceeds the 256 MiB safety limit".to_string());
+        }
+
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::File::create(&temp_archive_path)
+            .await
             .map_err(|e| format!("Failed to create temp archive file: {}", e))?;
-            
+
         let mut stream = response.bytes_stream();
+        let mut downloaded = 0usize;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| format!("Failed to read chunk: {}", e))?;
-            file.write_all(&chunk).map_err(|e| format!("Failed to write chunk: {}", e))?;
+            downloaded = downloaded.saturating_add(chunk.len());
+            if downloaded > MAX_CORE_ARCHIVE_BYTES {
+                return Err("Downloaded core archive exceeds the 256 MiB safety limit".to_string());
+            }
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("Failed to write chunk: {}", e))?;
         }
-            
+        file.flush()
+            .await
+            .map_err(|e| format!("Failed to flush core archive: {e}"))?;
+        drop(file);
+
         let _ = progress_sender.try_send("Extracting core...".to_string());
-        
+
+        let _ = fs::remove_file(&staged_path);
+
         #[cfg(target_os = "windows")]
         {
-            let zip_file = File::open(&temp_archive_path)
-                .map_err(|e| format!("Failed to open temp zip: {}", e))?;
-                
-            let mut archive = zip::ZipArchive::new(zip_file)
-                .map_err(|e| format!("Invalid zip archive: {}", e))?;
-                
-            let mut extracted = false;
-            let core_name = get_core_filename();
-            for i in 0..archive.len() {
-                let mut file = archive.by_index(i)
-                    .map_err(|e| format!("Failed to read zip index: {}", e))?;
-                    
-                let name = file.name().to_string();
-                if name.ends_with(core_name) {
-                    let mut outfile = File::create(&dest_path)
-                        .map_err(|e| format!("Failed to create target: {}", e))?;
-                    io::copy(&mut file, &mut outfile)
-                        .map_err(|e| format!("Failed to extract: {}", e))?;
-                    extracted = true;
-                    break;
+            let archive_path = temp_archive_path.clone();
+            let output_path = staged_path.clone();
+            tokio::task::spawn_blocking(move || {
+                let zip_file = File::open(&archive_path)
+                    .map_err(|e| format!("Failed to open temp zip: {e}"))?;
+                let mut archive = zip::ZipArchive::new(zip_file)
+                    .map_err(|e| format!("Invalid zip archive: {e}"))?;
+
+                for index in 0..archive.len() {
+                    let mut entry = archive
+                        .by_index(index)
+                        .map_err(|e| format!("Failed to read zip entry: {e}"))?;
+                    if !entry.name().ends_with(get_core_filename()) {
+                        continue;
+                    }
+                    if entry.size() == 0 || entry.size() > MAX_CORE_BINARY_BYTES {
+                        return Err("Downloaded core binary has an invalid size".to_string());
+                    }
+                    let mut output = File::create(&output_path)
+                        .map_err(|e| format!("Failed to create staged core: {e}"))?;
+                    io::copy(&mut entry, &mut output)
+                        .map_err(|e| format!("Failed to extract core: {e}"))?;
+                    output
+                        .sync_all()
+                        .map_err(|e| format!("Failed to flush staged core: {e}"))?;
+                    return Ok(());
                 }
-            }
-            if extracted {
-                Ok(())
-            } else {
-                Err(format!("Could not find {} inside downloaded zip package", core_name))
-            }
+                Err(format!(
+                    "Could not find {} inside downloaded zip package",
+                    get_core_filename()
+                ))
+            })
+            .await
+            .map_err(|e| format!("Core extraction task failed: {e}"))??;
         }
-        
+
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
-            // Extract .tar.gz natively (no dependency on the system `tar` binary,
-            // works on Alpine / minimal images) and copy the binary into place.
-            let tar_gz = File::open(&temp_archive_path)
-                .map_err(|e| format!("Failed to open temp archive: {}", e))?;
-            let gz = flate2::read::GzDecoder::new(tar_gz);
-            let mut archive = tar::Archive::new(gz);
+            let archive_path = temp_archive_path.clone();
+            let output_path = staged_path.clone();
+            tokio::task::spawn_blocking(move || {
+                let tar_gz = File::open(&archive_path)
+                    .map_err(|e| format!("Failed to open temp archive: {e}"))?;
+                let gz = flate2::read::GzDecoder::new(tar_gz);
+                let mut archive = tar::Archive::new(gz);
 
-            let extracted_dir_name = format!("sing-box-{}-{}", version, arch);
-            let extracted_dir = app_dir.join(&extracted_dir_name);
-            // Extract everything under the temp app dir so entry paths are safe.
-            archive
-                .unpack(&app_dir)
-                .map_err(|e| format!("Failed to extract tar.gz: {}", e))?;
+                for entry in archive
+                    .entries()
+                    .map_err(|e| format!("Failed to inspect tar.gz: {e}"))?
+                {
+                    let mut entry = entry.map_err(|e| format!("Failed to read tar entry: {e}"))?;
+                    let is_core = entry
+                        .path()
+                        .ok()
+                        .and_then(|path| path.file_name().map(|name| name == "sing-box"))
+                        .unwrap_or(false);
+                    if !is_core {
+                        continue;
+                    }
+                    let size = entry.header().size().unwrap_or(0);
+                    if size == 0 || size > MAX_CORE_BINARY_BYTES {
+                        return Err("Downloaded core binary has an invalid size".to_string());
+                    }
+                    let mut output = File::create(&output_path)
+                        .map_err(|e| format!("Failed to create staged core: {e}"))?;
+                    std::io::copy(&mut entry, &mut output)
+                        .map_err(|e| format!("Failed to extract core: {e}"))?;
+                    output
+                        .sync_all()
+                        .map_err(|e| format!("Failed to flush staged core: {e}"))?;
 
-            let src_binary = extracted_dir.join("sing-box");
-            if src_binary.exists() {
-                fs::copy(&src_binary, &dest_path)
-                    .map_err(|e| format!("Failed to copy sing-box binary: {}", e))?;
-                let _ = fs::remove_dir_all(&extracted_dir);
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        fs::set_permissions(&output_path, fs::Permissions::from_mode(0o755))
+                            .map_err(|e| format!("Failed to mark staged core executable: {e}"))?;
+                    }
+                    return Ok(());
+                }
+                Err("Could not find sing-box inside downloaded tar package".to_string())
+            })
+            .await
+            .map_err(|e| format!("Core extraction task failed: {e}"))??;
+        }
 
+        let staged_size = fs::metadata(&staged_path)
+            .map_err(|e| format!("Failed to verify staged core: {e}"))?
+            .len();
+        if staged_size == 0 || staged_size > MAX_CORE_BINARY_BYTES {
+            return Err("Downloaded core binary has an invalid size".to_string());
+        }
+
+        install_staged_core(&staged_path, &dest_path)?;
+
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            if let Ok(metadata) = fs::metadata(&dest_path) {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(0o755));
-                Ok(())
-            } else {
-                Err(format!(
-                    "Could not find sing-box inside extracted tar folder {}",
-                    extracted_dir_name
-                ))
+                let mut permissions = metadata.permissions();
+                permissions.set_mode(0o755);
+                let _ = fs::set_permissions(&dest_path, permissions);
             }
         }
-    }.await;
+
+        Ok(())
+    }
+    .await;
 
     let _ = fs::remove_file(&temp_archive_path);
+    let _ = fs::remove_file(&staged_path);
 
     match res {
         Ok(_) => {
@@ -601,6 +715,25 @@ mod tests {
         assert!(is_core_running_fast());
         CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
         assert!(!is_core_running_fast());
+    }
+
+    #[test]
+    fn staged_core_replacement_preserves_a_working_destination_until_install() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join(get_core_filename());
+        let staged = staged_core_path(&dest);
+        fs::write(&dest, b"old core").expect("seed old core");
+        fs::write(&staged, b"new core").expect("seed staged core");
+
+        install_staged_core(&staged, &dest).expect("install staged core");
+
+        assert_eq!(fs::read(&dest).expect("read installed core"), b"new core");
+        assert!(!staged.exists());
+        let backup = dest.with_file_name(format!(
+            "{}.bak",
+            dest.file_name().and_then(|name| name.to_str()).unwrap()
+        ));
+        assert!(!backup.exists());
     }
 
     #[test]

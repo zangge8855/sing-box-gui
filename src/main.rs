@@ -478,6 +478,29 @@ impl App {
         self.core_starting || self.core_stopping
     }
 
+    fn request_exit(&mut self) -> Task<Message> {
+        if !self.gui_config.close_core_on_exit {
+            return iced::exit();
+        }
+
+        self.pending_exit = true;
+        if self.core_starting {
+            self.force_stop_after_start = true;
+            return Task::none();
+        }
+        if self.core_stopping {
+            return Task::none();
+        }
+        if self.core_running || core::is_core_running_fast() {
+            return self.task_stop_core();
+        }
+
+        if sysproxy::is_system_proxy_owned() {
+            let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+        }
+        iced::exit()
+    }
+
     /// Schedule an async core stop (runs off the UI thread).
     fn task_stop_core(&mut self) -> Task<Message> {
         self.core_stopping = true;
@@ -684,11 +707,7 @@ impl App {
                         Task::done(Message::RoutingModeChanged(state::RoutingMode::Direct))
                     }
                     "exit_app" => {
-                        if self.gui_config.close_core_on_exit {
-                            self.pending_exit = true;
-                            return self.task_stop_core();
-                        }
-                        iced::exit()
+                        self.request_exit()
                     }
                     _ => Task::none(),
                 }
@@ -699,7 +718,11 @@ impl App {
             }
             Message::WindowCloseRequested(id) => {
                 self.window_id = Some(id);
-                iced::window::set_mode(id, iced::window::Mode::Hidden)
+                if self._tray_icon.is_some() {
+                    iced::window::set_mode(id, iced::window::Mode::Hidden)
+                } else {
+                    self.request_exit()
+                }
             }
             Message::TabChanged(tab) => {
                 self.current_tab = tab;
@@ -710,19 +733,18 @@ impl App {
                         last.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(2))
                     };
                     match tab {
-                        Tab::Proxies => {
-                            if !self.proxies_fetch_in_flight && stale(self.last_proxies_fetch) {
-                                self.proxies_fetch_in_flight = true;
-                                tasks.push(Task::perform(
-                                    async move { api::fetch_proxies(api_port).await },
-                                    |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
-                                ));
-                            }
+                        Tab::Proxies
+                            if !self.proxies_fetch_in_flight
+                                && stale(self.last_proxies_fetch) =>
+                        {
+                            self.proxies_fetch_in_flight = true;
+                            tasks.push(Task::perform(
+                                async move { api::fetch_proxies(api_port).await },
+                                |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
+                            ));
                         }
-                        Tab::Connections => {
-                            if stale(self.last_connections_fetch) {
-                                tasks.push(Task::done(Message::FetchConnections));
-                            }
+                        Tab::Connections if stale(self.last_connections_fetch) => {
+                            tasks.push(Task::done(Message::FetchConnections));
                         }
                         Tab::Dashboard => {
                             if !self.proxies_fetch_in_flight && stale(self.last_proxies_fetch) {
@@ -901,6 +923,15 @@ impl App {
                         self.toast_error(e);
                         // Drop pending restart so we don't loop on a broken config.
                         self.pending_core_restart = false;
+                        if self.pending_exit {
+                            if sysproxy::is_system_proxy_owned() {
+                                let _ = sysproxy::set_system_proxy(
+                                    false,
+                                    self.gui_config.mixed_port,
+                                );
+                            }
+                            return iced::exit();
+                        }
                         Task::none()
                     }
                 }
@@ -1893,22 +1924,23 @@ impl App {
                     return Task::none();
                 }
                 
-                let mixed_parsed = self.mixed_port_input_str.trim().parse::<u16>();
-                let api_parsed = self.api_port_input_str.trim().parse::<u16>();
-                
-                if mixed_parsed.is_err() || api_parsed.is_err() {
-                    let err = self.tr("port_invalid_error").to_string();
-                    self.log_lines.push_back(format!("[GUI ERROR] {}", err));
-                    self.core_install_msg = Some(err);
-                    return Task::none();
-                }
+                let (mixed_p, api_p) = match (
+                    self.mixed_port_input_str.trim().parse::<u16>(),
+                    self.api_port_input_str.trim().parse::<u16>(),
+                ) {
+                    (Ok(mixed), Ok(api)) => (mixed, api),
+                    _ => {
+                        let err = self.tr("port_invalid_error").to_string();
+                        self.log_lines.push_back(format!("[GUI ERROR] {}", err));
+                        self.core_install_msg = Some(err);
+                        return Task::none();
+                    }
+                };
 
                 // Reject reserved (0..1024) and identical mixed/api ports —
                 // the latter would collide on 127.0.0.1:port and FATAL the core.
-                let mixed_p = mixed_parsed.as_ref().unwrap();
-                let api_p = api_parsed.as_ref().unwrap();
                 let reserved_msg = self.tr("port_reserved_error").to_string();
-                if *mixed_p < 1024 || *api_p < 1024 {
+                if mixed_p < 1024 || api_p < 1024 {
                     self.log_lines.push_back(format!("[GUI ERROR] {}", reserved_msg));
                     self.core_install_msg = Some(reserved_msg);
                     return Task::none();
@@ -1933,8 +1965,8 @@ impl App {
                 }
 
                 self.core_install_msg = None;
-                self.gui_config.mixed_port = *mixed_p;
-                self.gui_config.api_port = *api_p;
+                self.gui_config.mixed_port = mixed_p;
+                self.gui_config.api_port = api_p;
                 self.gui_config.dns_server_local = dns_local.to_string();
                 self.gui_config.dns_server_remote = dns_remote.to_string();
                 let trimmed_core = self.core_path_input_str.trim();
@@ -2086,6 +2118,7 @@ impl App {
                     core_running,
                     core_starting,
                     core_stopping,
+                    core_installed,
                     sys_proxy_enabled,
                     current_speed_ref,
                     speed_history_ref,
@@ -2130,6 +2163,7 @@ impl App {
                 Tab::Connections => ui::connections::render(
                     gui_config_ref,
                     active_connections_ref,
+                    core_running,
                     connections_search_ref,
                     self.connections_sort,
                     self.connections_sort_desc,
@@ -2902,6 +2936,7 @@ fn is_valid_dns_server_address(value: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::assertions_on_constants)]
 mod tests {
     use super::*;
     use state::{GuiConfig, Profile};

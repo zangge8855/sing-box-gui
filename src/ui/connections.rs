@@ -21,6 +21,7 @@ impl std::fmt::Display for ConnectionSortOption {
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
     active_connections: &'a [Connection],
+    core_running: bool,
     search_query: &'a str,
     connections_sort: crate::state::ConnectionSort,
     connections_sort_desc: bool,
@@ -117,8 +118,12 @@ pub fn render<'a>(
 
         let close_all_btn = button(text(tr(lang, "close_all_conn")).size(theme::TYPE_BTN_MD))
             .padding(theme::BTN_PAD_MD)
-            .style(theme::button_danger)
-            .on_press(Message::CloseAllConnections);
+            .style(theme::button_danger);
+        let close_all_btn = if core_running && !active_connections.is_empty() {
+            close_all_btn.on_press(Message::CloseAllConnections)
+        } else {
+            close_all_btn
+        };
 
         let sort_options = vec![
             ConnectionSortOption { sort: crate::state::ConnectionSort::None, label: tr(lang, "sort_original").to_string() },
@@ -185,25 +190,33 @@ pub fn render<'a>(
                 } else {
                     tr(lang, "no_matching_connections")
                 };
-                let cta = if query_str.trim().is_empty() {
-                    button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
-                        .padding(theme::BTN_PAD_MD)
-                        .style(theme::button_primary)
-                        .on_press(Message::ToggleCore)
-                        .into()
-                } else {
-                    button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
+                let cta: Option<Element<'_, Message>> = if !query_str.trim().is_empty() {
+                    Some(button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
                         .padding(theme::BTN_PAD_MD)
                         .style(theme::button_secondary)
                         .on_press(Message::ConnectionsSearchChanged(String::new()))
-                        .into()
+                        .into())
+                } else if gui_config.active_profile_id.is_none() {
+                    Some(button(text(tr(lang, "btn_goto_profiles")).size(theme::TYPE_BTN_MD))
+                        .padding(theme::BTN_PAD_MD)
+                        .style(theme::button_primary)
+                        .on_press(Message::TabChanged(crate::state::Tab::Profiles))
+                        .into())
+                } else if !core_running {
+                    Some(button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
+                        .padding(theme::BTN_PAD_MD)
+                        .style(theme::button_primary)
+                        .on_press(Message::ToggleCore)
+                        .into())
+                } else {
+                    None
                 };
-                let hint = if query_str.trim().is_empty() {
+                let hint = if query_str.trim().is_empty() && !core_running {
                     Some(tr(lang, "empty_connections_hint"))
                 } else {
                     None
                 };
-                list = list.push(crate::ui::empty_state(empty_msg, hint, Some(cta), theme));
+                list = list.push(crate::ui::empty_state(empty_msg, hint, cta, theme));
             } else {
                 for conn in filtered_connections {
                     let host_full = if !conn.metadata.host.is_empty() {
@@ -373,25 +386,33 @@ pub fn render<'a>(
                 } else {
                     tr(lang, "no_matching_connections")
                 };
-                let cta = if query_str.trim().is_empty() {
-                    button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
-                        .padding(theme::BTN_PAD_MD)
-                        .style(theme::button_primary)
-                        .on_press(Message::ToggleCore)
-                        .into()
-                } else {
-                    button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
+                let cta: Option<Element<'_, Message>> = if !query_str.trim().is_empty() {
+                    Some(button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
                         .padding(theme::BTN_PAD_MD)
                         .style(theme::button_secondary)
                         .on_press(Message::ConnectionsSearchChanged(String::new()))
-                        .into()
+                        .into())
+                } else if gui_config.active_profile_id.is_none() {
+                    Some(button(text(tr(lang, "btn_goto_profiles")).size(theme::TYPE_BTN_MD))
+                        .padding(theme::BTN_PAD_MD)
+                        .style(theme::button_primary)
+                        .on_press(Message::TabChanged(crate::state::Tab::Profiles))
+                        .into())
+                } else if !core_running {
+                    Some(button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
+                        .padding(theme::BTN_PAD_MD)
+                        .style(theme::button_primary)
+                        .on_press(Message::ToggleCore)
+                        .into())
+                } else {
+                    None
                 };
-                let hint = if query_str.trim().is_empty() {
+                let hint = if query_str.trim().is_empty() && !core_running {
                     Some(tr(lang, "empty_connections_hint"))
                 } else {
                     None
                 };
-                list = list.push(crate::ui::empty_state(empty_msg, hint, Some(cta), theme));
+                list = list.push(crate::ui::empty_state(empty_msg, hint, cta, theme));
             } else {
                 let len = filtered_connections.len();
                 for (idx, conn) in filtered_connections.into_iter().enumerate() {

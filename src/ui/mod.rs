@@ -39,6 +39,7 @@ pub const DASHBOARD_COMPACT_W: f32 = 900.0;
 pub const PAGE_MAX_WIDTH: f32 = 1200.0;
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module, clippy::assertions_on_constants)]
 mod tests {
     use super::*;
 
