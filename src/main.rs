@@ -140,6 +140,9 @@ struct App {
     poll_tick_counter: u32,
     proxies_fetch_in_flight: bool,
     connections_fetch_in_flight: bool,
+    last_proxies_fetch: Option<std::time::Instant>,
+    last_connections_fetch: Option<std::time::Instant>,
+    config_save_in_flight: bool,
     
     connections_sort: state::ConnectionSort,
     connections_sort_desc: bool,
@@ -350,6 +353,9 @@ impl App {
             poll_tick_counter: 0,
             proxies_fetch_in_flight: false,
             connections_fetch_in_flight: false,
+            last_proxies_fetch: None,
+            last_connections_fetch: None,
+            config_save_in_flight: false,
             connections_sort: state::ConnectionSort::None,
             connections_sort_desc: false,
             proxy_sort: state::ProxySort::Latency,
@@ -697,9 +703,12 @@ impl App {
                 let mut tasks = Vec::new();
                 if self.core_running && !self.core_busy() {
                     let api_port = self.gui_config.api_port;
+                    let stale = |last: Option<std::time::Instant>| {
+                        last.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(2))
+                    };
                     match tab {
                         Tab::Proxies => {
-                            if !self.proxies_fetch_in_flight {
+                            if !self.proxies_fetch_in_flight && stale(self.last_proxies_fetch) {
                                 self.proxies_fetch_in_flight = true;
                                 tasks.push(Task::perform(
                                     async move { api::fetch_proxies(api_port).await },
@@ -708,17 +717,21 @@ impl App {
                             }
                         }
                         Tab::Connections => {
-                            tasks.push(Task::done(Message::FetchConnections));
+                            if stale(self.last_connections_fetch) {
+                                tasks.push(Task::done(Message::FetchConnections));
+                            }
                         }
                         Tab::Dashboard => {
-                            if !self.proxies_fetch_in_flight {
+                            if !self.proxies_fetch_in_flight && stale(self.last_proxies_fetch) {
                                 self.proxies_fetch_in_flight = true;
                                 tasks.push(Task::perform(
                                     async move { api::fetch_proxies(api_port).await },
                                     |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
                                 ));
                             }
-                            tasks.push(Task::done(Message::FetchConnections));
+                            if stale(self.last_connections_fetch) {
+                                tasks.push(Task::done(Message::FetchConnections));
+                            }
                         }
                         _ => {}
                     }
@@ -829,7 +842,10 @@ impl App {
                 self.proxies_fetch_in_flight = false;
                 match res {
                     Ok(groups_map) => {
-                        self.proxy_groups = groups_map;
+                        self.last_proxies_fetch = Some(std::time::Instant::now());
+                        if self.proxy_groups != groups_map {
+                            self.proxy_groups = groups_map;
+                        }
                         if self.selected_group.is_empty() && !self.proxy_groups.is_empty() {
                             if self.proxy_groups.contains_key("Proxy") {
                                 self.selected_group = "Proxy".to_string();
@@ -1076,6 +1092,9 @@ impl App {
                 Task::none()
             }
             Message::TrafficUpdated { up, down } => {
+                if self.current_speed.up == up && self.current_speed.down == down {
+                    return Task::none();
+                }
                 self.current_speed = Bandwidth { up, down };
                 self.speed_history.push((up, down));
                 if self.speed_history.len() > 30 {
@@ -1423,9 +1442,20 @@ impl App {
             Message::Tick => {
                 self.theme_check_counter = self.theme_check_counter.wrapping_add(1);
 
-                if self.config_dirty {
-                    let _ = config::save_gui_config(&self.gui_config);
+                let mut tasks = Vec::new();
+                if self.config_dirty && !self.config_save_in_flight {
+                    let cfg = self.gui_config.clone();
                     self.config_dirty = false;
+                    self.config_save_in_flight = true;
+                    tasks.push(Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || config::save_gui_config(&cfg))
+                                .await
+                                .map_err(|e| e.to_string())
+                                .and_then(|result| result)
+                        },
+                        Message::ConfigSaved,
+                    ));
                 }
 
                 // Lock-free fast path; during async start/stop prefer the transition flags.
@@ -1451,7 +1481,6 @@ impl App {
 
                 // Auto-update scan every 60 seconds
                 self.auto_update_tick_counter = self.auto_update_tick_counter.saturating_add(1);
-                let mut tasks = Vec::new();
                 if self.gui_config.theme == state::AppTheme::Auto
                     && self.theme_check_counter.is_multiple_of(15)
                 {
@@ -1512,6 +1541,14 @@ impl App {
 
                 Task::batch(tasks)
             }
+            Message::ConfigSaved(result) => {
+                self.config_save_in_flight = false;
+                if let Err(error) = result {
+                    self.config_dirty = true;
+                    self.log_lines.push_back(format!("[GUI] Failed to save settings: {error}"));
+                }
+                Task::none()
+            }
             Message::SystemThemeDetected(is_light) => {
                 self.cached_system_is_light = is_light;
                 Task::none()
@@ -1551,9 +1588,17 @@ impl App {
             }
             Message::ConnectionsFetched(Ok(res)) => {
                 self.connections_fetch_in_flight = false;
-                self.active_connections = res.connections.unwrap_or_default();
-                self.total_downloaded = res.download_total;
-                self.total_uploaded = res.upload_total;
+                self.last_connections_fetch = Some(std::time::Instant::now());
+                let connections = res.connections.unwrap_or_default();
+                if self.active_connections != connections {
+                    self.active_connections = connections;
+                }
+                if self.total_downloaded != res.download_total {
+                    self.total_downloaded = res.download_total;
+                }
+                if self.total_uploaded != res.upload_total {
+                    self.total_uploaded = res.upload_total;
+                }
                 Task::none()
             }
             Message::ConnectionsFetched(Err(_e)) => {
@@ -3021,21 +3066,17 @@ mod tests {
 
     #[test]
     fn should_poll_api_is_tab_aware() {
-        // Proxies: always proxies, never connections
-        let (p, c) = should_poll_api(state::Tab::Proxies, 1);
+        // Active data pages poll at a restrained cadence.
+        let (p, c) = should_poll_api(state::Tab::Proxies, 3);
         assert!(p && !c);
-        // Connections: connections on even ticks only
-        let (p, c) = should_poll_api(state::Tab::Connections, 2);
+        let (p, c) = should_poll_api(state::Tab::Connections, 3);
         assert!(!p && c);
         let (p, c) = should_poll_api(state::Tab::Connections, 1);
         assert!(!p && !c);
-        // Logs: sparse background proxies only
+        // Inactive pages do no API work.
         let (p, c) = should_poll_api(state::Tab::Logs, 5);
-        assert!(p && !c);
-        let (p, c) = should_poll_api(state::Tab::Logs, 1);
         assert!(!p && !c);
-        // Dashboard: proxies every 2, connections every 3
-        let (p, c) = should_poll_api(state::Tab::Dashboard, 6);
+        let (p, c) = should_poll_api(state::Tab::Dashboard, 15);
         assert!(p && c);
     }
 
@@ -3058,13 +3099,13 @@ mod tests {
 /// Whether Tick should poll proxies / connections for the given tab and tick.
 fn should_poll_api(tab: state::Tab, tick: u32) -> (bool, bool) {
     let want_proxies = match tab {
-        state::Tab::Proxies => true,
-        state::Tab::Dashboard => tick.is_multiple_of(2),
-        _ => tick.is_multiple_of(5),
+        state::Tab::Proxies => tick.is_multiple_of(3),
+        state::Tab::Dashboard => tick.is_multiple_of(3),
+        _ => false,
     };
     let want_connections = match tab {
-        state::Tab::Connections => tick.is_multiple_of(2),
-        state::Tab::Dashboard => tick.is_multiple_of(3),
+        state::Tab::Connections => tick.is_multiple_of(3),
+        state::Tab::Dashboard => tick.is_multiple_of(5),
         _ => false,
     };
     (want_proxies, want_connections)

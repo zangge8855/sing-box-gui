@@ -103,7 +103,7 @@ pub fn render<'a>(
 
         // Iced builds widget trees eagerly. Bound the visible rows so a busy
         // torrent/browser session cannot freeze the UI with thousands of rows.
-        const MAX_VISIBLE_CONNECTIONS: usize = 250;
+        const MAX_VISIBLE_CONNECTIONS: usize = 100;
         let hidden_connections = filtered_connections
             .len()
             .saturating_sub(MAX_VISIBLE_CONNECTIONS);
