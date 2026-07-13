@@ -2227,7 +2227,7 @@ impl App {
             };
 
             let logo_handle = iced::widget::image::Handle::from_bytes(
-                include_bytes!("../assets/icon.ico").as_slice()
+                include_bytes!("../assets/app-icon.png").as_slice()
             );
             let status_dot_color = if core_running {
                 ui::theme::SUCCESS
@@ -2556,7 +2556,7 @@ fn tray_subscription() -> impl iced::futures::Stream<Item = Message> {
 }
 
 fn load_icon_safe() -> Option<tray_icon::Icon> {
-    let icon_bytes = include_bytes!("../assets/icon.ico");
+    let icon_bytes = include_bytes!("../assets/app-icon.png");
     match image::load_from_memory(icon_bytes) {
         Ok(img) => {
             let rgba_img = img.resize(32, 32, image::imageops::FilterType::Lanczos3).into_rgba8();
@@ -3434,7 +3434,7 @@ exec "$TARGET"
 /// using dotted numeric comparison. Falls back to string inequality when
 /// neither side parses at all.
 fn main() -> iced::Result {
-    let icon_bytes = include_bytes!("../assets/icon.ico");
+    let icon_bytes = include_bytes!("../assets/app-icon.png");
     let icon = iced::window::icon::from_file_data(icon_bytes, None).ok();
     
     let window_settings = iced::window::Settings {

@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn check_icon_loading() {
-        let bytes = include_bytes!("../../assets/icon.ico");
+        let bytes = include_bytes!("../../assets/app-icon.png");
         let icon = iced::window::icon::from_file_data(bytes, None);
         assert!(icon.is_ok(), "Failed to load icon: {:?}", icon.err());
     }
