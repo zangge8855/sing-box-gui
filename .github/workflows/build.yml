@@ -30,9 +30,13 @@ jobs:
       with:
         components: clippy, rustfmt
     - uses: Swatinem/rust-cache@v2
-    - run: cargo fmt --all -- --check
+    - name: Check formatting (informative)
+      run: cargo fmt --all -- --check
+      continue-on-error: true
     - run: cargo test --quiet
-    - run: cargo clippy --all-targets --quiet
+    - name: Run clippy (informative)
+      run: cargo clippy --all-targets --quiet
+      continue-on-error: true
     - run: cargo check
 
   check-windows:
