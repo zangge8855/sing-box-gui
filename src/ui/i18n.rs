@@ -66,6 +66,9 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "sort_download",
     "sort_upload",
     "connections_hidden_hint",
+    "btn_add_rule",
+    "no_custom_rules",
+    "appearance_settings",
 ];
 
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
@@ -174,6 +177,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "port_empty_error" => "Port numbers cannot be empty.",
             "port_invalid_error" => "Ports must be valid numbers between 1 and 65535.",
             "invalid_port" => "Enter a valid port number.",
+            "appearance_settings" => "Appearance",
             "port_reserved_error" => "Ports below 1024 are reserved; choose higher ports.",
             "port_conflict_error" => "Mixed proxy and Clash API ports must be different.",
             "settings_saved_toast" => "Settings saved and applied.",
@@ -198,6 +202,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "rules_bypass_ips" => "Bypass IPs/CIDRs",
             "rules_proxy_ips" => "Proxy IPs/CIDRs",
             "rules_desc" => "Enter domains or IPs and press + to add.",
+            "btn_add_rule" => "Add",
+            "no_custom_rules" => "No custom rules yet",
             "no_groups" => "No active proxy groups. Start the core to enable group routing.",
             
             // Logs
@@ -441,6 +447,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "port_empty_error" => "端口号不能为空。",
             "port_invalid_error" => "端口必须是 1 到 65535 之间的有效数字。",
             "invalid_port" => "请输入有效的端口号。",
+            "appearance_settings" => "外观与语言",
             "port_reserved_error" => "1024 以下为系统保留端口，请选择更高的端口。",
             "port_conflict_error" => "混合代理端口和 Clash API 端口不能相同。",
             "settings_saved_toast" => "设置已保存并应用。",
@@ -465,6 +472,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "rules_bypass_ips" => "绕过 IP/网段 (直连)",
             "rules_proxy_ips" => "代理 IP/网段 (代理)",
             "rules_desc" => "输入域名或 IP 并按 + 添加。",
+            "btn_add_rule" => "添加",
+            "no_custom_rules" => "暂无自定义规则",
             "no_groups" => "没有活动代理组。启动内核以启用分组路由。",
             
             // Logs

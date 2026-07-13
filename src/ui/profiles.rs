@@ -64,10 +64,10 @@ pub fn render<'a>(
         
         let open_folder_btn = button(
             text(tr(lang, "btn_open_folder"))
-                .size(theme::TYPE_BTN_LG)
+                .size(theme::TYPE_BTN_MD)
                 .align_x(Alignment::Center)
         )
-        .padding(theme::BTN_PAD_LG)
+        .padding(theme::BTN_PAD_MD)
         .style(theme::button_secondary)
         .on_press(Message::OpenProfilesFolder);
 
@@ -92,12 +92,7 @@ pub fn render<'a>(
         let form_layout: Element<'a, Message> = if is_compact {
             column![
                 input,
-                row![
-                    download_btn.width(Length::Fill),
-                    open_folder_btn.width(Length::Fill)
-                ]
-                .spacing(crate::ui::SP_12)
-                .width(Length::Fill),
+                download_btn.width(Length::Fill),
                 row![
                     clipboard_btn.width(Length::Fill),
                     file_btn.width(Length::Fill)
@@ -112,8 +107,7 @@ pub fn render<'a>(
             column![
                 row![
                     input,
-                    download_btn,
-                    open_folder_btn
+                    download_btn
                 ]
                 .spacing(crate::ui::SP_12)
                 .align_y(Alignment::Center)
@@ -133,7 +127,7 @@ pub fn render<'a>(
         
         let add_form = container(
             column![
-                text(tr(lang, "import_sub")).color(text_muted).size(theme::TYPE_HEADING),
+                text(tr(lang, "import_sub")).color(text_primary).size(theme::TYPE_HEADING).font(theme::ui_font(iced::font::Weight::Semibold)),
                 form_layout
             ]
             .spacing(crate::ui::SP_12)
@@ -474,11 +468,11 @@ pub fn render<'a>(
         }
         
         main_layout_col = main_layout_col.push(
-            text(tr(lang, "imported_profiles")).color(text_muted).size(theme::TYPE_HEADING)
+            text(tr(lang, "imported_profiles")).color(text_primary).size(theme::TYPE_HEADING).font(theme::ui_font(iced::font::Weight::Semibold))
         );
         main_layout_col = main_layout_col.push(grid_content);
         
-        let header = page_header("tab_profiles", lang, None, theme, is_compact);
+        let header = page_header("tab_profiles", lang, Some(open_folder_btn.into()), theme, is_compact);
         
         let col = column![header, main_layout_col]
             .spacing(crate::ui::SP_20)

@@ -558,14 +558,9 @@ pub fn render<'a>(
             None
         };
 
-        let mut content_col = column![
-            control_panel,
-            summary_card,
-            traffic_panel,
-            chart_card
-        ]
-        .spacing(crate::ui::SP_20)
-        .width(Length::Fill);
+        let mut content_col = column![]
+            .spacing(crate::ui::SP_20)
+            .width(Length::Fill);
 
         if gui_config.tun_mode {
             content_col = content_col.push(
@@ -575,6 +570,12 @@ pub fn render<'a>(
                     .style(|t| theme::tinted_banner(t, theme::WARNING)),
             );
         }
+
+        content_col = content_col
+            .push(control_panel)
+            .push(summary_card)
+            .push(traffic_panel)
+            .push(chart_card);
 
         if let Some(hint) = empty_hint {
             content_col = content_col.push(hint);
