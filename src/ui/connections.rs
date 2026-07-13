@@ -239,10 +239,7 @@ pub fn render<'a>(
                                 text(truncate_chars(&host_full, 48))
                                     .color(text_primary)
                                     .size(theme::TYPE_SECTION)
-                                    .font(iced::Font {
-                                        weight: iced::font::Weight::Bold,
-                                        ..Default::default()
-                                    })
+                                    .font(theme::ui_font(iced::font::Weight::Bold))
                                     .width(Length::Fill),
                                 close_btn
                             ]
@@ -314,10 +311,7 @@ pub fn render<'a>(
                 button(
                     text(label)
                         .size(theme::TYPE_SECTION)
-                        .font(iced::Font {
-                            weight: if is_sorted { iced::font::Weight::Bold } else { iced::font::Weight::Semibold },
-                            ..Default::default()
-                        })
+                        .font(theme::ui_font(if is_sorted { iced::font::Weight::Bold } else { iced::font::Weight::Semibold }))
                 )
                 .style(theme::button_header)
                 .padding([4, 6])
@@ -335,10 +329,7 @@ pub fn render<'a>(
                 button(
                     text(final_label)
                         .size(theme::TYPE_SECTION)
-                        .font(iced::Font {
-                            weight: if is_sorted { iced::font::Weight::Bold } else { iced::font::Weight::Semibold },
-                            ..Default::default()
-                        })
+                        .font(theme::ui_font(if is_sorted { iced::font::Weight::Bold } else { iced::font::Weight::Semibold }))
                 )
                 .style(theme::button_header)
                 .padding([4, 6])

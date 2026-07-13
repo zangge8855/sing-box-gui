@@ -169,10 +169,7 @@ pub fn render<'a>(
                     
                     let g_btn = button(
                         column![
-                            text(g.name.clone()).size(theme::TYPE_BTN_SM).font(iced::Font {
-                                weight: iced::font::Weight::Bold,
-                                ..Default::default()
-                            }).color(if is_active { theme::ACCENT_PURPLE } else { text_primary }),
+                            text(g.name.clone()).size(theme::TYPE_BTN_SM).font(theme::ui_font(iced::font::Weight::Bold)).color(if is_active { theme::ACCENT_PURPLE } else { text_primary }),
                             text(crate::ui::util::truncate_chars(active_node, 16))
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active { theme::ACCENT_PURPLE } else { theme::text_muted(theme) })
@@ -198,10 +195,7 @@ pub fn render<'a>(
                     
                     let g_btn = button(
                         column![
-                            text(g.name.clone()).size(theme::TYPE_SECTION).font(iced::Font {
-                                weight: iced::font::Weight::Bold,
-                                ..Default::default()
-                            }).color(if is_active { theme::ACCENT_PURPLE } else { text_primary }),
+                            text(g.name.clone()).size(theme::TYPE_SECTION).font(theme::ui_font(iced::font::Weight::Bold)).color(if is_active { theme::ACCENT_PURPLE } else { text_primary }),
                             text(crate::ui::util::truncate_chars(active_node, 20))
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active { theme::ACCENT_PURPLE } else { theme::text_muted(theme) })
@@ -641,7 +635,7 @@ fn render_proxy_card<'a>(
             text(node_type.to_uppercase())
                 .size(theme::TYPE_MICRO)
                 .color(text_muted)
-                .font(iced::Font { weight: iced::font::Weight::Bold, ..Default::default() })
+                .font(theme::ui_font(iced::font::Weight::Bold))
         )
         .padding([2, 6])
         .style(theme::badge_bg);

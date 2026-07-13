@@ -292,10 +292,7 @@ pub fn render<'a>(
                         .into();
                         
                     let form_col = column![
-                        text(tr(lang, "edit_link_title")).color(text_primary).size(theme::TYPE_HEADING).font(iced::Font {
-                            weight: iced::font::Weight::Bold,
-                            ..Default::default()
-                        }),
+                        text(tr(lang, "edit_link_title")).color(text_primary).size(theme::TYPE_HEADING).font(theme::ui_font(iced::font::Weight::Bold)),
                         column![
                             text(tr(lang, "placeholder_profile_name")).color(text_muted).size(theme::TYPE_CAPTION),
                             name_input
@@ -394,10 +391,7 @@ pub fn render<'a>(
                         text(truncate_chars(&profile.name, 36))
                             .color(text_primary)
                             .size(theme::TYPE_BODY)
-                            .font(iced::Font {
-                                weight: iced::font::Weight::Bold,
-                                ..Default::default()
-                            }),
+                            .font(theme::ui_font(iced::font::Weight::Bold)),
                         text(display_url).color(text_muted).size(theme::TYPE_BTN_SM),
                         text(format!("{}: {}", tr(lang, "updated_at_label"), profile.updated_at)).color(text_muted).size(theme::TYPE_CAPTION),
                     ]
