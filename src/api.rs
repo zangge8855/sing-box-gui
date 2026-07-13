@@ -38,7 +38,7 @@ pub struct TrafficInfo {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ProxyInfo {
     pub name: String,
     #[serde(rename = "type")]
@@ -59,7 +59,7 @@ pub struct DelayResponse {
     pub delay: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ConnectionMetadata {
     pub network: String,
     #[serde(rename = "type")]
@@ -118,7 +118,7 @@ mod tests {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct Connection {
     pub id: String,
     pub metadata: ConnectionMetadata,

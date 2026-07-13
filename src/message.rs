@@ -52,6 +52,7 @@ pub enum Message {
     StartLatencyTest,
     NodeLatencyTested { tag: String, latency: Option<u64> },
     Tick,
+    ConfigSaved(Result<(), String>),
     SystemThemeDetected(bool),
     RoutingModeChanged(RoutingMode),
     ModeSet(Result<String, String>),

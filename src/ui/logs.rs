@@ -26,12 +26,15 @@ pub fn render<'a>(
     let total_lines = log_lines.len();
     // Filter once per view rebuild (not full buffer clone when search/filter reduces size).
     let q_lower = log_search.to_lowercase();
-    let filtered_lines: Vec<String> = log_lines
+    const MAX_VISIBLE_LOG_LINES: usize = 400;
+    let mut filtered_lines: Vec<&String> = log_lines
         .iter()
         .filter(|line| log_filter.matches(line))
         .filter(|line| q_lower.is_empty() || line.to_lowercase().contains(&q_lower))
-        .cloned()
         .collect();
+    if filtered_lines.len() > MAX_VISIBLE_LOG_LINES {
+        filtered_lines.drain(..filtered_lines.len() - MAX_VISIBLE_LOG_LINES);
+    }
     
     let main_content = responsive(move |size| {
         let theme = &theme_cloned;
@@ -106,7 +109,7 @@ pub fn render<'a>(
             };
             
             logs_col = logs_col.push(
-                text(line.clone())
+                text(line.as_str())
                     .font(theme::mono_font())
                     .color(line_color)
                     .size(theme::TYPE_MONO)
