@@ -507,10 +507,7 @@ pub fn render<'a>(
                 text(crate::ui::util::truncate_chars(node_label, 36))
                     .color(theme::text_primary(theme))
                     .size(theme::TYPE_BODY)
-                    .font(iced::Font {
-                        weight: iced::font::Weight::Medium,
-                        ..Default::default()
-                    }),
+                    .font(theme::ui_font(iced::font::Weight::Medium)),
             ]
             .spacing(4)
             .width(Length::Fill)

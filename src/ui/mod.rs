@@ -96,8 +96,15 @@ mod tests {
     }
 
     #[test]
+    fn bundled_cjk_font_asset_is_present() {
+        let bytes = include_bytes!("../../assets/NotoSansCJK-Regular.ttc");
+        assert!(bytes.len() > 1_000_000, "bundled CJK font is unexpectedly small");
+        assert_eq!(&bytes[0..4], b"ttcf", "bundled CJK font must be a TTC collection");
+    }
+
+    #[test]
     fn check_icon_loading() {
-        let bytes = include_bytes!("../../assets/logo.jpg");
+        let bytes = include_bytes!("../../assets/icon.ico");
         let icon = iced::window::icon::from_file_data(bytes, None);
         assert!(icon.is_ok(), "Failed to load icon: {:?}", icon.err());
     }
@@ -153,10 +160,7 @@ pub fn page_header<'a>(
     let text_primary = ui_theme::text_primary(theme);
     let title = text(crate::ui::i18n::tr(lang, title_key))
         .size(ui_theme::TYPE_TITLE)
-        .font(iced::Font {
-            weight: iced::font::Weight::Semibold,
-            ..Default::default()
-        })
+        .font(ui_theme::ui_font(iced::font::Weight::Semibold))
         .color(text_primary);
 
     let content: Element<'a, Message> = if is_compact {
@@ -284,10 +288,7 @@ pub fn empty_state<'a>(
         text(title)
             .size(ui_theme::TYPE_HEADING)
             .color(ui_theme::text_primary(theme))
-            .font(iced::Font {
-                weight: iced::font::Weight::Medium,
-                ..Default::default()
-            }),
+            .font(ui_theme::ui_font(iced::font::Weight::Medium)),
     ]
     .spacing(SP_8)
     .align_x(Alignment::Center);

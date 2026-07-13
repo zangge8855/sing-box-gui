@@ -26,10 +26,7 @@ pub fn render<'a>(
 
         let builtin_banner = container(
             column![
-                text(tr(lang, "rules_builtin_title")).color(text_primary).size(theme::TYPE_HEADING).font(iced::Font {
-                    weight: iced::font::Weight::Bold,
-                    ..Default::default()
-                }),
+                text(tr(lang, "rules_builtin_title")).color(text_primary).size(theme::TYPE_HEADING).font(theme::ui_font(iced::font::Weight::Bold)),
                 text(tr(lang, "rules_builtin_desc")).color(text_muted).size(theme::TYPE_BTN_SM),
             ]
             .spacing(crate::ui::SP_8)
@@ -115,10 +112,7 @@ pub fn render<'a>(
                 
             container(
                 column![
-                    text(tr(lang, title_key)).color(text_primary).size(theme::TYPE_HEADING).font(iced::Font {
-                        weight: iced::font::Weight::Semibold,
-                        ..Default::default()
-                    }),
+                    text(tr(lang, title_key)).color(text_primary).size(theme::TYPE_HEADING).font(theme::ui_font(iced::font::Weight::Semibold)),
                     row![input_box, add_btn].spacing(crate::ui::SP_12).align_y(Alignment::Center),
                     list_content
                 ]

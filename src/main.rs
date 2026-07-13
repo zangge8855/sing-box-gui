@@ -2194,10 +2194,7 @@ impl App {
                             .size(ui::ICON_SIZE),
                         text(ui::i18n::tr(lang, key))
                             .size(ui::theme::TYPE_BODY)
-                            .font(Font {
-                                weight: if active { iced::font::Weight::Bold } else { iced::font::Weight::Medium },
-                                ..Default::default()
-                            })
+                            .font(ui::theme::ui_font(if active { iced::font::Weight::Bold } else { iced::font::Weight::Medium }))
                     ]
                     .spacing(ui::SP_12)
                     .align_y(Alignment::Center)
@@ -2230,7 +2227,7 @@ impl App {
             };
 
             let logo_handle = iced::widget::image::Handle::from_bytes(
-                include_bytes!("../assets/logo.jpg").as_slice()
+                include_bytes!("../assets/icon.ico").as_slice()
             );
             let status_dot_color = if core_running {
                 ui::theme::SUCCESS
@@ -2327,17 +2324,11 @@ impl App {
                                 column![
                                     text("sing-box")
                                         .size(18)
-                                        .font(Font {
-                                            weight: iced::font::Weight::Semibold,
-                                            ..Default::default()
-                                        })
+                                        .font(ui::theme::ui_font(iced::font::Weight::Semibold))
                                         .color(ui::theme::text_primary(theme)),
                                     text("GUI")
                                         .size(ui::theme::TYPE_CAPTION)
-                                        .font(Font {
-                                            weight: iced::font::Weight::Medium,
-                                            ..Default::default()
-                                        })
+                                        .font(ui::theme::ui_font(iced::font::Weight::Medium))
                                         .color(ui::theme::text_tertiary(theme)),
                                 ]
                                 .spacing(0)
@@ -2565,8 +2556,8 @@ fn tray_subscription() -> impl iced::futures::Stream<Item = Message> {
 }
 
 fn load_icon_safe() -> Option<tray_icon::Icon> {
-    let logo_bytes = include_bytes!("../assets/logo.jpg");
-    match image::load_from_memory(logo_bytes) {
+    let icon_bytes = include_bytes!("../assets/icon.ico");
+    match image::load_from_memory(icon_bytes) {
         Ok(img) => {
             let rgba_img = img.resize(32, 32, image::imageops::FilterType::Lanczos3).into_rgba8();
             let (width, height) = rgba_img.dimensions();
@@ -3443,13 +3434,8 @@ exec "$TARGET"
 /// using dotted numeric comparison. Falls back to string inequality when
 /// neither side parses at all.
 fn main() -> iced::Result {
-    #[cfg(target_os = "windows")]
-    let icon = None;
-    #[cfg(not(target_os = "windows"))]
-    let icon = {
-        let icon_bytes = include_bytes!("../assets/logo.jpg");
-        iced::window::icon::from_file_data(icon_bytes, None).ok()
-    };
+    let icon_bytes = include_bytes!("../assets/icon.ico");
+    let icon = iced::window::icon::from_file_data(icon_bytes, None).ok();
     
     let window_settings = iced::window::Settings {
         size: iced::Size::new(1080.0, 750.0),
@@ -3460,16 +3446,17 @@ fn main() -> iced::Result {
         ..Default::default()
     };
 
-    let default_font = iced::Font {
-        family: iced::font::Family::SansSerif,
-        ..Default::default()
-    };
+    // Bundle a consistent CJK-capable UI face. Relying on the platform's
+    // generic SansSerif fallback caused Chinese text and symbols to render as
+    // tofu boxes on some Windows installations.
+    let default_font = iced::Font::with_name(ui::theme::UI_FONT_NAME);
 
     let res = iced::application(App::new, App::update, App::view)
         .title("sing-box GUI")
         .window(window_settings)
         .theme(App::theme)
         .default_font(default_font)
+        .font(include_bytes!("../assets/NotoSansCJK-Regular.ttc").as_slice())
         .font(include_bytes!("../assets/material-icons.ttf").as_slice())
         .subscription(App::subscription)
         .run();

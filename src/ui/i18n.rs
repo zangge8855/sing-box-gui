@@ -633,4 +633,41 @@ mod tests {
         );
         assert_ne!(tr(Language::En, "btn_more"), tr(Language::Zh, "btn_more"));
     }
+
+    #[test]
+    fn literal_ui_translation_keys_resolve_in_both_languages() {
+        let sources = [
+            include_str!("../main.rs"),
+            include_str!("dashboard.rs"),
+            include_str!("profiles.rs"),
+            include_str!("proxies.rs"),
+            include_str!("connections.rs"),
+            include_str!("logs.rs"),
+            include_str!("rules.rs"),
+            include_str!("settings.rs"),
+            include_str!("mod.rs"),
+        ];
+        let needles = ["tr(lang, \"", "self.tr(\""];
+        let mut checked = std::collections::BTreeSet::new();
+
+        for source in sources {
+            for needle in needles {
+                let mut rest = source;
+                while let Some(start) = rest.find(needle) {
+                    rest = &rest[start + needle.len()..];
+                    let Some(end) = rest.find('"') else { break };
+                    let key = &rest[..end];
+                    rest = &rest[end + 1..];
+                    if !checked.insert(key) {
+                        continue;
+                    }
+                    let key: &'static str = Box::leak(key.to_string().into_boxed_str());
+                    assert_ne!(tr(Language::En, key), key, "missing English translation: {key}");
+                    assert_ne!(tr(Language::Zh, key), key, "missing Chinese translation: {key}");
+                }
+            }
+        }
+
+        assert!(checked.len() > 80, "translation audit scanned too few keys");
+    }
 }

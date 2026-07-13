@@ -6,6 +6,16 @@
 use iced::{Background, Border, Color, Shadow};
 use iced::widget::{container, button, text_input, pick_list as iced_pick_list};
 
+pub const UI_FONT_NAME: &str = "Noto Sans CJK SC";
+
+pub fn ui_font(weight: iced::font::Weight) -> iced::Font {
+    iced::Font {
+        family: iced::font::Family::Name(UI_FONT_NAME),
+        weight,
+        ..Default::default()
+    }
+}
+
 // ── Radius language ──────────────────────────────────────────────────────────
 pub const RADIUS_LG: f32 = 10.0;
 pub const RADIUS_MD: f32 = 8.0;
@@ -20,11 +30,7 @@ pub const RADIUS_MICRO: f32 = 3.0;
 /// fails to resolve a mono face, so digits and "ms" render as tofu blocks (□).
 /// Medium weight keeps metrics slightly emphasized without needing a mono font.
 pub fn metric_font() -> iced::Font {
-    iced::Font {
-        family: iced::font::Family::SansSerif,
-        weight: iced::font::Weight::Medium,
-        ..Default::default()
-    }
+    ui_font(iced::font::Weight::Medium)
 }
 
 /// Font for logs and configuration previews.
@@ -34,10 +40,7 @@ pub fn metric_font() -> iced::Font {
 /// and core logs render as tofu blocks. The system sans family provides the
 /// closest native appearance and the most reliable CJK fallback.
 pub fn mono_font() -> iced::Font {
-    iced::Font {
-        family: iced::font::Family::SansSerif,
-        ..Default::default()
-    }
+    ui_font(iced::font::Weight::Normal)
 }
 
 
@@ -906,17 +909,16 @@ mod tests {
     }
 
     #[test]
-    fn metric_font_is_sans_not_mono() {
-        // Regression: Monospace latency text rendered as tofu (□) on Windows.
+    fn metric_font_uses_bundled_cjk_face() {
         let f = metric_font();
-        assert!(matches!(f.family, iced::font::Family::SansSerif));
+        assert_eq!(f.family, iced::font::Family::Name(UI_FONT_NAME));
         assert_eq!(f.weight, iced::font::Weight::Medium);
     }
 
     #[test]
-    fn log_font_uses_native_sans_for_cjk_fallback() {
+    fn log_font_uses_bundled_cjk_face() {
         let f = mono_font();
-        assert!(matches!(f.family, iced::font::Family::SansSerif));
+        assert_eq!(f.family, iced::font::Family::Name(UI_FONT_NAME));
     }
 
     #[test]
