@@ -6,6 +6,13 @@
 use iced::{Background, Border, Color, Shadow};
 use iced::widget::{container, button, text_input, pick_list as iced_pick_list};
 
+#[cfg(target_os = "windows")]
+pub const UI_FONT_NAME: &str = "Segoe UI";
+#[cfg(target_os = "macos")]
+pub const UI_FONT_NAME: &str = "SF Pro";
+#[cfg(target_os = "linux")]
+pub const UI_FONT_NAME: &str = "Ubuntu";
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub const UI_FONT_NAME: &str = "Noto Sans CJK SC";
 
 pub fn ui_font(weight: iced::font::Weight) -> iced::Font {
@@ -17,10 +24,37 @@ pub fn ui_font(weight: iced::font::Weight) -> iced::Font {
 }
 
 // ── Radius language ──────────────────────────────────────────────────────────
+#[cfg(target_os = "windows")]
 pub const RADIUS_LG: f32 = 10.0;
+#[cfg(target_os = "windows")]
 pub const RADIUS_MD: f32 = 8.0;
+#[cfg(target_os = "windows")]
 pub const RADIUS_SM: f32 = 6.0;
+#[cfg(target_os = "windows")]
 pub const RADIUS_XS: f32 = 4.0;
+#[cfg(target_os = "windows")]
+pub const RADIUS_MICRO: f32 = 3.0;
+
+#[cfg(target_os = "macos")]
+pub const RADIUS_LG: f32 = 12.0;
+#[cfg(target_os = "macos")]
+pub const RADIUS_MD: f32 = 8.0;
+#[cfg(target_os = "macos")]
+pub const RADIUS_SM: f32 = 6.0;
+#[cfg(target_os = "macos")]
+pub const RADIUS_XS: f32 = 4.0;
+#[cfg(target_os = "macos")]
+pub const RADIUS_MICRO: f32 = 3.0;
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const RADIUS_LG: f32 = 8.0;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const RADIUS_MD: f32 = 6.0;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const RADIUS_SM: f32 = 5.0;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const RADIUS_XS: f32 = 4.0;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const RADIUS_MICRO: f32 = 3.0;
 
 
@@ -58,15 +92,22 @@ pub const TYPE_METRIC: f32 = 22.0; // dashboard speed numbers
 pub const TYPE_MONO: f32 = 12.0; // latency, mono captions
 
 // ── Spacing / padding presets ────────────────────────────────────────────────
+#[cfg(target_os = "macos")]
+pub const CARD_PAD: f32 = 22.0;
+#[cfg(target_os = "macos")]
+pub const GRID_GAP: f32 = 18.0;
+
+#[cfg(not(target_os = "macos"))]
 pub const CARD_PAD: f32 = 20.0;
+#[cfg(not(target_os = "macos"))]
+pub const GRID_GAP: f32 = 16.0;
+
 pub const CARD_PAD_DENSE: f32 = 16.0;
 pub const BTN_PAD_SM: [u16; 2] = [6, 12];
 pub const BTN_PAD_MD: [u16; 2] = [8, 16];
 pub const BTN_PAD_LG: [u16; 2] = [12, 20];
 /// Shared width for page header search inputs.
 pub const SEARCH_WIDTH: f32 = 260.0;
-/// Grid / card list gap.
-pub const GRID_GAP: f32 = 16.0;
 pub const SP_8: f32 = 8.0;
 pub const SP_12: f32 = 12.0;
 
@@ -219,7 +260,24 @@ pub fn card_bg(theme: &iced::Theme) -> container::Style {
             width: 1.0,
             radius: RADIUS_LG.into(),
         },
-        shadow: Shadow::default(),
+        shadow: {
+            #[cfg(target_os = "windows")]
+            {
+                Shadow {
+                    color: if is_dark(theme) {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.35)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+                    },
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 12.0,
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                Shadow::default()
+            }
+        },
         text_color: Some(text_primary(theme)),
         ..Default::default()
     }
@@ -470,7 +528,14 @@ pub fn button_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
     move |theme: &iced::Theme, status: button::Status| {
         let dark = is_dark(theme);
         let bg = if is_active {
-            with_alpha(ACCENT_PURPLE, if dark { 0.20 } else { 0.15 })
+            #[cfg(target_os = "macos")]
+            {
+                with_alpha(ACCENT_PURPLE, if dark { 0.25 } else { 0.18 })
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                with_alpha(ACCENT_PURPLE, if dark { 0.20 } else { 0.15 })
+            }
         } else {
             match status {
                 button::Status::Hovered => {
@@ -492,14 +557,35 @@ pub fn button_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
             TEXT_MUTED_LIGHT
         };
 
-        button::Style {
-            background: Some(Background::Color(bg)),
-            text_color,
-            border: Border {
+        let border = if is_active {
+            #[cfg(target_os = "macos")]
+            {
+                Border {
+                    radius: RADIUS_SM.into(),
+                    width: 1.0,
+                    color: ACCENT_PURPLE,
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Border {
+                    radius: RADIUS_SM.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                }
+            }
+        } else {
+            Border {
                 radius: RADIUS_SM.into(),
                 width: 0.0,
                 color: Color::TRANSPARENT,
-            },
+            }
+        };
+
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color,
+            border,
             shadow: Shadow::default(),
             ..Default::default()
         }
@@ -953,6 +1039,66 @@ mod tests {
         assert!(SEARCH_WIDTH >= 200.0);
         assert_eq!(BTN_PAD_SM, [6, 12]);
         assert_eq!(BTN_PAD_MD, [8, 16]);
+    }
+
+    #[test]
+    fn test_platform_native_styling() {
+        let dark = iced::Theme::Dark;
+        let light = iced::Theme::Light;
+        let card_style = card_bg(&dark);
+
+        #[cfg(target_os = "windows")]
+        {
+            let _ = light;
+            assert_ne!(card_style.shadow, Shadow::default());
+            assert_eq!(UI_FONT_NAME, "Segoe UI");
+            assert_eq!(RADIUS_LG, 10.0);
+            assert_eq!(RADIUS_MD, 8.0);
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(card_style.shadow, Shadow::default());
+            assert_eq!(UI_FONT_NAME, "SF Pro");
+            assert_eq!(RADIUS_LG, 12.0);
+            assert_eq!(CARD_PAD, 22.0);
+            assert_eq!(GRID_GAP, 18.0);
+
+            let tab_style_fn = button_tab(true);
+            let active_dark = tab_style_fn(&dark, button::Status::Active);
+            assert_eq!(active_dark.border.width, 1.0);
+            assert_eq!(active_dark.border.color, ACCENT_PURPLE);
+            assert_eq!(active_dark.background.unwrap(), Background::Color(with_alpha(ACCENT_PURPLE, 0.25)));
+
+            let active_light = tab_style_fn(&light, button::Status::Active);
+            assert_eq!(active_light.border.width, 1.0);
+            assert_eq!(active_light.border.color, ACCENT_PURPLE);
+            assert_eq!(active_light.background.unwrap(), Background::Color(with_alpha(ACCENT_PURPLE, 0.18)));
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(card_style.shadow, Shadow::default());
+            assert_eq!(UI_FONT_NAME, "Ubuntu");
+            assert_eq!(RADIUS_LG, 8.0);
+            assert_eq!(RADIUS_MD, 6.0);
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            assert_eq!(card_style.shadow, Shadow::default());
+            assert_eq!(CARD_PAD, 20.0);
+            assert_eq!(GRID_GAP, 16.0);
+
+            let tab_style_fn = button_tab(true);
+            let active_dark = tab_style_fn(&dark, button::Status::Active);
+            assert_eq!(active_dark.border.width, 0.0);
+            assert_eq!(active_dark.background.unwrap(), Background::Color(with_alpha(ACCENT_PURPLE, 0.20)));
+
+            let active_light = tab_style_fn(&light, button::Status::Active);
+            assert_eq!(active_light.border.width, 0.0);
+            assert_eq!(active_light.background.unwrap(), Background::Color(with_alpha(ACCENT_PURPLE, 0.15)));
+        }
     }
 }
 

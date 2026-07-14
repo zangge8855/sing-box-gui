@@ -624,10 +624,36 @@ pub fn stop_core() {
     CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
     let mut lock = get_process_lock();
     if let Some(mut child) = lock.take() {
-        // Ask the OS to terminate, then give it a bounded window to flush
-        // its cache file, tear down the TUN interface and unwind cleanly
-        // before we resort to a forceful kill.
-        let _ = child.kill();
+        #[cfg(unix)]
+        {
+            let pid = child.id() as libc::pid_t;
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+            }
+            let start = Instant::now();
+            let mut exited = false;
+            while start.elapsed() < Duration::from_secs(2) {
+                match child.try_wait() {
+                    Ok(Some(_)) => {
+                        exited = true;
+                        break;
+                    }
+                    Ok(None) => {
+                        thread::sleep(Duration::from_millis(50));
+                    }
+                    Err(_) => {
+                        break;
+                    }
+                }
+            }
+            if !exited {
+                let _ = child.kill();
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = child.kill();
+        }
         let _ = child.wait();
     }
 }
