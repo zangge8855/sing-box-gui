@@ -231,7 +231,7 @@ pub async fn fetch_connections(api_port: u16) -> Result<ConnectionsResponse, Str
 }
 
 pub async fn close_connection(api_port: u16, id: &str) -> Result<(), String> {
-    let url = format!("http://127.0.0.1:{}/connections/{}", api_port, id);
+    let url = format!("http://127.0.0.1:{}/connections/{}", api_port, urlencoding::encode(id));
     let client = get_client();
     let res = with_secret(client.delete(&url))
         .send()

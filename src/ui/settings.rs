@@ -18,6 +18,7 @@ pub fn render<'a>(
     core_version: Option<&'a str>,
     update_status: &'a UpdateStatus,
     config_preview_expanded: bool,
+    config_preview: Option<&'a str>,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     
@@ -285,7 +286,7 @@ pub fn render<'a>(
         let version_label = if let Some(v) = core_version {
             format!("{}: {}", tr(lang, "core_version_label"), v)
         } else if core_installed {
-            tr(lang, "core_ver_stable").to_string()
+            format!(" (v{}{}", crate::core::CORE_VERSION, tr(lang, "core_ver_stable"))
         } else {
             String::new()
         };
@@ -622,7 +623,7 @@ pub fn render<'a>(
         .on_press(Message::ToggleConfigPreview);
 
         let preview_card: Element<'_, Message> = if config_preview_expanded {
-            let preview_json = crate::config::generate_preview_config(gui_config);
+            let preview_json = config_preview.unwrap_or("...");
             container(
                 column![
                     row![

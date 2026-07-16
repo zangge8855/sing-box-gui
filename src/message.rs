@@ -127,6 +127,8 @@ pub enum Message {
     ImportLocalFile,
     LocalFilePicked(Option<String>),
     ToggleConfigPreview,
+    /// Async result of `generate_preview_config` (runs off the UI thread).
+    ConfigPreviewGenerated(String),
     ToggleProfileMore(String),
     CoreLivenessChecked(bool),
     /// Async result of `core::start_core` (runs off the UI thread).

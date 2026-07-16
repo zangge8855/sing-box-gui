@@ -21,6 +21,8 @@ static CURRENT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 static INTENTIONAL_STOP: AtomicBool = AtomicBool::new(false);
 /// Message captured when the core dies without an intentional stop.
 static LAST_UNEXPECTED_EXIT: Mutex<Option<String>> = Mutex::new(None);
+/// Single source of truth for the sing-box core version this GUI downloads.
+pub const CORE_VERSION: &str = "1.13.14";
 /// Cached running flag, updated by `is_core_running_locked` so that the UI Tick
 /// can poll without contending on `CURRENT_PROCESS` (which `start_core` holds
 /// for up to `STARTUP_GRACE_MS` while waiting for the child to survive).
@@ -242,7 +244,7 @@ pub async fn download_core(
 
     let _ = progress_sender.try_send("Downloading sing-box core...".to_string());
 
-    let version = "1.13.14";
+    let version = CORE_VERSION;
     
     #[cfg(target_os = "windows")]
     let (url, archive_name) = {
@@ -533,6 +535,9 @@ pub fn start_core(
     gui_config: &GuiConfig,
     log_sender: Sender<String>,
 ) -> Result<(), String> {
+    // Reset the intentional-stop flag up front so a failed restart does not
+    // leave a stale flag lingering when no child is being tracked.
+    INTENTIONAL_STOP.store(false, Ordering::SeqCst);
     let mut lock = get_process_lock();
     if lock.is_some() {
         // Already tracking a child — only treat as running if it is still alive.

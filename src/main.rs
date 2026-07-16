@@ -125,6 +125,8 @@ struct App {
     tick_authority_counter: u32,
     /// Settings: expand generated config preview.
     config_preview_expanded: bool,
+    /// Cached result of `generate_preview_config`, refreshed asynchronously.
+    config_preview: Option<String>,
     /// Profiles: which card shows secondary actions.
     profile_more_id: Option<String>,
     /// Queued subscription IDs for sequential auto-update.
@@ -186,6 +188,26 @@ impl App {
                     &DARK
                 }
             }
+        }
+    }
+
+    /// Regenerate the config preview off the UI thread whenever it is expanded,
+    /// and clear the cache when collapsed. Safe to call on every relevant state change.
+    fn refresh_config_preview(&mut self) -> Task<Message> {
+        if self.config_preview_expanded {
+            self.config_preview = Some("...".to_string());
+            let gui_config = self.gui_config.clone();
+            Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || crate::config::generate_preview_config(&gui_config))
+                        .await
+                        .unwrap_or_else(|e| format!("Failed to run preview task: {e}"))
+                },
+                Message::ConfigPreviewGenerated,
+            )
+        } else {
+            self.config_preview = None;
+            Task::none()
         }
     }
 
@@ -346,6 +368,7 @@ impl App {
             auto_update_tick_counter: 0,
             tick_authority_counter: 0,
             config_preview_expanded: false,
+            config_preview: None,
             profile_more_id: None,
             pending_auto_updates: std::collections::VecDeque::new(),
             logs_follow: true,
@@ -1582,7 +1605,7 @@ impl App {
                     self.config_dirty = true;
                     self.log_lines.push_back(format!("[GUI] Failed to save settings: {error}"));
                 }
-                Task::none()
+                self.refresh_config_preview()
             }
             Message::SystemThemeDetected(is_light) => {
                 self.cached_system_is_light = is_light;
@@ -1886,6 +1909,12 @@ impl App {
             }
             Message::ToggleConfigPreview => {
                 self.config_preview_expanded = !self.config_preview_expanded;
+                self.refresh_config_preview()
+            }
+            Message::ConfigPreviewGenerated(text) => {
+                if self.config_preview_expanded {
+                    self.config_preview = Some(text);
+                }
                 Task::none()
             }
             Message::ToggleProfileMore(id) => {
@@ -2188,6 +2217,7 @@ impl App {
                     core_version_ref,
                     update_status_ref,
                     config_preview_expanded,
+                    self.config_preview.as_deref(),
                     theme,
                 ),
             };
@@ -2497,38 +2527,68 @@ impl App {
 // Subscription worker for streaming log lines
 fn log_subscription() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(100, |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
-        let rx = {
-            let lock_opt = LOG_RX.get();
-            if let Some(lock) = lock_opt {
-                lock.lock().unwrap_or_else(|e| e.into_inner()).take()
-            } else {
-                None
-            }
-        };
-        if let Some(mut r) = rx {
-            while let Some(line) = r.recv().await {
-                let _ = output.send(Message::NewLogLine(line)).await;
+        struct RxLease {
+            slot: &'static Mutex<Option<mpsc::Receiver<String>>>,
+            rx: Option<mpsc::Receiver<String>>,
+        }
+        impl Drop for RxLease {
+            fn drop(&mut self) {
+                let rx = match self.rx.take() {
+                    Some(rx) => rx,
+                    None => return,
+                };
+                let mut slot = match self.slot.lock() {
+                    Ok(s) => s,
+                    Err(e) => e.into_inner(),
+                };
+                if slot.is_none() {
+                    *slot = Some(rx);
+                }
             }
         }
+        let Some(slot) = LOG_RX.get() else { return };
+        let mut lease = RxLease { slot, rx: slot.lock().unwrap_or_else(|e| e.into_inner()).take() };
+        if let Some(r) = lease.rx.as_mut() {
+            while let Some(line) = r.recv().await {
+                let _ = output.send(Message::NewLogLine(line)).await;
+                if output.is_closed() { break; }
+            }
+        }
+        // On stream end, Drop returns the receiver to the slot.
     })
 }
 
 // Subscription worker for streaming real-time Clash API traffic stats
 fn traffic_subscription() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(100, |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
-        let rx = {
-            let lock_opt = TRAFFIC_RX.get();
-            if let Some(lock) = lock_opt {
-                lock.lock().unwrap_or_else(|e| e.into_inner()).take()
-            } else {
-                None
-            }
-        };
-        if let Some(mut r) = rx {
-            while let Some(info) = r.recv().await {
-                let _ = output.send(Message::TrafficUpdated { up: info.up, down: info.down }).await;
+        struct RxLease {
+            slot: &'static Mutex<Option<mpsc::Receiver<api::TrafficInfo>>>,
+            rx: Option<mpsc::Receiver<api::TrafficInfo>>,
+        }
+        impl Drop for RxLease {
+            fn drop(&mut self) {
+                let rx = match self.rx.take() {
+                    Some(rx) => rx,
+                    None => return,
+                };
+                let mut slot = match self.slot.lock() {
+                    Ok(s) => s,
+                    Err(e) => e.into_inner(),
+                };
+                if slot.is_none() {
+                    *slot = Some(rx);
+                }
             }
         }
+        let Some(slot) = TRAFFIC_RX.get() else { return };
+        let mut lease = RxLease { slot, rx: slot.lock().unwrap_or_else(|e| e.into_inner()).take() };
+        if let Some(r) = lease.rx.as_mut() {
+            while let Some(info) = r.recv().await {
+                let _ = output.send(Message::TrafficUpdated { up: info.up, down: info.down }).await;
+                if output.is_closed() { break; }
+            }
+        }
+        // On stream end, Drop returns the receiver to the slot.
     })
 }
 
@@ -3437,7 +3497,7 @@ set "NEW={new}"
 set "BAK={bak}"
 set "PID={pid}"
 :wait
-tasklist /FI "PID eq %PID%" 2>NUL | findstr /I "%PID%" >NUL
+tasklist /FI "PID eq %PID%" /NH /FO CSV 2>NUL | findstr /B /I "%PID%," >NUL
 if not errorlevel 1 (
   timeout /t 1 /nobreak >NUL
   goto wait
@@ -3447,6 +3507,7 @@ move /Y "%TARGET%" "%BAK%" >NUL 2>&1
 move /Y "%NEW%" "%TARGET%"
 if errorlevel 1 (
   if exist "%BAK%" move /Y "%BAK%" "%TARGET%" >NUL 2>&1
+  del /F /Q "%~f0" >NUL 2>&1
   exit /b 1
 )
 start "" "%TARGET%"
@@ -3480,6 +3541,10 @@ del /F /Q "%~f0" >NUL 2>&1
 TARGET="{current}"
 NEW="{new}"
 PID={pid}
+cleanup() {{
+  rm -f -- "$0"
+}}
+trap cleanup EXIT
 while kill -0 "$PID" 2>/dev/null; do sleep 1; done
 mv -f "$NEW" "$TARGET" || exit 1
 chmod +x "$TARGET"

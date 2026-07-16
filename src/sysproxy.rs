@@ -76,7 +76,7 @@ mod platform {
     pub fn set_system_proxy(enable: bool, port: u16) -> Result<(), String> {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let settings = hkcu
-            .open_subkey_with_flags(INTERNET_SETTINGS, KEY_SET_VALUE)
+            .open_subkey_with_flags(INTERNET_SETTINGS, KEY_READ | KEY_SET_VALUE)
             .map_err(|e| format!("Failed to open Windows proxy settings: {e}"))?;
         settings
             .set_value("ProxyEnable", &(u32::from(enable)))
@@ -85,9 +85,27 @@ mod platform {
             settings
                 .set_value("ProxyServer", &format!("127.0.0.1:{port}"))
                 .map_err(|e| format!("Failed to update Windows proxy server: {e}"))?;
-            settings
-                .set_value("ProxyOverride", &"localhost;127.0.0.1;::1;<local>")
-                .map_err(|e| format!("Failed to update Windows proxy bypass list: {e}"))?;
+            // Back up the user's original bypass list the first time we touch it,
+            // then write a merged list so existing customizations are preserved.
+            let backup: Option<String> = settings.get_value("ProxyOverrideBackup").ok();
+            if backup.is_none() {
+                let original: String = settings.get_value("ProxyOverride").unwrap_or_default();
+                let _ = settings.set_value("ProxyOverrideBackup", &original);
+                let merged = if original.trim().is_empty() {
+                    "localhost;127.0.0.1;::1;<local>".to_string()
+                } else {
+                    format!("{original};localhost;127.0.0.1;::1;<local>")
+                };
+                settings
+                    .set_value("ProxyOverride", &merged)
+                    .map_err(|e| format!("Failed to update Windows proxy bypass list: {e}"))?;
+            }
+        } else {
+            // Restore the user's original bypass list if we previously backed it up.
+            if let Ok(original) = settings.get_value::<String, _>("ProxyOverrideBackup") {
+                let _ = settings.set_value("ProxyOverride", &original);
+                let _ = settings.delete_value("ProxyOverrideBackup");
+            }
         }
         notify_proxy_changed();
         Ok(())

@@ -88,7 +88,8 @@ pub fn load_gui_config() -> GuiConfig {
             use winreg::enums::HKEY_CURRENT_USER;
             if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International")
                 && let Ok(locale) = hkcu.get_value::<String, _>("LocaleName")
-                    && locale.to_lowercase().starts_with("zh") {
+                    && locale.to_lowercase().starts_with("zh")
+                        && config.language == crate::state::Language::default() {
                         config.language = crate::state::Language::Zh;
                         let _ = save_gui_config(&config);
                     }
