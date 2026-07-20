@@ -26,7 +26,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install Linux Dependencies
-      run: sudo apt-get update && sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev
+      run: |
+        echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
+        for i in {1..5}; do
+          sudo apt-get update && \
+          sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev && \
+          break || sleep 15
+        done
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy, rustfmt
@@ -147,8 +153,12 @@ jobs:
 
     - name: Install Linux Dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev
+        echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
+        for i in {1..5}; do
+          sudo apt-get update && \
+          sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev && \
+          break || sleep 15
+        done
 
     - name: Set up Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -186,8 +196,12 @@ jobs:
 
     - name: Install Linux Dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev
+        echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
+        for i in {1..5}; do
+          sudo apt-get update && \
+          sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev && \
+          break || sleep 15
+        done
 
     - name: Set up Rust toolchain
       uses: dtolnay/rust-toolchain@stable

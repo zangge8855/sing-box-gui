@@ -73,6 +73,9 @@ mod tests {
         assert!(SP_16 < SP_20);
         assert!(SP_20 < SP_24);
         // Grid gap aligns with spacing language
+        #[cfg(target_os = "macos")]
+        assert_eq!(ui_theme::GRID_GAP, 18.0);
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(ui_theme::GRID_GAP, SP_16);
         assert_eq!(ICON_SIZE, 16.0);
         assert!(ICON_SIZE_LG > ICON_SIZE);
