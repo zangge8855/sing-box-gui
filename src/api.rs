@@ -1,8 +1,8 @@
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use tokio::sync::mpsc::Sender;
 use std::sync::OnceLock;
+use tokio::sync::mpsc::Sender;
 
 fn get_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -45,7 +45,7 @@ pub struct ProxyInfo {
     pub proxy_type: String,
     pub udp: Option<bool>,
     pub history: Option<Vec<serde_json::Value>>,
-    pub now: Option<String>, // only present for selectors
+    pub now: Option<String>,      // only present for selectors
     pub all: Option<Vec<String>>, // list of sub-nodes for selectors
 }
 
@@ -149,28 +149,33 @@ pub async fn fetch_proxies(api_port: u16) -> Result<ProxiesResponse, String> {
         .map_err(|e| format!("Failed to fetch proxies: {}", e))?
         .error_for_status()
         .map_err(|e| format!("Proxy API returned an error: {e}"))?;
-        
-    let body = res.json::<ProxiesResponse>()
+
+    let body = res
+        .json::<ProxiesResponse>()
         .await
         .map_err(|e| format!("Failed to parse proxies response: {}", e))?;
-        
+
     Ok(body)
 }
 
 pub async fn select_proxy(api_port: u16, selector: &str, node_tag: &str) -> Result<(), String> {
-    let url = format!("http://127.0.0.1:{}/proxies/{}", api_port, urlencoding::encode(selector));
+    let url = format!(
+        "http://127.0.0.1:{}/proxies/{}",
+        api_port,
+        urlencoding::encode(selector)
+    );
     let client = get_client();
-    
+
     let body = serde_json::json!({
         "name": node_tag
     });
-    
+
     let res = with_secret(client.put(&url))
         .json(&body)
         .send()
         .await
         .map_err(|e| format!("Failed to select proxy: {}", e))?;
-        
+
     if res.status().is_success() {
         Ok(())
     } else {
@@ -202,9 +207,10 @@ pub async fn test_node_latency(
         .send()
         .await
         .map_err(|e| format!("Latency test request failed: {}", e))?;
-        
+
     if res.status().is_success() {
-        let delay_res = res.json::<DelayResponse>()
+        let delay_res = res
+            .json::<DelayResponse>()
             .await
             .map_err(|e| format!("Failed to parse delay response: {}", e))?;
         Ok(delay_res.delay)
@@ -222,22 +228,27 @@ pub async fn fetch_connections(api_port: u16) -> Result<ConnectionsResponse, Str
         .map_err(|e| format!("Failed to fetch connections: {}", e))?
         .error_for_status()
         .map_err(|e| format!("Connections API returned an error: {e}"))?;
-        
-    let body = res.json::<ConnectionsResponse>()
+
+    let body = res
+        .json::<ConnectionsResponse>()
         .await
         .map_err(|e| format!("Failed to parse connections response: {}", e))?;
-        
+
     Ok(body)
 }
 
 pub async fn close_connection(api_port: u16, id: &str) -> Result<(), String> {
-    let url = format!("http://127.0.0.1:{}/connections/{}", api_port, urlencoding::encode(id));
+    let url = format!(
+        "http://127.0.0.1:{}/connections/{}",
+        api_port,
+        urlencoding::encode(id)
+    );
     let client = get_client();
     let res = with_secret(client.delete(&url))
         .send()
         .await
         .map_err(|e| format!("Failed to close connection: {}", e))?;
-        
+
     if res.status().is_success() {
         Ok(())
     } else {
@@ -301,7 +312,7 @@ pub fn spawn_traffic_monitor(
     tokio::spawn(async move {
         let url = format!("http://127.0.0.1:{}/traffic", api_port);
         let client = get_client();
-        
+
         loop {
             tokio::select! {
                 _ = &mut cancel_rx => {
@@ -320,7 +331,7 @@ pub fn spawn_traffic_monitor(
                                         Ok(Some(chunk)) => {
                                             let chunk_str = String::from_utf8_lossy(&chunk);
                                             line_buffer.push_str(&chunk_str);
-                                            
+
                                             while let Some(pos) = line_buffer.find('\n') {
                                                 let line = line_buffer[..pos].trim();
                                                 if !line.is_empty()

@@ -1,8 +1,8 @@
-use iced::widget::{button, container, row, text, Space};
-use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{Toast, ToastKind};
 use crate::ui::theme;
+use iced::widget::{Space, button, container, row, text};
+use iced::{Alignment, Element, Length};
 
 pub fn render<'a>(toast: &'a Toast, theme: &iced::Theme) -> Element<'a, Message> {
     let accent = match toast.kind {

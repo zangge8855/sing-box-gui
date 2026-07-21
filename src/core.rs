@@ -1,8 +1,10 @@
+use crate::config::{get_app_dir, get_profile_path};
+use crate::state::GuiConfig;
 use futures::StreamExt;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read};
 #[cfg(target_os = "windows")]
 use std::io;
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,8 +12,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
-use crate::config::{get_app_dir, get_profile_path};
-use crate::state::GuiConfig;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -67,9 +67,7 @@ fn format_unexpected_exit(exit_code: Option<i32>) -> String {
         Some(c) => format!(
             "Core process exited unexpectedly (code {c}). Check logs for FATAL/ERROR details."
         ),
-        None => {
-            "Core process exited unexpectedly. Check logs for FATAL/ERROR details.".to_string()
-        }
+        None => "Core process exited unexpectedly. Check logs for FATAL/ERROR details.".to_string(),
     }
 }
 
@@ -107,7 +105,7 @@ fn spawn_log_forwarder<R: Read + Send + 'static>(
             }
             let line_str = decode_log_line(&buf);
             buf.clear();
-            
+
             if let Ok(mut buf_guard) = early_buf.lock() {
                 // Ring buffer capped at 500 lines. Once full we drop the
                 // oldest entries so the final lines on a FATAL early-exit
@@ -155,17 +153,18 @@ pub fn wait_core_startup_grace(
 
 /// Take and clear any unexpected-exit message recorded by `is_core_running`.
 pub fn take_unexpected_core_exit() -> Option<String> {
-    LAST_UNEXPECTED_EXIT
-        .lock()
-        .ok()
-        .and_then(|mut g| g.take())
+    LAST_UNEXPECTED_EXIT.lock().ok().and_then(|mut g| g.take())
 }
 
 pub fn get_core_filename() -> &'static str {
     #[cfg(target_os = "windows")]
-    { "sing-box.exe" }
+    {
+        "sing-box.exe"
+    }
     #[cfg(not(target_os = "windows"))]
-    { "sing-box" }
+    {
+        "sing-box"
+    }
 }
 
 pub fn get_core_path(gui_config: &GuiConfig) -> PathBuf {
@@ -193,7 +192,10 @@ fn staged_core_path(dest_path: &std::path::Path) -> PathBuf {
     dest_path.with_file_name(format!("{file_name}.new"))
 }
 
-fn install_staged_core(staged_path: &std::path::Path, dest_path: &std::path::Path) -> Result<(), String> {
+fn install_staged_core(
+    staged_path: &std::path::Path,
+    dest_path: &std::path::Path,
+) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let file_name = dest_path
@@ -228,16 +230,12 @@ fn install_staged_core(staged_path: &std::path::Path, dest_path: &std::path::Pat
 
 /// Download official sing-box into the managed bin folder.
 /// When `force` is true, replace an existing binary (reinstall / upgrade pin).
-pub async fn download_core(
-    progress_sender: Sender<String>,
-    force: bool,
-) -> Result<(), String> {
+pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Result<(), String> {
     let app_dir = get_app_dir();
     let bin_dir = app_dir.join("bin");
-    fs::create_dir_all(&bin_dir)
-        .map_err(|e| format!("Failed to create bin directory: {}", e))?;
+    fs::create_dir_all(&bin_dir).map_err(|e| format!("Failed to create bin directory: {}", e))?;
     let dest_path = bin_dir.join(get_core_filename());
-    
+
     if dest_path.exists() && !force {
         return Ok(());
     }
@@ -245,7 +243,7 @@ pub async fn download_core(
     let _ = progress_sender.try_send("Downloading sing-box core...".to_string());
 
     let version = CORE_VERSION;
-    
+
     #[cfg(target_os = "windows")]
     let (url, archive_name) = {
         #[cfg(target_arch = "aarch64")]
@@ -253,11 +251,14 @@ pub async fn download_core(
         #[cfg(not(target_arch = "aarch64"))]
         let arch = "windows-amd64";
         (
-            format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.zip", version, version, arch),
-            "temp_core.zip"
+            format!(
+                "https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.zip",
+                version, version, arch
+            ),
+            "temp_core.zip",
         )
     };
-    
+
     #[cfg(target_os = "macos")]
     let (url, archive_name) = {
         #[cfg(target_arch = "aarch64")]
@@ -265,11 +266,14 @@ pub async fn download_core(
         #[cfg(not(target_arch = "aarch64"))]
         let arch = "darwin-amd64";
         (
-            format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.tar.gz", version, version, arch),
-            "temp_core.tar.gz"
+            format!(
+                "https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.tar.gz",
+                version, version, arch
+            ),
+            "temp_core.tar.gz",
         )
     };
-    
+
     #[cfg(target_os = "linux")]
     let (url, archive_name) = {
         #[cfg(target_arch = "aarch64")]
@@ -277,11 +281,14 @@ pub async fn download_core(
         #[cfg(not(target_arch = "aarch64"))]
         let arch = "linux-amd64";
         (
-            format!("https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.tar.gz", version, version, arch),
-            "temp_core.tar.gz"
+            format!(
+                "https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.tar.gz",
+                version, version, arch
+            ),
+            "temp_core.tar.gz",
         )
     };
-    
+
     let temp_archive_path = app_dir.join(archive_name);
     let staged_path = staged_core_path(&dest_path);
 
@@ -502,11 +509,7 @@ pub fn check_core_config(gui_config: &GuiConfig) -> Result<(), String> {
     }
     let run_config_path = prepare_run_config(gui_config)?;
     let mut cmd = Command::new(&core_path);
-    cmd.args([
-        "check",
-        "-c",
-        &run_config_path.to_string_lossy(),
-    ]);
+    cmd.args(["check", "-c", &run_config_path.to_string_lossy()]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
@@ -531,10 +534,7 @@ pub fn check_core_config(gui_config: &GuiConfig) -> Result<(), String> {
     }
 }
 
-pub fn start_core(
-    gui_config: &GuiConfig,
-    log_sender: Sender<String>,
-) -> Result<(), String> {
+pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<(), String> {
     // Reset the intentional-stop flag up front so a failed restart does not
     // leave a stale flag lingering when no child is being tracked.
     INTENTIONAL_STOP.store(false, Ordering::SeqCst);
@@ -548,7 +548,10 @@ pub fn start_core(
 
     let core_path = get_core_path(gui_config);
     if !core_path.exists() {
-        return Err("sing-box core not found! Please download it or specify correct path in Settings.".to_string());
+        return Err(
+            "sing-box core not found! Please download it or specify correct path in Settings."
+                .to_string(),
+        );
     }
 
     // Validate generated config before spawning the process.
@@ -778,7 +781,10 @@ mod tests {
         assert!(msg.contains("code 1"), "msg={msg}");
         assert!(msg.contains("403 Forbidden"), "msg={msg}");
         assert!(msg.contains("FATAL"), "msg={msg}");
-        assert!(!msg.contains("DEBUG noise"), "should not dump non-error noise: {msg}");
+        assert!(
+            !msg.contains("DEBUG noise"),
+            "should not dump non-error noise: {msg}"
+        );
     }
 
     #[test]

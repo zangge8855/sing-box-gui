@@ -15,23 +15,23 @@
 // Only hide the console window on Windows; leave stdio available on mac/linux.
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-mod state;
-mod message;
+mod api;
 mod config;
 mod core;
-mod api;
-mod sysproxy;
+mod message;
 mod platform;
-mod update;
+mod state;
+mod sysproxy;
 mod ui;
+mod update;
 
+use futures::{SinkExt, StreamExt};
+use iced::widget::{button, column, container, responsive, row, text, tooltip};
+use iced::{Alignment, Element, Font, Length, Subscription, Task};
+use message::Message;
+use state::{Bandwidth, GuiConfig, Profile, ProxyNode, Tab, Toast};
 use std::sync::{Mutex, OnceLock};
 use tokio::sync::mpsc;
-use iced::{Alignment, Element, Length, Subscription, Task, Font};
-use iced::widget::{button, column, container, row, text, responsive, tooltip};
-use state::{Bandwidth, GuiConfig, Profile, ProxyNode, Tab, Toast};
-use message::Message;
-use futures::{SinkExt, StreamExt};
 
 // OnceLocks for streaming logs and traffic stats asynchronously
 static LOG_RX: OnceLock<Mutex<Option<mpsc::Receiver<String>>>> = OnceLock::new();
@@ -44,19 +44,23 @@ const MAX_LOG_LINES: usize = 500;
 const MAX_CONNECTION_SNAPSHOT: usize = 1_000;
 
 pub fn get_log_tx() -> mpsc::Sender<String> {
-    LOG_TX.get_or_init(|| {
-        let (tx, rx) = mpsc::channel(512);
-        let _ = LOG_RX.set(Mutex::new(Some(rx)));
-        tx
-    }).clone()
+    LOG_TX
+        .get_or_init(|| {
+            let (tx, rx) = mpsc::channel(512);
+            let _ = LOG_RX.set(Mutex::new(Some(rx)));
+            tx
+        })
+        .clone()
 }
 
 pub fn get_traffic_tx() -> mpsc::Sender<api::TrafficInfo> {
-    TRAFFIC_TX.get_or_init(|| {
-        let (tx, rx) = mpsc::channel(8);
-        let _ = TRAFFIC_RX.set(Mutex::new(Some(rx)));
-        tx
-    }).clone()
+    TRAFFIC_TX
+        .get_or_init(|| {
+            let (tx, rx) = mpsc::channel(8);
+            let _ = TRAFFIC_RX.set(Mutex::new(Some(rx)));
+            tx
+        })
+        .clone()
 }
 
 struct App {
@@ -101,14 +105,14 @@ struct App {
     tray_menu_direct_mode: tray_icon::menu::CheckMenuItem,
     tray_menu_system_proxy: tray_icon::menu::CheckMenuItem,
     window_id: Option<iced::window::Id>,
-    
+
     // Performance and UX optimizations
     traffic_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
     confirm_delete_profile_id: Option<String>,
     editing_profile_id: Option<String>,
     editing_profile_name: String,
     editing_profile_url: String,
-    
+
     // Redundant updates prevention
     last_core_running: bool,
     last_sys_proxy_enabled: bool,
@@ -148,11 +152,11 @@ struct App {
     last_proxies_fetch: Option<std::time::Instant>,
     last_connections_fetch: Option<std::time::Instant>,
     config_save_in_flight: bool,
-    
+
     connections_sort: state::ConnectionSort,
     connections_sort_desc: bool,
     proxy_sort: state::ProxySort,
-    
+
     cached_system_is_light: bool,
     theme_check_counter: u32,
     config_dirty: bool,
@@ -199,9 +203,11 @@ impl App {
             let gui_config = self.gui_config.clone();
             Task::perform(
                 async move {
-                    tokio::task::spawn_blocking(move || crate::config::generate_preview_config(&gui_config))
-                        .await
-                        .unwrap_or_else(|e| format!("Failed to run preview task: {e}"))
+                    tokio::task::spawn_blocking(move || {
+                        crate::config::generate_preview_config(&gui_config)
+                    })
+                    .await
+                    .unwrap_or_else(|e| format!("Failed to run preview task: {e}"))
                 },
                 Message::ConfigPreviewGenerated,
             )
@@ -216,15 +222,15 @@ impl App {
         let cached_system_is_light = detect_system_theme();
         let core_installed = core::is_core_installed(&gui_config);
         let selected_node_tag = gui_config.selected_node_tag.clone();
-        
+
         let mixed_port_input_str = gui_config.mixed_port.to_string();
         let api_port_input_str = gui_config.api_port.to_string();
         let dns_server_local_input_str = gui_config.dns_server_local.clone();
         let dns_server_remote_input_str = gui_config.dns_server_remote.clone();
-        
+
         use tray_icon::{
-            menu::{Menu, MenuItem, CheckMenuItem, PredefinedMenuItem},
             TrayIconBuilder,
+            menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
         };
 
         // Create the tray menu (labels match current language; update_tray_menu refreshes later)
@@ -232,7 +238,11 @@ impl App {
         let tray_menu = Menu::new();
         let show_item = MenuItem::with_id(
             "show_window",
-            if is_zh { "显示主界面" } else { "Show Window" },
+            if is_zh {
+                "显示主界面"
+            } else {
+                "Show Window"
+            },
             true,
             None,
         );
@@ -242,7 +252,7 @@ impl App {
             true,
             None,
         );
-        
+
         let rule_mode_item = CheckMenuItem::with_id(
             "mode_rule",
             if is_zh { "规则分流" } else { "Rules" },
@@ -264,30 +274,28 @@ impl App {
             false,
             None,
         );
-        
+
         let system_proxy_item = CheckMenuItem::with_id(
             "toggle_system_proxy",
-            if is_zh { "系统代理" } else { "System Proxy" },
+            if is_zh {
+                "系统代理"
+            } else {
+                "System Proxy"
+            },
             true,
             gui_config.system_proxy_enabled,
             None,
         );
-        
-        let mode_submenu = tray_icon::menu::Submenu::new(
-            if is_zh { "代理模式" } else { "Proxy Mode" },
-            true,
-        );
+
+        let mode_submenu =
+            tray_icon::menu::Submenu::new(if is_zh { "代理模式" } else { "Proxy Mode" }, true);
         let _ = mode_submenu.append(&rule_mode_item);
         let _ = mode_submenu.append(&global_mode_item);
         let _ = mode_submenu.append(&direct_mode_item);
-        
-        let exit_item = MenuItem::with_id(
-            "exit_app",
-            if is_zh { "退出" } else { "Exit" },
-            true,
-            None,
-        );
-        
+
+        let exit_item =
+            MenuItem::with_id("exit_app", if is_zh { "退出" } else { "Exit" }, true, None);
+
         let _ = tray_menu.append(&show_item);
         let _ = tray_menu.append(&PredefinedMenuItem::separator());
         let _ = tray_menu.append(&toggle_core_item);
@@ -295,7 +303,7 @@ impl App {
         let _ = tray_menu.append(&mode_submenu);
         let _ = tray_menu.append(&PredefinedMenuItem::separator());
         let _ = tray_menu.append(&exit_item);
-        
+
         let tray_icon = load_icon_safe().and_then(|icon| {
             TrayIconBuilder::new()
                 .with_menu(Box::new(tray_menu))
@@ -350,13 +358,13 @@ impl App {
             tray_menu_direct_mode: direct_mode_item,
             tray_menu_system_proxy: system_proxy_item,
             window_id: None,
-            
+
             traffic_cancel_tx: None,
             confirm_delete_profile_id: None,
             editing_profile_id: None,
             editing_profile_name: String::new(),
             editing_profile_url: String::new(),
-            
+
             last_core_running: false,
             last_sys_proxy_enabled: false,
             last_routing_mode: initial_routing_mode,
@@ -385,46 +393,52 @@ impl App {
             connections_sort: state::ConnectionSort::None,
             connections_sort_desc: false,
             proxy_sort: state::ProxySort::Latency,
-            
+
             cached_system_is_light,
             theme_check_counter: 0,
             config_dirty: false,
             pending_exit: false,
             pending_update_path: None,
         };
-        
+
         // Force initialization of log and traffic streams on startup
         let _ = get_log_tx();
         let _ = get_traffic_tx();
-        
+
         // Sync system proxy checkbox status with system state
         let sys_proxy = sysproxy::check_system_proxy(app.gui_config.mixed_port).unwrap_or(false);
         app.sys_proxy_enabled = sys_proxy;
         app.gui_config.system_proxy_enabled = sys_proxy;
-        
+
         // Initial tray menu synchronization
         app.update_tray_menu();
-        
+
         let mut tasks = Vec::new();
         if app.gui_config.active_profile_id.is_some() {
             tasks.push(app.load_active_nodes_task());
         }
-        if app.gui_config.auto_start_core && app.gui_config.active_profile_id.is_some() && app.core_installed {
+        if app.gui_config.auto_start_core
+            && app.gui_config.active_profile_id.is_some()
+            && app.core_installed
+        {
             tasks.push(Task::done(Message::ToggleCore));
         }
         if app.core_installed {
             let cfg = app.gui_config.clone();
-            tasks.push(Task::perform(async move {
-                tokio::task::spawn_blocking(move || core::get_core_version(&cfg))
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|r| r)
-            }, Message::CoreVersionFetched));
+            tasks.push(Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || core::get_core_version(&cfg))
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                },
+                Message::CoreVersionFetched,
+            ));
         }
-        
+
         (app, Task::batch(tasks))
     }
-    
+
     fn load_active_nodes_task(&self) -> Task<Message> {
         let Some(profile_id) = self.gui_config.active_profile_id.clone() else {
             return Task::none();
@@ -452,17 +466,17 @@ impl App {
             },
         )
     }
-    
+
     fn sync_input_buffers(&mut self) {
         self.mixed_port_input_str = self.gui_config.mixed_port.to_string();
         self.api_port_input_str = self.gui_config.api_port.to_string();
         self.dns_server_local_input_str = self.gui_config.dns_server_local.clone();
         self.dns_server_remote_input_str = self.gui_config.dns_server_remote.clone();
     }
-    
+
     fn update_tray_menu(&self) {
         let is_zh = self.gui_config.language == state::Language::Zh;
-        
+
         if is_zh {
             self.tray_menu_show.set_text("显示主界面");
             if self.core_running {
@@ -491,12 +505,16 @@ impl App {
             self.tray_menu_exit.set_text("Exit");
         }
 
-        self.tray_menu_rule_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Rule);
-        self.tray_menu_global_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Global);
-        self.tray_menu_direct_mode.set_checked(self.gui_config.routing_mode == state::RoutingMode::Direct);
-        self.tray_menu_system_proxy.set_checked(self.gui_config.system_proxy_enabled);
+        self.tray_menu_rule_mode
+            .set_checked(self.gui_config.routing_mode == state::RoutingMode::Rule);
+        self.tray_menu_global_mode
+            .set_checked(self.gui_config.routing_mode == state::RoutingMode::Global);
+        self.tray_menu_direct_mode
+            .set_checked(self.gui_config.routing_mode == state::RoutingMode::Direct);
+        self.tray_menu_system_proxy
+            .set_checked(self.gui_config.system_proxy_enabled);
     }
-    
+
     fn core_busy(&self) -> bool {
         self.core_starting || self.core_stopping
     }
@@ -564,7 +582,7 @@ impl App {
                     self.gui_config.system_proxy_enabled = true;
                     self.config_dirty = true;
                     self.log_lines
-            .push_back("[GUI] System proxy auto-enabled on core start.".to_string());
+                        .push_back("[GUI] System proxy auto-enabled on core start.".to_string());
                 }
                 Err(e) => {
                     let msg = format!("Failed to auto-enable system proxy: {}", e);
@@ -612,7 +630,7 @@ impl App {
                 }
                 Err(e) => {
                     self.log_lines
-            .push_back(format!("[GUI] Failed to disable system proxy: {}", e));
+                        .push_back(format!("[GUI] Failed to disable system proxy: {}", e));
                     self.toast_error(if self.gui_config.language == state::Language::Zh {
                         format!("关闭系统代理失败: {}", e)
                     } else {
@@ -637,7 +655,7 @@ impl App {
         if self.core_running {
             self.pending_core_restart = true;
             self.log_lines
-            .push_back("[GUI] Restarting core to apply new settings...".to_string());
+                .push_back("[GUI] Restarting core to apply new settings...".to_string());
             self.task_stop_core()
         } else {
             Task::none()
@@ -675,7 +693,7 @@ impl App {
             Task::none()
         }
     }
-    
+
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle_update(message);
         if self.core_running != self.last_core_running
@@ -702,39 +720,29 @@ impl App {
                     Task::none()
                 }
             }
-            Message::TrayMenuClicked(id_str) => {
-                match id_str.as_str() {
-                    "show_window" => {
-                        if let Some(id) = self.window_id {
-                            Task::batch(vec![
-                                iced::window::set_mode(id, iced::window::Mode::Windowed),
-                                iced::window::gain_focus(id),
-                            ])
-                        } else {
-                            Task::none()
-                        }
+            Message::TrayMenuClicked(id_str) => match id_str.as_str() {
+                "show_window" => {
+                    if let Some(id) = self.window_id {
+                        Task::batch(vec![
+                            iced::window::set_mode(id, iced::window::Mode::Windowed),
+                            iced::window::gain_focus(id),
+                        ])
+                    } else {
+                        Task::none()
                     }
-                    "toggle_core" => {
-                        Task::done(Message::ToggleCore)
-                    }
-                    "toggle_system_proxy" => {
-                        Task::done(Message::ToggleSystemProxy)
-                    }
-                    "mode_rule" => {
-                        Task::done(Message::RoutingModeChanged(state::RoutingMode::Rule))
-                    }
-                    "mode_global" => {
-                        Task::done(Message::RoutingModeChanged(state::RoutingMode::Global))
-                    }
-                    "mode_direct" => {
-                        Task::done(Message::RoutingModeChanged(state::RoutingMode::Direct))
-                    }
-                    "exit_app" => {
-                        self.request_exit()
-                    }
-                    _ => Task::none(),
                 }
-            }
+                "toggle_core" => Task::done(Message::ToggleCore),
+                "toggle_system_proxy" => Task::done(Message::ToggleSystemProxy),
+                "mode_rule" => Task::done(Message::RoutingModeChanged(state::RoutingMode::Rule)),
+                "mode_global" => {
+                    Task::done(Message::RoutingModeChanged(state::RoutingMode::Global))
+                }
+                "mode_direct" => {
+                    Task::done(Message::RoutingModeChanged(state::RoutingMode::Direct))
+                }
+                "exit_app" => self.request_exit(),
+                _ => Task::none(),
+            },
             Message::WindowOpened(id) => {
                 self.window_id = Some(id);
                 Task::none()
@@ -757,8 +765,7 @@ impl App {
                     };
                     match tab {
                         Tab::Proxies
-                            if !self.proxies_fetch_in_flight
-                                && stale(self.last_proxies_fetch) =>
+                            if !self.proxies_fetch_in_flight && stale(self.last_proxies_fetch) =>
                         {
                             self.proxies_fetch_in_flight = true;
                             tasks.push(Task::perform(
@@ -805,20 +812,22 @@ impl App {
                 let api_port = self.gui_config.api_port;
                 let group_clone = group.clone();
                 let node_clone = node.clone();
-                
-                Task::perform(async move {
-                    api::select_proxy(api_port, &group_clone, &node_clone).await
-                }, move |res| {
-                    Message::GroupNodeSelected {
+
+                Task::perform(
+                    async move { api::select_proxy(api_port, &group_clone, &node_clone).await },
+                    move |res| Message::GroupNodeSelected {
                         group: group.clone(),
                         node: node.clone(),
                         error: res.err(),
-                    }
-                })
+                    },
+                )
             }
             Message::GroupNodeSelected { group, node, error } => {
                 if let Some(err) = error {
-                    self.log_lines.push_back(format!("[GUI] Failed to select node {} for group {}: {}", node, group, err));
+                    self.log_lines.push_back(format!(
+                        "[GUI] Failed to select node {} for group {}: {}",
+                        node, group, err
+                    ));
                 } else {
                     if let Some(g_info) = self.proxy_groups.get_mut(&group) {
                         g_info.now = Some(node.clone());
@@ -828,7 +837,8 @@ impl App {
                         self.gui_config.selected_node_tag = Some(node.clone());
                         self.config_dirty = true;
                     }
-                    self.log_lines.push_back(format!("[GUI] Selected node: {} for group {}", node, group));
+                    self.log_lines
+                        .push_back(format!("[GUI] Selected node: {} for group {}", node, group));
                 }
                 Task::none()
             }
@@ -856,16 +866,35 @@ impl App {
                     }
                 };
                 let (val, list) = match field {
-                    state::RuleField::BypassDomains => (&mut self.bypass_domain_input, &mut self.gui_config.custom_bypass_domains),
-                    state::RuleField::ProxyDomains => (&mut self.proxy_domain_input, &mut self.gui_config.custom_proxy_domains),
-                    state::RuleField::BypassIps => (&mut self.bypass_ip_input, &mut self.gui_config.custom_bypass_ips),
-                    state::RuleField::ProxyIps => (&mut self.proxy_ip_input, &mut self.gui_config.custom_proxy_ips),
+                    state::RuleField::BypassDomains => (
+                        &mut self.bypass_domain_input,
+                        &mut self.gui_config.custom_bypass_domains,
+                    ),
+                    state::RuleField::ProxyDomains => (
+                        &mut self.proxy_domain_input,
+                        &mut self.gui_config.custom_proxy_domains,
+                    ),
+                    state::RuleField::BypassIps => (
+                        &mut self.bypass_ip_input,
+                        &mut self.gui_config.custom_bypass_ips,
+                    ),
+                    state::RuleField::ProxyIps => (
+                        &mut self.proxy_ip_input,
+                        &mut self.gui_config.custom_proxy_ips,
+                    ),
                 };
-                if !list.iter().any(|item| item.eq_ignore_ascii_case(&normalized)) {
+                if !list
+                    .iter()
+                    .any(|item| item.eq_ignore_ascii_case(&normalized))
+                {
                     list.push(normalized.clone());
                     val.clear();
                     self.config_dirty = true;
-                    self.log_lines.push_back(format!("[GUI] Added custom rule to {}: {}", field.as_str(), normalized));
+                    self.log_lines.push_back(format!(
+                        "[GUI] Added custom rule to {}: {}",
+                        field.as_str(),
+                        normalized
+                    ));
                     return self.restart_core();
                 }
                 self.toast_info(self.tr("duplicate_rule"));
@@ -881,7 +910,11 @@ impl App {
                 if index < list.len() {
                     let removed = list.remove(index);
                     self.config_dirty = true;
-                    self.log_lines.push_back(format!("[GUI] Removed custom rule from {}: {}", field.as_str(), removed));
+                    self.log_lines.push_back(format!(
+                        "[GUI] Removed custom rule from {}: {}",
+                        field.as_str(),
+                        removed
+                    ));
                     return self.restart_core();
                 }
                 Task::none()
@@ -942,16 +975,14 @@ impl App {
                         self.core_running = false;
                         self.force_stop_after_start = false;
                         self.log_lines
-            .push_back(format!("[GUI] Error starting core: {}", e));
+                            .push_back(format!("[GUI] Error starting core: {}", e));
                         self.toast_error(e);
                         // Drop pending restart so we don't loop on a broken config.
                         self.pending_core_restart = false;
                         if self.pending_exit {
                             if sysproxy::is_system_proxy_owned() {
-                                let _ = sysproxy::set_system_proxy(
-                                    false,
-                                    self.gui_config.mixed_port,
-                                );
+                                let _ =
+                                    sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
                             }
                             return iced::exit();
                         }
@@ -968,7 +999,7 @@ impl App {
                     }
                     return iced::exit();
                 }
-                
+
                 if let Some(path) = self.pending_update_path.take() {
                     if sysproxy::is_system_proxy_owned() {
                         let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
@@ -980,12 +1011,13 @@ impl App {
                             return iced::exit();
                         }
                         Err(e) => {
-                            self.log_lines.push_back(format!("[GUI] Failed to apply update: {}", e));
+                            self.log_lines
+                                .push_back(format!("[GUI] Failed to apply update: {}", e));
                             self.toast_error(format!("Update failed: {}", e));
                         }
                     }
                 }
-                
+
                 if self.pending_core_restart {
                     self.pending_core_restart = false;
                     return self.task_start_core();
@@ -1018,18 +1050,23 @@ impl App {
             }
             Message::ExportLogs => {
                 let lines = self.log_lines.clone();
-                Task::perform(async move {
-                    let path = config::get_app_dir().join(format!(
-                        "logs_export_{}.txt",
-                        chrono::Local::now().format("%Y%m%d_%H%M%S")
-                    ));
-                    tokio::fs::write(&path, lines.into_iter().collect::<Vec<_>>().join("\n")).await
-                        .map(|_| path.to_string_lossy().to_string())
-                        .map_err(|e| e.to_string())
-                }, Message::LogsExported)
+                Task::perform(
+                    async move {
+                        let path = config::get_app_dir().join(format!(
+                            "logs_export_{}.txt",
+                            chrono::Local::now().format("%Y%m%d_%H%M%S")
+                        ));
+                        tokio::fs::write(&path, lines.into_iter().collect::<Vec<_>>().join("\n"))
+                            .await
+                            .map(|_| path.to_string_lossy().to_string())
+                            .map_err(|e| e.to_string())
+                    },
+                    Message::LogsExported,
+                )
             }
             Message::LogsExported(Ok(path)) => {
-                self.log_lines.push_back(format!("[GUI] Logs exported to {}", path));
+                self.log_lines
+                    .push_back(format!("[GUI] Logs exported to {}", path));
                 self.toast_success(if self.gui_config.language == state::Language::Zh {
                     format!("日志已导出: {}", path)
                 } else {
@@ -1056,13 +1093,12 @@ impl App {
                 Task::none()
             }
             Message::ToggleDisableProxyOnCoreStop => {
-                self.gui_config.disable_proxy_on_core_stop = !self.gui_config.disable_proxy_on_core_stop;
+                self.gui_config.disable_proxy_on_core_stop =
+                    !self.gui_config.disable_proxy_on_core_stop;
                 self.config_dirty = true;
                 Task::none()
             }
-            Message::ImportFromClipboard => {
-                iced::clipboard::read().map(Message::ClipboardContent)
-            }
+            Message::ImportFromClipboard => iced::clipboard::read().map(Message::ClipboardContent),
             Message::ClipboardContent(Some(text)) => {
                 let text = text.trim().to_string();
                 if text.is_empty() {
@@ -1080,15 +1116,16 @@ impl App {
                 });
                 Task::none()
             }
-            Message::ImportLocalFile => {
-                Task::perform(async move {
+            Message::ImportLocalFile => Task::perform(
+                async move {
                     rfd::AsyncFileDialog::new()
                         .add_filter("Config", &["yaml", "yml", "json", "txt"])
                         .pick_file()
                         .await
                         .map(|f| f.path().to_string_lossy().to_string())
-                }, Message::LocalFilePicked)
-            }
+                },
+                Message::LocalFilePicked,
+            ),
             Message::LocalFilePicked(Some(path)) => {
                 self.url_input = path;
                 Task::done(Message::DownloadSubscription)
@@ -1096,19 +1133,23 @@ impl App {
             Message::LocalFilePicked(None) => Task::none(),
             Message::TriggerCoreDownload => {
                 let log_tx = get_log_tx();
-                self.log_lines.push_back("[GUI] Starting sing-box core download...".to_string());
+                self.log_lines
+                    .push_back("[GUI] Starting sing-box core download...".to_string());
                 self.core_install_msg = Some("Downloading...".to_string());
-                Task::perform(async move {
-                    core::download_core(log_tx, false).await
-                }, Message::CoreDownloaded)
+                Task::perform(
+                    async move { core::download_core(log_tx, false).await },
+                    Message::CoreDownloaded,
+                )
             }
             Message::ForceCoreDownload => {
                 let log_tx = get_log_tx();
-                self.log_lines.push_back("[GUI] Force reinstalling sing-box core...".to_string());
+                self.log_lines
+                    .push_back("[GUI] Force reinstalling sing-box core...".to_string());
                 self.core_install_msg = Some("Reinstalling...".to_string());
-                Task::perform(async move {
-                    core::download_core(log_tx, true).await
-                }, Message::CoreDownloaded)
+                Task::perform(
+                    async move { core::download_core(log_tx, true).await },
+                    Message::CoreDownloaded,
+                )
             }
             Message::LatencyTestUrlChanged(url) => {
                 self.gui_config.latency_test_url = url;
@@ -1127,23 +1168,30 @@ impl App {
                     Ok(_) => {
                         self.core_installed = true;
                         self.core_install_msg = None;
-                        self.log_lines.push_back("[GUI] sing-box core downloaded and installed successfully.".to_string());
+                        self.log_lines.push_back(
+                            "[GUI] sing-box core downloaded and installed successfully."
+                                .to_string(),
+                        );
                         self.toast_success(if self.gui_config.language == state::Language::Zh {
                             "内核下载安装成功"
                         } else {
                             "Core downloaded successfully"
                         });
                         let cfg = self.gui_config.clone();
-                        return Task::perform(async move {
-                            tokio::task::spawn_blocking(move || core::get_core_version(&cfg))
-                                .await
-                                .map_err(|e| e.to_string())
-                                .and_then(|r| r)
-                        }, Message::CoreVersionFetched);
+                        return Task::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || core::get_core_version(&cfg))
+                                    .await
+                                    .map_err(|e| e.to_string())
+                                    .and_then(|r| r)
+                            },
+                            Message::CoreVersionFetched,
+                        );
                     }
                     Err(e) => {
                         self.core_install_msg = Some(e.clone());
-                        self.log_lines.push_back(format!("[GUI ERROR] Failed to download core: {}", e));
+                        self.log_lines
+                            .push_back(format!("[GUI ERROR] Failed to download core: {}", e));
                         self.toast_error(e);
                     }
                 }
@@ -1168,10 +1216,12 @@ impl App {
                         self.sys_proxy_enabled = target;
                         self.gui_config.system_proxy_enabled = target;
                         self.config_dirty = true;
-                        self.log_lines.push_back(format!("[GUI] System proxy toggled to: {}", target));
+                        self.log_lines
+                            .push_back(format!("[GUI] System proxy toggled to: {}", target));
                     }
                     Err(e) => {
-                        self.log_lines.push_back(format!("[GUI] System proxy error: {}", e));
+                        self.log_lines
+                            .push_back(format!("[GUI] System proxy error: {}", e));
                         self.toast_error(if self.gui_config.language == state::Language::Zh {
                             format!("系统代理切换失败: {}", e)
                         } else {
@@ -1193,7 +1243,7 @@ impl App {
                 self.downloading = true;
                 self.profile_error = None;
                 let url = self.url_input.clone();
-                
+
                 Task::perform(download_profile(url), |res| match res {
                     Ok(r) => Message::SubscriptionDownloaded {
                         id: r.id,
@@ -1231,7 +1281,8 @@ impl App {
                 let mut load_nodes = false;
                 if let Some(err) = error {
                     self.profile_error = Some(err.clone());
-                    self.log_lines.push_back(format!("[GUI] Download failed: {}", err));
+                    self.log_lines
+                        .push_back(format!("[GUI] Download failed: {}", err));
                     self.toast_error(err);
                 } else {
                     self.profile_error = None;
@@ -1261,13 +1312,15 @@ impl App {
                                 p.expire_at = expire_at;
                             }
                             if let Some(ref name) = display_name
-                                && !name.is_empty() {
-                                    p.name = name.clone();
-                                }
+                                && !name.is_empty()
+                            {
+                                p.name = name.clone();
+                            }
                         } else {
-                            let name = display_name
-                                .filter(|n| !n.is_empty())
-                                .unwrap_or_else(|| format!("Sub_{}", &id[id.len().saturating_sub(6)..]));
+                            let name =
+                                display_name.filter(|n| !n.is_empty()).unwrap_or_else(|| {
+                                    format!("Sub_{}", &id[id.len().saturating_sub(6)..])
+                                });
                             let path = config::get_profile_path(&id);
                             let url = source_url.unwrap_or_default();
                             self.gui_config.subscriptions.push(Profile {
@@ -1294,7 +1347,7 @@ impl App {
                         load_nodes = true;
                     }
                     self.log_lines
-            .push_back("[GUI] Subscription downloaded successfully.".to_string());
+                        .push_back("[GUI] Subscription downloaded successfully.".to_string());
                     self.toast_success(self.tr("toast_sub_ok"));
                 }
                 let next_update = self.kick_pending_auto_update();
@@ -1311,7 +1364,8 @@ impl App {
                 self.proxy_groups.clear();
                 self.selected_group.clear();
                 self.config_dirty = true;
-                self.log_lines.push_back("[GUI] Active profile updated.".to_string());
+                self.log_lines
+                    .push_back("[GUI] Active profile updated.".to_string());
                 self.toast_success(self.tr("profile_selected_toast"));
                 Task::batch(vec![self.load_active_nodes_task(), self.restart_core()])
             }
@@ -1349,7 +1403,8 @@ impl App {
                         self.active_profile_nodes.clear();
                     }
                     self.config_dirty = true;
-                    self.log_lines.push_back("[GUI] Profile deleted.".to_string());
+                    self.log_lines
+                        .push_back("[GUI] Profile deleted.".to_string());
                     self.toast_success(self.tr("toast_profile_deleted"));
 
                     // Active profile deleted while core runs → stop to avoid orphan config.
@@ -1375,24 +1430,31 @@ impl App {
                 }
                 let tag_clone = tag.clone();
                 let api_port = self.gui_config.api_port;
-                
-                Task::perform(async move {
-                    api::select_proxy(api_port, "Proxy", &tag_clone).await
-                }, move |res| {
-                    match res {
-                        Ok(_) => Message::NodeSelected { tag: tag.clone(), error: None },
-                        Err(e) => Message::NodeSelected { tag: tag.clone(), error: Some(e) },
-                    }
-                })
+
+                Task::perform(
+                    async move { api::select_proxy(api_port, "Proxy", &tag_clone).await },
+                    move |res| match res {
+                        Ok(_) => Message::NodeSelected {
+                            tag: tag.clone(),
+                            error: None,
+                        },
+                        Err(e) => Message::NodeSelected {
+                            tag: tag.clone(),
+                            error: Some(e),
+                        },
+                    },
+                )
             }
             Message::NodeSelected { tag, error } => {
                 if let Some(err) = error {
-                    self.log_lines.push_back(format!("[GUI] Failed to select node: {}", err));
+                    self.log_lines
+                        .push_back(format!("[GUI] Failed to select node: {}", err));
                 } else {
                     self.selected_node_tag = Some(tag.clone());
                     self.gui_config.selected_node_tag = Some(tag.clone());
                     self.config_dirty = true;
-                    self.log_lines.push_back(format!("[GUI] Selected node: {}", tag));
+                    self.log_lines
+                        .push_back(format!("[GUI] Selected node: {}", tag));
                 }
                 Task::none()
             }
@@ -1422,10 +1484,9 @@ impl App {
                         Task::perform(
                             async move {
                                 let _permit = sem.acquire().await;
-                                let latency = api::test_node_latency(
-                                    api_port, &tag, &test_url, timeout_ms,
-                                )
-                                .await;
+                                let latency =
+                                    api::test_node_latency(api_port, &tag, &test_url, timeout_ms)
+                                        .await;
                                 (tag, latency)
                             },
                             |(tag, res)| Message::NodeLatencyTested {
@@ -1459,34 +1520,37 @@ impl App {
                     let id_clone = id.clone();
                     self.downloading = true;
                     self.profile_error = None;
-                    self.log_lines.push_back(format!("[GUI] Updating subscription: {}", url));
-                    
-                    Task::perform(async move {
-                        fetch_and_save_subscription(url, id_clone).await
-                    }, |res| match res {
-                        Ok(r) => Message::SubscriptionDownloaded {
-                            id: r.id,
-                            error: None,
-                            traffic_upload: r.traffic_upload,
-                            traffic_download: r.traffic_download,
-                            traffic_total: r.traffic_total,
-                            expire_at: r.expire_at,
-                            display_name: r.display_name,
-                            source_url: Some(r.source_url),
+                    self.log_lines
+                        .push_back(format!("[GUI] Updating subscription: {}", url));
+
+                    Task::perform(
+                        async move { fetch_and_save_subscription(url, id_clone).await },
+                        |res| match res {
+                            Ok(r) => Message::SubscriptionDownloaded {
+                                id: r.id,
+                                error: None,
+                                traffic_upload: r.traffic_upload,
+                                traffic_download: r.traffic_download,
+                                traffic_total: r.traffic_total,
+                                expire_at: r.expire_at,
+                                display_name: r.display_name,
+                                source_url: Some(r.source_url),
+                            },
+                            Err(e) => Message::SubscriptionDownloaded {
+                                id: String::new(),
+                                error: Some(e),
+                                traffic_upload: None,
+                                traffic_download: None,
+                                traffic_total: None,
+                                expire_at: None,
+                                display_name: None,
+                                source_url: None,
+                            },
                         },
-                        Err(e) => Message::SubscriptionDownloaded {
-                            id: String::new(),
-                            error: Some(e),
-                            traffic_upload: None,
-                            traffic_download: None,
-                            traffic_total: None,
-                            expire_at: None,
-                            display_name: None,
-                            source_url: None,
-                        },
-                    })
+                    )
                 } else {
-                    self.log_lines.push_back("[GUI] Subscription not found.".to_string());
+                    self.log_lines
+                        .push_back("[GUI] Subscription not found.".to_string());
                     Task::none()
                 }
             }
@@ -1524,8 +1588,7 @@ impl App {
                 let check_authoritative = self.core_running
                     && !self.core_busy()
                     && self.tick_authority_counter.is_multiple_of(5);
-                self.tick_authority_counter =
-                    self.tick_authority_counter.wrapping_add(1);
+                self.tick_authority_counter = self.tick_authority_counter.wrapping_add(1);
 
                 // Auto-dismiss toast
                 if let Some(ref mut toast) = self.toast {
@@ -1576,8 +1639,7 @@ impl App {
                     self.poll_tick_counter = self.poll_tick_counter.wrapping_add(1);
                     let tick = self.poll_tick_counter;
                     let api_port = self.gui_config.api_port;
-                    let (want_proxies, want_connections) =
-                        should_poll_api(self.current_tab, tick);
+                    let (want_proxies, want_connections) = should_poll_api(self.current_tab, tick);
 
                     if want_proxies && !self.proxies_fetch_in_flight {
                         self.proxies_fetch_in_flight = true;
@@ -1592,9 +1654,14 @@ impl App {
                 }
 
                 if check_authoritative {
-                    tasks.push(Task::perform(async move {
-                        tokio::task::spawn_blocking(core::is_core_running).await.unwrap_or(false)
-                    }, Message::CoreLivenessChecked));
+                    tasks.push(Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(core::is_core_running)
+                                .await
+                                .unwrap_or(false)
+                        },
+                        Message::CoreLivenessChecked,
+                    ));
                 }
 
                 Task::batch(tasks)
@@ -1603,7 +1670,8 @@ impl App {
                 self.config_save_in_flight = false;
                 if let Err(error) = result {
                     self.config_dirty = true;
-                    self.log_lines.push_back(format!("[GUI] Failed to save settings: {error}"));
+                    self.log_lines
+                        .push_back(format!("[GUI] Failed to save settings: {error}"));
                 }
                 self.refresh_config_preview()
             }
@@ -1614,33 +1682,36 @@ impl App {
             Message::CoreLivenessChecked(running) => {
                 let was_running = self.core_running;
                 self.core_running = running;
-                if was_running && !self.core_running
-                    && let Some(msg) = core::take_unexpected_core_exit() {
-                        self.log_lines.push_back(format!("[GUI] {}", msg));
-                        self.toast_error(msg);
-                        if self.gui_config.disable_proxy_on_core_stop
-                            && self.sys_proxy_enabled
-                            && sysproxy::is_system_proxy_owned()
-                        {
-                            let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
-                            self.sys_proxy_enabled = false;
-                            self.gui_config.system_proxy_enabled = false;
-                            self.config_dirty = true;
-                        }
-                        if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
-                            let _ = cancel_tx.send(());
-                        }
-                        self.current_speed = Bandwidth::default();
+                if was_running
+                    && !self.core_running
+                    && let Some(msg) = core::take_unexpected_core_exit()
+                {
+                    self.log_lines.push_back(format!("[GUI] {}", msg));
+                    self.toast_error(msg);
+                    if self.gui_config.disable_proxy_on_core_stop
+                        && self.sys_proxy_enabled
+                        && sysproxy::is_system_proxy_owned()
+                    {
+                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+                        self.sys_proxy_enabled = false;
+                        self.gui_config.system_proxy_enabled = false;
+                        self.config_dirty = true;
                     }
+                    if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
+                        let _ = cancel_tx.send(());
+                    }
+                    self.current_speed = Bandwidth::default();
+                }
                 Task::none()
             }
             Message::FetchConnections => {
                 if self.core_running && !self.connections_fetch_in_flight {
                     self.connections_fetch_in_flight = true;
                     let api_port = self.gui_config.api_port;
-                    return Task::perform(async move {
-                        api::fetch_connections(api_port).await
-                    }, Message::ConnectionsFetched);
+                    return Task::perform(
+                        async move { api::fetch_connections(api_port).await },
+                        Message::ConnectionsFetched,
+                    );
                 }
                 Task::none()
             }
@@ -1669,22 +1740,27 @@ impl App {
                 if self.core_running {
                     let api_port = self.gui_config.api_port;
                     let id_clone = id.clone();
-                    return Task::perform(async move {
-                        match api::close_connection(api_port, &id_clone).await {
-                            Ok(_) => Ok(id_clone),
-                            Err(e) => Err(e),
-                        }
-                    }, Message::ConnectionClosed);
+                    return Task::perform(
+                        async move {
+                            match api::close_connection(api_port, &id_clone).await {
+                                Ok(_) => Ok(id_clone),
+                                Err(e) => Err(e),
+                            }
+                        },
+                        Message::ConnectionClosed,
+                    );
                 }
                 Task::none()
             }
             Message::ConnectionClosed(Ok(id)) => {
-                self.log_lines.push_back(format!("[GUI] Closed connection {}", id));
+                self.log_lines
+                    .push_back(format!("[GUI] Closed connection {}", id));
                 self.active_connections.retain(|c| c.id != id);
                 Task::none()
             }
             Message::ConnectionClosed(Err(e)) => {
-                self.log_lines.push_back(format!("[GUI] Failed to close connection: {}", e));
+                self.log_lines
+                    .push_back(format!("[GUI] Failed to close connection: {}", e));
                 self.toast_error(e);
                 Task::none()
             }
@@ -1698,13 +1774,15 @@ impl App {
                     return Task::none();
                 }
                 let api_port = self.gui_config.api_port;
-                Task::perform(async move {
-                    api::close_all_connections(api_port).await
-                }, Message::AllConnectionsClosed)
+                Task::perform(
+                    async move { api::close_all_connections(api_port).await },
+                    Message::AllConnectionsClosed,
+                )
             }
             Message::AllConnectionsClosed(Ok(())) => {
                 self.active_connections.clear();
-                self.log_lines.push_back("[GUI] Closed all connections.".to_string());
+                self.log_lines
+                    .push_back("[GUI] Closed all connections.".to_string());
                 self.toast_success(if self.gui_config.language == state::Language::Zh {
                     "已关闭全部连接"
                 } else {
@@ -1713,7 +1791,8 @@ impl App {
                 Task::none()
             }
             Message::AllConnectionsClosed(Err(e)) => {
-                self.log_lines.push_back(format!("[GUI] Failed to close all connections: {}", e));
+                self.log_lines
+                    .push_back(format!("[GUI] Failed to close all connections: {}", e));
                 self.toast_error(e);
                 Task::none()
             }
@@ -1724,9 +1803,10 @@ impl App {
                 if self.core_running {
                     let api_port = self.gui_config.api_port;
                     let mode_str = mode_label.to_string();
-                    Task::perform(async move {
-                        api::set_mode(api_port, &mode_str).await.map(|_| mode_str)
-                    }, Message::ModeSet)
+                    Task::perform(
+                        async move { api::set_mode(api_port, &mode_str).await.map(|_| mode_str) },
+                        Message::ModeSet,
+                    )
                 } else {
                     self.log_lines.push_back(format!(
                         "[GUI] Routing mode set to {} (will apply on next core start).",
@@ -1741,7 +1821,8 @@ impl App {
                 }
             }
             Message::ModeSet(Ok(mode)) => {
-                self.log_lines.push_back(format!("[GUI] Routing mode switched to {}.", mode));
+                self.log_lines
+                    .push_back(format!("[GUI] Routing mode switched to {}.", mode));
                 self.toast_success(if self.gui_config.language == state::Language::Zh {
                     format!("路由模式已切换为 {}", mode)
                 } else {
@@ -1750,7 +1831,8 @@ impl App {
                 Task::none()
             }
             Message::ModeSet(Err(e)) => {
-                self.log_lines.push_back(format!("[GUI] Failed to set routing mode: {}", e));
+                self.log_lines
+                    .push_back(format!("[GUI] Failed to set routing mode: {}", e));
                 self.toast_error(if self.gui_config.language == state::Language::Zh {
                     format!("切换路由模式失败: {}", e)
                 } else {
@@ -1762,7 +1844,7 @@ impl App {
                 self.toast = None;
                 Task::none()
             }
-            
+
             // New type-safe configuration messages
             Message::MixedPortChanged(val) => {
                 self.mixed_port_input_str = val;
@@ -1881,7 +1963,12 @@ impl App {
             }
             Message::SaveProfileEdit => {
                 if let Some(id) = self.editing_profile_id.clone() {
-                    if let Some(profile) = self.gui_config.subscriptions.iter_mut().find(|p| p.id == id) {
+                    if let Some(profile) = self
+                        .gui_config
+                        .subscriptions
+                        .iter_mut()
+                        .find(|p| p.id == id)
+                    {
                         profile.name = self.editing_profile_name.clone();
                         profile.url = self.editing_profile_url.clone();
                         self.config_dirty = true;
@@ -1899,7 +1986,10 @@ impl App {
                     self.connections_sort_desc = !self.connections_sort_desc;
                 } else {
                     self.connections_sort = col;
-                    self.connections_sort_desc = matches!(col, state::ConnectionSort::Download | state::ConnectionSort::Upload);
+                    self.connections_sort_desc = matches!(
+                        col,
+                        state::ConnectionSort::Download | state::ConnectionSort::Upload
+                    );
                 }
                 Task::none()
             }
@@ -1946,13 +2036,15 @@ impl App {
                 self.restart_core()
             }
             Message::SaveSettings => {
-                if self.mixed_port_input_str.trim().is_empty() || self.api_port_input_str.trim().is_empty() {
+                if self.mixed_port_input_str.trim().is_empty()
+                    || self.api_port_input_str.trim().is_empty()
+                {
                     let err = self.tr("port_empty_error").to_string();
                     self.log_lines.push_back(format!("[GUI ERROR] {}", err));
                     self.core_install_msg = Some(err);
                     return Task::none();
                 }
-                
+
                 let (mixed_p, api_p) = match (
                     self.mixed_port_input_str.trim().parse::<u16>(),
                     self.api_port_input_str.trim().parse::<u16>(),
@@ -1970,7 +2062,8 @@ impl App {
                 // the latter would collide on 127.0.0.1:port and FATAL the core.
                 let reserved_msg = self.tr("port_reserved_error").to_string();
                 if mixed_p < 1024 || api_p < 1024 {
-                    self.log_lines.push_back(format!("[GUI ERROR] {}", reserved_msg));
+                    self.log_lines
+                        .push_back(format!("[GUI ERROR] {}", reserved_msg));
                     self.core_install_msg = Some(reserved_msg);
                     return Task::none();
                 }
@@ -2006,7 +2099,8 @@ impl App {
                 }
                 self.core_installed = core::is_core_installed(&self.gui_config);
                 self.config_dirty = true;
-                self.log_lines.push_back("[GUI] Settings saved and applied successfully.".to_string());
+                self.log_lines
+                    .push_back("[GUI] Settings saved and applied successfully.".to_string());
                 self.toast_success(self.tr("settings_saved_toast"));
                 self.restart_core()
             }
@@ -2062,7 +2156,7 @@ impl App {
                     }
                     Err(e) => {
                         self.log_lines
-            .push_back(format!("[GUI] Update download failed: {}", e));
+                            .push_back(format!("[GUI] Update download failed: {}", e));
                         // Keep download URL so the user can retry in-app.
                         self.update_status = state::UpdateStatus::NewVersion {
                             tag,
@@ -2081,11 +2175,11 @@ impl App {
             }
         }
     }
-    
+
     fn view(&self) -> Element<'_, Message> {
         let lang = self.gui_config.language;
         let theme_ref = self.theme_ref();
-        
+
         let current_tab = self.current_tab;
         let core_running = self.core_running;
         let core_starting = self.core_starting;
@@ -2139,7 +2233,7 @@ impl App {
             let theme = theme_ref;
             let is_compact = size.width < ui::SHELL_COMPACT_W;
             let text_muted = ui::theme::text_muted(theme);
-            
+
             // Render active tab view
             let content = match current_tab {
                 Tab::Dashboard => ui::dashboard::render(
@@ -2222,81 +2316,86 @@ impl App {
                 ),
             };
 
-            let make_tab_btn = |tab: Tab, icon_char: char, key: &'static str| -> Element<'_, Message> {
-                let active = current_tab == tab;
-                
-                let indicator: Element<'_, Message> = container(iced::widget::Space::new())
-                    .width(4)
-                    .height(20)
-                    .style(move |_theme| container::Style {
-                        background: if active {
-                            Some(iced::Background::Color(ui::theme::ACCENT_PURPLE))
-                        } else {
-                            None
-                        },
-                        border: iced::Border {
-                            radius: 2.0.into(),
+            let make_tab_btn =
+                |tab: Tab, icon_char: char, key: &'static str| -> Element<'_, Message> {
+                    let active = current_tab == tab;
+
+                    let indicator: Element<'_, Message> = container(iced::widget::Space::new())
+                        .width(4)
+                        .height(20)
+                        .style(move |_theme| container::Style {
+                            background: if active {
+                                Some(iced::Background::Color(ui::theme::ACCENT_PURPLE))
+                            } else {
+                                None
+                            },
+                            border: iced::Border {
+                                radius: 2.0.into(),
+                                ..Default::default()
+                            },
                             ..Default::default()
-                        },
-                        ..Default::default()
-                    })
-                    .into();
-                
-                let btn_content: Element<'_, Message> = if is_compact {
-                    row![
-                        indicator,
-                        container(
+                        })
+                        .into();
+
+                    let btn_content: Element<'_, Message> = if is_compact {
+                        row![
+                            indicator,
+                            container(
+                                text(icon_char.to_string())
+                                    .font(Font::with_name("Material Icons"))
+                                    .size(ui::ICON_SIZE_LG)
+                            )
+                            .width(Length::Fill)
+                            .align_x(Alignment::Center)
+                        ]
+                        .align_y(Alignment::Center)
+                        .into()
+                    } else {
+                        row![
+                            indicator,
                             text(icon_char.to_string())
                                 .font(Font::with_name("Material Icons"))
-                                .size(ui::ICON_SIZE_LG)
-                        )
-                        .width(Length::Fill)
-                        .align_x(Alignment::Center)
-                    ]
-                    .align_y(Alignment::Center)
-                    .into()
-                } else {
-                    row![
-                        indicator,
-                        text(icon_char.to_string())
-                            .font(Font::with_name("Material Icons"))
-                            .size(ui::ICON_SIZE),
-                        text(ui::i18n::tr(lang, key))
-                            .size(ui::theme::TYPE_BODY)
-                            .font(ui::theme::ui_font(if active { iced::font::Weight::Bold } else { iced::font::Weight::Medium }))
-                    ]
-                    .spacing(ui::SP_12)
-                    .align_y(Alignment::Center)
-                    .into()
-                };
-                
-                let btn = button(btn_content)
-                    .padding(if is_compact { [14, 0] } else { [14, 16] })
-                    .width(Length::Fill)
-                    .style(ui::theme::button_tab(active))
-                    .on_press(Message::TabChanged(tab));
-
-                // Compact icon rail: show tab name on hover
-                if is_compact {
-                    tooltip(
-                        btn,
-                        container(
+                                .size(ui::ICON_SIZE),
                             text(ui::i18n::tr(lang, key))
-                                .size(ui::theme::TYPE_BTN_SM)
-                                .color(ui::theme::text_primary(theme)),
+                                .size(ui::theme::TYPE_BODY)
+                                .font(ui::theme::ui_font(if active {
+                                    iced::font::Weight::Bold
+                                } else {
+                                    iced::font::Weight::Medium
+                                }))
+                        ]
+                        .spacing(ui::SP_12)
+                        .align_y(Alignment::Center)
+                        .into()
+                    };
+
+                    let btn = button(btn_content)
+                        .padding(if is_compact { [14, 0] } else { [14, 16] })
+                        .width(Length::Fill)
+                        .style(ui::theme::button_tab(active))
+                        .on_press(Message::TabChanged(tab));
+
+                    // Compact icon rail: show tab name on hover
+                    if is_compact {
+                        tooltip(
+                            btn,
+                            container(
+                                text(ui::i18n::tr(lang, key))
+                                    .size(ui::theme::TYPE_BTN_SM)
+                                    .color(ui::theme::text_primary(theme)),
+                            )
+                            .padding([6, 10])
+                            .style(ui::theme::card_bg),
+                            tooltip::Position::Right,
                         )
-                        .padding([6, 10])
-                        .style(ui::theme::card_bg),
-                        tooltip::Position::Right,
-                    )
-                    .into()
-                } else {
-                    btn.into()
-                }
-            };
+                        .into()
+                    } else {
+                        btn.into()
+                    }
+                };
 
             let logo_handle = iced::widget::image::Handle::from_bytes(
-                include_bytes!("../assets/app-icon.png").as_slice()
+                include_bytes!("../assets/app-icon.png").as_slice(),
             );
             let status_dot_color = if core_running {
                 ui::theme::SUCCESS
@@ -2310,7 +2409,7 @@ impl App {
                     iced::widget::image(handle)
                         .width(size)
                         .height(size)
-                        .content_fit(iced::ContentFit::Cover)
+                        .content_fit(iced::ContentFit::Cover),
                 )
                 .width(size)
                 .height(size)
@@ -2329,13 +2428,15 @@ impl App {
                     column![
                         column![
                             container(logo_rounded(logo_handle.clone(), 36.0))
-                            .width(Length::Fill)
-                            .center_x(Length::Fill),
+                                .width(Length::Fill)
+                                .center_x(Length::Fill),
                             container(iced::widget::Space::new())
                                 .height(1)
                                 .width(Length::Fill)
                                 .style(|t| container::Style {
-                                    background: Some(iced::Background::Color(ui::theme::border_color(t))),
+                                    background: Some(iced::Background::Color(
+                                        ui::theme::border_color(t)
+                                    )),
                                     ..Default::default()
                                 }),
                             column![
@@ -2353,104 +2454,102 @@ impl App {
                         .spacing(16)
                         .width(Length::Fill),
                         iced::widget::Space::new().height(Length::Fill),
-                        container(
-                            {
-                                let dot = container(iced::widget::Space::new())
-                                    .width(8)
-                                    .height(8)
-                                    .style(move |_t| container::Style {
-                                        background: Some(iced::Background::Color(status_dot_color)),
-                                        border: iced::Border {
-                                            radius: 4.0.into(),
-                                            ..Default::default()
-                                        },
+                        container({
+                            let dot = container(iced::widget::Space::new())
+                                .width(8)
+                                .height(8)
+                                .style(move |_t| container::Style {
+                                    background: Some(iced::Background::Color(status_dot_color)),
+                                    border: iced::Border {
+                                        radius: 4.0.into(),
                                         ..Default::default()
-                                    });
-                                if core_running {
-                                    container(dot)
-                                        .padding(4)
-                                        .style(move |_t| ui::theme::status_ring(status_dot_color))
-                                } else {
-                                    container(dot).padding(4)
-                                }
+                                    },
+                                    ..Default::default()
+                                });
+                            if core_running {
+                                container(dot)
+                                    .padding(4)
+                                    .style(move |_t| ui::theme::status_ring(status_dot_color))
+                            } else {
+                                container(dot).padding(4)
                             }
-                        )
+                        })
                         .center_x(Length::Fill)
                     ]
                     .width(Length::Fill)
-                    .align_x(Alignment::Center)
+                    .align_x(Alignment::Center),
                 )
                 .width(Length::Fixed(64.0))
                 .height(Length::Fill)
                 .padding([24, 0])
                 .style(ui::theme::sidebar_bg)
             } else {
-                container(
+                container(column![
                     column![
-                        column![
-                            row![
-                                logo_rounded(logo_handle, 32.0),
-                                column![
-                                    text("sing-box")
-                                        .size(18)
-                                        .font(ui::theme::ui_font(iced::font::Weight::Semibold))
-                                        .color(ui::theme::text_primary(theme)),
-                                    text("GUI")
-                                        .size(ui::theme::TYPE_CAPTION)
-                                        .font(ui::theme::ui_font(iced::font::Weight::Medium))
-                                        .color(ui::theme::text_tertiary(theme)),
-                                ]
-                                .spacing(0)
-                            ]
-                            .spacing(10)
-                            .align_y(Alignment::Center),
-                            container(iced::widget::Space::new())
-                                .height(1)
-                                .width(Length::Fill)
-                                .style(|t| container::Style {
-                                    background: Some(iced::Background::Color(ui::theme::border_color(t))),
-                                    ..Default::default()
-                                }),
-                            column![
-                                make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
-                                make_tab_btn(Tab::Proxies, '\u{EA0B}', "tab_proxies"),
-                                make_tab_btn(Tab::Profiles, '\u{E2C7}', "tab_profiles"),
-                                make_tab_btn(Tab::Rules, '\u{E41E}', "tab_rules"),
-                                make_tab_btn(Tab::Connections, '\u{E894}', "tab_connections"),
-                                make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
-                                make_tab_btn(Tab::Settings, '\u{E8B8}', "tab_settings"),
-                            ]
-                            .spacing(6)
-                            .width(Length::Fill)
-                        ]
-                        .spacing(16)
-                        .width(Length::Fill),
-                        iced::widget::Space::new().height(Length::Fill),
                         row![
-                            ui::status_dot(
-                                status_dot_color,
-                                core_running,
-                                if core_running {
-                                    ui::i18n::tr(lang, "status_running")
-                                } else {
-                                    ui::i18n::tr(lang, "status_stopped")
-                                },
-                                if core_running {
-                                    ui::theme::SUCCESS
-                                } else {
-                                    text_muted
-                                },
-                                ui::theme::TYPE_CAPTION
-                            ),
-                            iced::widget::Space::new().width(Length::Fill),
-                            text(format!("v{}", env!("CARGO_PKG_VERSION")))
-                                .size(ui::theme::TYPE_CAPTION)
-                                .color(text_muted)
+                            logo_rounded(logo_handle, 32.0),
+                            column![
+                                text("sing-box")
+                                    .size(18)
+                                    .font(ui::theme::ui_font(iced::font::Weight::Semibold))
+                                    .color(ui::theme::text_primary(theme)),
+                                text("GUI")
+                                    .size(ui::theme::TYPE_CAPTION)
+                                    .font(ui::theme::ui_font(iced::font::Weight::Medium))
+                                    .color(ui::theme::text_tertiary(theme)),
+                            ]
+                            .spacing(0)
                         ]
-                        .spacing(8)
-                        .align_y(Alignment::Center)
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                        container(iced::widget::Space::new())
+                            .height(1)
+                            .width(Length::Fill)
+                            .style(|t| container::Style {
+                                background: Some(iced::Background::Color(ui::theme::border_color(
+                                    t
+                                ))),
+                                ..Default::default()
+                            }),
+                        column![
+                            make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
+                            make_tab_btn(Tab::Proxies, '\u{EA0B}', "tab_proxies"),
+                            make_tab_btn(Tab::Profiles, '\u{E2C7}', "tab_profiles"),
+                            make_tab_btn(Tab::Rules, '\u{E41E}', "tab_rules"),
+                            make_tab_btn(Tab::Connections, '\u{E894}', "tab_connections"),
+                            make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
+                            make_tab_btn(Tab::Settings, '\u{E8B8}', "tab_settings"),
+                        ]
+                        .spacing(6)
+                        .width(Length::Fill)
                     ]
-                )
+                    .spacing(16)
+                    .width(Length::Fill),
+                    iced::widget::Space::new().height(Length::Fill),
+                    row![
+                        ui::status_dot(
+                            status_dot_color,
+                            core_running,
+                            if core_running {
+                                ui::i18n::tr(lang, "status_running")
+                            } else {
+                                ui::i18n::tr(lang, "status_stopped")
+                            },
+                            if core_running {
+                                ui::theme::SUCCESS
+                            } else {
+                                text_muted
+                            },
+                            ui::theme::TYPE_CAPTION
+                        ),
+                        iced::widget::Space::new().width(Length::Fill),
+                        text(format!("v{}", env!("CARGO_PKG_VERSION")))
+                            .size(ui::theme::TYPE_CAPTION)
+                            .color(text_muted)
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                ])
                 .width(Length::Fixed(224.0))
                 .height(Length::Fill)
                 .padding(20)
@@ -2460,16 +2559,11 @@ impl App {
             let main_body = if let Some(toast) = toast_ref {
                 let toast_el = ui::toast::render(toast, theme);
                 iced::widget::stack![
-                    container(content)
-                        .width(Length::Fill)
-                        .height(Length::Fill),
+                    container(content).width(Length::Fill).height(Length::Fill),
                     container(
                         column![
-                            row![
-                                iced::widget::Space::new().width(Length::Fill),
-                                toast_el,
-                            ]
-                            .padding([16, 20])
+                            row![iced::widget::Space::new().width(Length::Fill), toast_el,]
+                                .padding([16, 20])
                         ]
                         .width(Length::Fill)
                     )
@@ -2489,19 +2583,16 @@ impl App {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(ui::theme::main_bg);
-                
-            row![
-                sidebar,
-                main_layout
-            ]
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .into()
+
+            row![sidebar, main_layout]
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .into()
         });
 
         main_content.into()
     }
-    
+
     fn subscription(&self) -> Subscription<Message> {
         let mut subs = vec![
             iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick),
@@ -2514,151 +2605,184 @@ impl App {
                 }
             }),
         ];
-        
+
         // Live streams for logs, traffic stats, and tray events
         subs.push(Subscription::run(log_subscription));
         subs.push(Subscription::run(traffic_subscription));
         subs.push(Subscription::run(tray_subscription));
-        
+
         Subscription::batch(subs)
     }
 }
 
 // Subscription worker for streaming log lines
 fn log_subscription() -> impl iced::futures::Stream<Item = Message> {
-    iced::stream::channel(100, |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
-        struct RxLease {
-            slot: &'static Mutex<Option<mpsc::Receiver<String>>>,
-            rx: Option<mpsc::Receiver<String>>,
-        }
-        impl Drop for RxLease {
-            fn drop(&mut self) {
-                let rx = match self.rx.take() {
-                    Some(rx) => rx,
-                    None => return,
-                };
-                let mut slot = match self.slot.lock() {
-                    Ok(s) => s,
-                    Err(e) => e.into_inner(),
-                };
-                if slot.is_none() {
-                    *slot = Some(rx);
+    iced::stream::channel(
+        100,
+        |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
+            struct RxLease {
+                slot: &'static Mutex<Option<mpsc::Receiver<String>>>,
+                rx: Option<mpsc::Receiver<String>>,
+            }
+            impl Drop for RxLease {
+                fn drop(&mut self) {
+                    let rx = match self.rx.take() {
+                        Some(rx) => rx,
+                        None => return,
+                    };
+                    let mut slot = match self.slot.lock() {
+                        Ok(s) => s,
+                        Err(e) => e.into_inner(),
+                    };
+                    if slot.is_none() {
+                        *slot = Some(rx);
+                    }
                 }
             }
-        }
-        let Some(slot) = LOG_RX.get() else { return };
-        let mut lease = RxLease { slot, rx: slot.lock().unwrap_or_else(|e| e.into_inner()).take() };
-        if let Some(r) = lease.rx.as_mut() {
-            while let Some(line) = r.recv().await {
-                let _ = output.send(Message::NewLogLine(line)).await;
-                if output.is_closed() { break; }
+            let Some(slot) = LOG_RX.get() else { return };
+            let mut lease = RxLease {
+                slot,
+                rx: slot.lock().unwrap_or_else(|e| e.into_inner()).take(),
+            };
+            if let Some(r) = lease.rx.as_mut() {
+                while let Some(line) = r.recv().await {
+                    let _ = output.send(Message::NewLogLine(line)).await;
+                    if output.is_closed() {
+                        break;
+                    }
+                }
             }
-        }
-        // On stream end, Drop returns the receiver to the slot.
-    })
+            // On stream end, Drop returns the receiver to the slot.
+        },
+    )
 }
 
 // Subscription worker for streaming real-time Clash API traffic stats
 fn traffic_subscription() -> impl iced::futures::Stream<Item = Message> {
-    iced::stream::channel(100, |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
-        struct RxLease {
-            slot: &'static Mutex<Option<mpsc::Receiver<api::TrafficInfo>>>,
-            rx: Option<mpsc::Receiver<api::TrafficInfo>>,
-        }
-        impl Drop for RxLease {
-            fn drop(&mut self) {
-                let rx = match self.rx.take() {
-                    Some(rx) => rx,
-                    None => return,
-                };
-                let mut slot = match self.slot.lock() {
-                    Ok(s) => s,
-                    Err(e) => e.into_inner(),
-                };
-                if slot.is_none() {
-                    *slot = Some(rx);
+    iced::stream::channel(
+        100,
+        |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
+            struct RxLease {
+                slot: &'static Mutex<Option<mpsc::Receiver<api::TrafficInfo>>>,
+                rx: Option<mpsc::Receiver<api::TrafficInfo>>,
+            }
+            impl Drop for RxLease {
+                fn drop(&mut self) {
+                    let rx = match self.rx.take() {
+                        Some(rx) => rx,
+                        None => return,
+                    };
+                    let mut slot = match self.slot.lock() {
+                        Ok(s) => s,
+                        Err(e) => e.into_inner(),
+                    };
+                    if slot.is_none() {
+                        *slot = Some(rx);
+                    }
                 }
             }
-        }
-        let Some(slot) = TRAFFIC_RX.get() else { return };
-        let mut lease = RxLease { slot, rx: slot.lock().unwrap_or_else(|e| e.into_inner()).take() };
-        if let Some(r) = lease.rx.as_mut() {
-            while let Some(info) = r.recv().await {
-                let _ = output.send(Message::TrafficUpdated { up: info.up, down: info.down }).await;
-                if output.is_closed() { break; }
+            let Some(slot) = TRAFFIC_RX.get() else { return };
+            let mut lease = RxLease {
+                slot,
+                rx: slot.lock().unwrap_or_else(|e| e.into_inner()).take(),
+            };
+            if let Some(r) = lease.rx.as_mut() {
+                while let Some(info) = r.recv().await {
+                    let _ = output
+                        .send(Message::TrafficUpdated {
+                            up: info.up,
+                            down: info.down,
+                        })
+                        .await;
+                    if output.is_closed() {
+                        break;
+                    }
+                }
             }
-        }
-        // On stream end, Drop returns the receiver to the slot.
-    })
+            // On stream end, Drop returns the receiver to the slot.
+        },
+    )
 }
 
 // Subscription worker for streaming real-time system tray menu and clicks
 fn tray_subscription() -> impl iced::futures::Stream<Item = Message> {
-    iced::stream::channel(100, |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
-        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
-        // Shared stop flag — set when the iced side drops, lets the two
-        // blocking `recv()` loops below exit instead of leaking threads.
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let stop_menu = stop.clone();
-        let stop_tray = stop.clone();
+    iced::stream::channel(
+        100,
+        |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
+            let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+            // Shared stop flag — set when the iced side drops, lets the two
+            // blocking `recv()` loops below exit instead of leaking threads.
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let stop_menu = stop.clone();
+            let stop_tray = stop.clone();
 
-        let tx_clone = tx.clone();
-        std::thread::spawn(move || {
-            let menu_channel = tray_icon::menu::MenuEvent::receiver();
-            while !stop_menu.load(std::sync::atomic::Ordering::SeqCst) {
-                // Non-blocking poll with a short sleep so the stop flag is honored.
-                while let Ok(event) = menu_channel.try_recv() {
-                    // Drop on closed channel = iced subscription ended — stop polling.
-                    if tx_clone.blocking_send(Message::TrayMenuClicked(event.id.0)).is_err() {
-                        stop_menu.store(true, std::sync::atomic::Ordering::SeqCst);
-                        return;
+            let tx_clone = tx.clone();
+            std::thread::spawn(move || {
+                let menu_channel = tray_icon::menu::MenuEvent::receiver();
+                while !stop_menu.load(std::sync::atomic::Ordering::SeqCst) {
+                    // Non-blocking poll with a short sleep so the stop flag is honored.
+                    while let Ok(event) = menu_channel.try_recv() {
+                        // Drop on closed channel = iced subscription ended — stop polling.
+                        if tx_clone
+                            .blocking_send(Message::TrayMenuClicked(event.id.0))
+                            .is_err()
+                        {
+                            stop_menu.store(true, std::sync::atomic::Ordering::SeqCst);
+                            return;
+                        }
                     }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
                 }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-        });
+            });
 
-        let tx_clone2 = tx.clone();
-        std::thread::spawn(move || {
-            let tray_channel = tray_icon::TrayIconEvent::receiver();
-            while !stop_tray.load(std::sync::atomic::Ordering::SeqCst) {
-                while let Ok(event) = tray_channel.try_recv() {
-                    let to_send = match event {
-                        tray_icon::TrayIconEvent::Click { button: tray_icon::MouseButton::Left, .. } =>
-                            Some(Message::TrayIconClicked),
-                        tray_icon::TrayIconEvent::DoubleClick { button: tray_icon::MouseButton::Left, .. } =>
-                            Some(Message::TrayIconClicked),
-                        _ => None,
-                    };
-                    if let Some(msg) = to_send
-                        && tx_clone2.blocking_send(msg).is_err()
-                    {
-                        stop_tray.store(true, std::sync::atomic::Ordering::SeqCst);
-                        return;
+            let tx_clone2 = tx.clone();
+            std::thread::spawn(move || {
+                let tray_channel = tray_icon::TrayIconEvent::receiver();
+                while !stop_tray.load(std::sync::atomic::Ordering::SeqCst) {
+                    while let Ok(event) = tray_channel.try_recv() {
+                        let to_send = match event {
+                            tray_icon::TrayIconEvent::Click {
+                                button: tray_icon::MouseButton::Left,
+                                ..
+                            } => Some(Message::TrayIconClicked),
+                            tray_icon::TrayIconEvent::DoubleClick {
+                                button: tray_icon::MouseButton::Left,
+                                ..
+                            } => Some(Message::TrayIconClicked),
+                            _ => None,
+                        };
+                        if let Some(msg) = to_send
+                            && tx_clone2.blocking_send(msg).is_err()
+                        {
+                            stop_tray.store(true, std::sync::atomic::Ordering::SeqCst);
+                            return;
+                        }
                     }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
                 }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-        });
+            });
 
-        while let Some(msg) = rx.recv().await {
-            // iced sender closed (subscription dropped); signal workers to exit.
-            if output.send(msg).await.is_err() {
-                stop.store(true, std::sync::atomic::Ordering::SeqCst);
-                break;
+            while let Some(msg) = rx.recv().await {
+                // iced sender closed (subscription dropped); signal workers to exit.
+                if output.send(msg).await.is_err() {
+                    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                    break;
+                }
             }
-        }
-        // The async task returns — and the two std threads observe the stop flag
-        // next time they check, normally within 50ms.
-        stop.store(true, std::sync::atomic::Ordering::SeqCst);
-    })
+            // The async task returns — and the two std threads observe the stop flag
+            // next time they check, normally within 50ms.
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        },
+    )
 }
 
 fn load_icon_safe() -> Option<tray_icon::Icon> {
     let icon_bytes = include_bytes!("../assets/app-icon.png");
     match image::load_from_memory(icon_bytes) {
         Ok(img) => {
-            let rgba_img = img.resize(32, 32, image::imageops::FilterType::Lanczos3).into_rgba8();
+            let rgba_img = img
+                .resize(32, 32, image::imageops::FilterType::Lanczos3)
+                .into_rgba8();
             let (width, height) = rgba_img.dimensions();
             let rgba = rgba_img.into_raw();
             tray_icon::Icon::from_rgba(rgba, width, height).ok()
@@ -2718,7 +2842,10 @@ async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
 }
 
 /// Update an existing profile id from its URL.
-async fn fetch_and_save_subscription(url: String, id: String) -> Result<ProfileFetchResult, String> {
+async fn fetch_and_save_subscription(
+    url: String,
+    id: String,
+) -> Result<ProfileFetchResult, String> {
     let (content, meta) = load_profile_content(&url).await?;
     config::validate_profile_content(&content)?;
     let path = config::get_profile_path(&id);
@@ -2769,7 +2896,8 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
     };
 
     if std::path::Path::new(url).exists() {
-        let bytes = tokio::fs::read(url).await
+        let bytes = tokio::fs::read(url)
+            .await
             .map_err(|e| format!("Failed to read local file: {}", e))?;
         if bytes.len() > MAX_PROFILE_BYTES {
             return Err("Profile is larger than the 16 MiB safety limit".to_string());
@@ -2801,13 +2929,14 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
     }
 
     if let Some(userinfo) = res.headers().get("subscription-userinfo")
-        && let Ok(s) = userinfo.to_str() {
-            let (u, d, t, e) = config::parse_subscription_userinfo(s);
-            meta.traffic_upload = u;
-            meta.traffic_download = d;
-            meta.traffic_total = t;
-            meta.expire_at = e;
-        }
+        && let Ok(s) = userinfo.to_str()
+    {
+        let (u, d, t, e) = config::parse_subscription_userinfo(s);
+        meta.traffic_upload = u;
+        meta.traffic_download = d;
+        meta.traffic_total = t;
+        meta.expire_at = e;
+    }
 
     if let Some(title) = res
         .headers()
@@ -2822,9 +2951,10 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
     if meta.display_name.is_none()
         && let Some(cd) = res.headers().get(reqwest::header::CONTENT_DISPOSITION)
         && let Ok(s) = cd.to_str()
-            && let Some(name) = parse_content_disposition_filename(s) {
-                meta.display_name = Some(name);
-            }
+        && let Some(name) = parse_content_disposition_filename(s)
+    {
+        meta.display_name = Some(name);
+    }
 
     let mut stream = res.bytes_stream();
     let mut bytes = Vec::new();
@@ -2912,18 +3042,13 @@ fn collect_due_subscription_ids(gui_config: &GuiConfig, hours: u32) -> Vec<Strin
     due
 }
 
-fn normalize_custom_rule(
-    field: state::RuleField,
-    value: &str,
-) -> Result<String, &'static str> {
+fn normalize_custom_rule(field: state::RuleField, value: &str) -> Result<String, &'static str> {
     let value = value.trim();
     if field.is_ip() {
         let (address_text, prefix_text) = value
             .split_once('/')
             .map_or((value, None), |(address, prefix)| (address, Some(prefix)));
-        let address: std::net::IpAddr = address_text
-            .parse()
-            .map_err(|_| "invalid_ip_rule")?;
+        let address: std::net::IpAddr = address_text.parse().map_err(|_| "invalid_ip_rule")?;
         let max_prefix: u8 = if address.is_ipv4() { 32 } else { 128 };
         let prefix = match prefix_text {
             Some(prefix) => prefix
@@ -2943,17 +3068,17 @@ fn normalize_custom_rule(
         .to_lowercase();
     let valid = !domain.is_empty()
         && domain.len() <= 253
-        && !domain
-            .chars()
-            .any(|character| character.is_whitespace() || matches!(character, '/' | ':' | '?' | '#'))
+        && !domain.chars().any(|character| {
+            character.is_whitespace() || matches!(character, '/' | ':' | '?' | '#')
+        })
         && domain.split('.').all(|label| {
             !label.is_empty()
                 && label.len() <= 63
                 && !label.starts_with('-')
                 && !label.ends_with('-')
-                && label
-                    .chars()
-                    .all(|character| character.is_alphanumeric() || character == '-' || character == '_')
+                && label.chars().all(|character| {
+                    character.is_alphanumeric() || character == '-' || character == '_'
+                })
         });
     if valid {
         Ok(domain)
@@ -2964,10 +3089,7 @@ fn normalize_custom_rule(
 
 fn is_valid_dns_server_address(value: &str) -> bool {
     let value = value.trim();
-    if value.is_empty()
-        || value.len() > 2048
-        || value.chars().any(char::is_whitespace)
-    {
+    if value.is_empty() || value.len() > 2048 || value.chars().any(char::is_whitespace) {
         return false;
     }
     if value.parse::<std::net::IpAddr>().is_ok() {
@@ -2976,8 +3098,7 @@ fn is_valid_dns_server_address(value: &str) -> bool {
     if value.contains("://") {
         return url::Url::parse(value).is_ok_and(|url| {
             !url.scheme().is_empty()
-                && (url.host_str().is_some()
-                    || matches!(url.scheme(), "local" | "dhcp" | "rcode"))
+                && (url.host_str().is_some() || matches!(url.scheme(), "local" | "dhcp" | "rcode"))
         });
     }
     if url::Url::parse(&format!("udp://{value}")).is_ok_and(|url| url.host_str().is_some()) {
@@ -3189,7 +3310,10 @@ mod tests {
                 name: "node".to_string(),
                 proxy_type: "ss".to_string(),
                 udp: None,
-                history: Some(vec![serde_json::json!({"delay": 10}), serde_json::json!({"delay": 20})]),
+                history: Some(vec![
+                    serde_json::json!({"delay": 10}),
+                    serde_json::json!({"delay": 20}),
+                ]),
                 now: None,
                 all: None,
             },
@@ -3199,7 +3323,6 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0]["delay"], 20);
     }
-
 
     #[test]
     fn is_remote_version_newer_compares_numerically() {
@@ -3213,7 +3336,10 @@ mod tests {
         assert!(!update::is_remote_version_newer("1.0.0", "v1.0.0"));
         // Older per-component case.
         assert!(update::is_remote_version_newer("1.0.0", "v2.0.0"));
-        assert!(update::is_remote_version_newer("2026.7.13-1", "v2026.7.13-2"));
+        assert!(update::is_remote_version_newer(
+            "2026.7.13-1",
+            "v2026.7.13-2"
+        ));
     }
 }
 
@@ -3254,15 +3380,20 @@ fn detect_system_theme() -> bool {
     {
         use winreg::RegKey;
         use winreg::enums::HKEY_CURRENT_USER;
-        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
-            && let Ok(val) = hkcu.get_value::<u32, _>("AppsUseLightTheme") {
-                return val == 1; // 1 = Light Mode, 0 = Dark Mode
-            }
+        if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
+            && let Ok(val) = hkcu.get_value::<u32, _>("AppsUseLightTheme")
+        {
+            return val == 1; // 1 = Light Mode, 0 = Dark Mode
+        }
     }
     #[cfg(target_os = "macos")]
     {
         use std::process::Command;
-        if let Ok(output) = Command::new("defaults").args(&["read", "-g", "AppleInterfaceStyle"]).output() {
+        if let Ok(output) = Command::new("defaults")
+            .args(&["read", "-g", "AppleInterfaceStyle"])
+            .output()
+        {
             let style = String::from_utf8_lossy(&output.stdout);
             return !style.trim().contains("Dark");
         }
@@ -3270,7 +3401,10 @@ fn detect_system_theme() -> bool {
     #[cfg(target_os = "linux")]
     {
         use std::process::Command;
-        if let Ok(output) = Command::new("gsettings").args(&["get", "org.gnome.desktop.interface", "color-scheme"]).output() {
+        if let Ok(output) = Command::new("gsettings")
+            .args(&["get", "org.gnome.desktop.interface", "color-scheme"])
+            .output()
+        {
             let scheme = String::from_utf8_lossy(&output.stdout);
             return !scheme.trim().contains("dark");
         }
@@ -3462,11 +3596,13 @@ async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, S
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = tokio::fs::metadata(&dest).await
+        let mut perms = tokio::fs::metadata(&dest)
+            .await
             .map_err(|e| format!("Failed to stat update file: {}", e))?
             .permissions();
         perms.set_mode(0o755);
-        tokio::fs::set_permissions(&dest, perms).await
+        tokio::fs::set_permissions(&dest, perms)
+            .await
             .map_err(|e| format!("Failed to chmod update file: {}", e))?;
     }
 
@@ -3588,7 +3724,7 @@ exec "$TARGET"
 fn main() -> iced::Result {
     let icon_bytes = include_bytes!("../assets/app-icon.png");
     let icon = iced::window::icon::from_file_data(icon_bytes, None).ok();
-    
+
     let window_settings = iced::window::Settings {
         size: iced::Size::new(1080.0, 750.0),
         // Low enough that SHELL_COMPACT_W icon sidebar is reachable
@@ -3612,7 +3748,7 @@ fn main() -> iced::Result {
         .font(include_bytes!("../assets/material-icons.ttf").as_slice())
         .subscription(App::subscription)
         .run();
-        
+
     // CRITICAL EXIT CLEANUP
     let config = config::load_gui_config();
     if config.close_core_on_exit {
@@ -3621,6 +3757,6 @@ fn main() -> iced::Result {
             let _ = sysproxy::set_system_proxy(false, config.mixed_port);
         }
     }
-    
+
     res
 }

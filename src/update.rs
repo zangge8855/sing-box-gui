@@ -17,9 +17,7 @@ pub fn normalize_version_tag(tag: &str) -> Vec<u64> {
         Some((core, suffix)) if suffix.chars().all(|c| c.is_ascii_digit()) => {
             (core, suffix.parse::<u64>().unwrap_or(0), None)
         }
-        Some((core, suffix)) => {
-            (core, 0, Some(extract_trailing_number(suffix)))
-        }
+        Some((core, suffix)) => (core, 0, Some(extract_trailing_number(suffix))),
         _ => (without_build, 0, None),
     };
 
@@ -33,7 +31,6 @@ pub fn normalize_version_tag(tag: &str) -> Vec<u64> {
     }
     parts
 }
-
 
 pub fn is_remote_version_newer(local_pkg_version: &str, remote_tag: &str) -> bool {
     let local = normalize_version_tag(&format!("v{}", local_pkg_version));

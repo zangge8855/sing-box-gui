@@ -1,4 +1,4 @@
-use crate::state::{Tab, RoutingMode, Language, AppTheme, RuleField, LogFilter};
+use crate::state::{AppTheme, Language, LogFilter, RoutingMode, RuleField, Tab};
 
 /// Latest GitHub release info for in-app updates.
 #[derive(Debug, Clone)]
@@ -14,15 +14,33 @@ pub enum Message {
     NodeSearchChanged(String),
     ConnectionsSearchChanged(String),
     SelectGroup(String),
-    SelectGroupNode { group: String, node: String },
-    GroupNodeSelected { group: String, node: String, error: Option<String> },
-    RulesInputChanged { field: RuleField, value: String },
-    AddRule { field: RuleField },
-    RemoveRule { field: RuleField, index: usize },
+    SelectGroupNode {
+        group: String,
+        node: String,
+    },
+    GroupNodeSelected {
+        group: String,
+        node: String,
+        error: Option<String>,
+    },
+    RulesInputChanged {
+        field: RuleField,
+        value: String,
+    },
+    AddRule {
+        field: RuleField,
+    },
+    RemoveRule {
+        field: RuleField,
+        index: usize,
+    },
     ProxiesFetched(Result<std::collections::HashMap<String, crate::api::ProxyInfo>, String>),
     ToggleCore,
     NewLogLine(String),
-    TrafficUpdated { up: u64, down: u64 },
+    TrafficUpdated {
+        up: u64,
+        down: u64,
+    },
     ToggleSystemProxy,
     SubscriptionInputChanged(String),
     DownloadSubscription,
@@ -48,9 +66,15 @@ pub enum Message {
     UpdateSubscription(String),
     AutoUpdateDue(Vec<String>),
     SelectNode(String),
-    NodeSelected { tag: String, error: Option<String> },
+    NodeSelected {
+        tag: String,
+        error: Option<String>,
+    },
     StartLatencyTest,
-    NodeLatencyTested { tag: String, latency: Option<u64> },
+    NodeLatencyTested {
+        tag: String,
+        latency: Option<u64>,
+    },
     Tick,
     ConfigSaved(Result<(), String>),
     SystemThemeDetected(bool),
@@ -67,7 +91,7 @@ pub enum Message {
     TrayMenuClicked(String),
     WindowOpened(iced::window::Id),
     WindowCloseRequested(iced::window::Id),
-    
+
     ClearLogs,
     LogFilterChanged(LogFilter),
     LogSearchChanged(String),
@@ -81,7 +105,7 @@ pub enum Message {
     LatencyTestTimeoutChanged(String),
     LatencyTestComplete,
     CoreVersionFetched(Result<String, String>),
-    
+
     MixedPortChanged(String),
     ApiPortChanged(String),
     DnsLocalChanged(String),
@@ -107,7 +131,10 @@ pub enum Message {
     /// Result of GitHub latest-release check (tag + optional platform asset URL).
     UpdateChecked(Result<AppUpdateInfo, String>),
     /// User (or auto-flow) requested download + install of a release asset.
-    DownloadAppUpdate { tag: String, url: String },
+    DownloadAppUpdate {
+        tag: String,
+        url: String,
+    },
     /// Download finished (path to temp binary) or failed.
     AppUpdateDownloaded {
         tag: String,

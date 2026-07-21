@@ -3,8 +3,8 @@
 //! Single source of visual truth: dark/light layered surfaces, borders,
 //! type hierarchy, accent, and semantic colors — consumed by shell + tabs.
 
+use iced::widget::{button, container, pick_list as iced_pick_list, text_input};
 use iced::{Background, Border, Color, Shadow};
-use iced::widget::{container, button, text_input, pick_list as iced_pick_list};
 
 #[cfg(target_os = "windows")]
 pub const UI_FONT_NAME: &str = "Segoe UI";
@@ -57,7 +57,6 @@ pub const RADIUS_XS: f32 = 4.0;
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const RADIUS_MICRO: f32 = 3.0;
 
-
 /// Font for numeric metrics (latency, speeds).
 ///
 /// Prefer system **SansSerif** over `Family::Monospace`: iced on Windows often
@@ -76,7 +75,6 @@ pub fn metric_font() -> iced::Font {
 pub fn mono_font() -> iced::Font {
     ui_font(iced::font::Weight::Normal)
 }
-
 
 // ── Type scale (f32 for iced::Pixels) ────────────────────────────────────────
 pub const TYPE_TITLE: f32 = 22.0;
@@ -162,11 +160,14 @@ pub const DANGER_DISABLED: Color = Color::from_rgb(0.40, 0.20, 0.22);
 // ── Token accessors ──────────────────────────────────────────────────────────
 
 pub fn is_dark(theme: &iced::Theme) -> bool {
-    !matches!(theme, iced::Theme::Light
-        | iced::Theme::SolarizedLight
-        | iced::Theme::GruvboxLight
-        | iced::Theme::TokyoNightLight
-        | iced::Theme::KanagawaLotus)
+    !matches!(
+        theme,
+        iced::Theme::Light
+            | iced::Theme::SolarizedLight
+            | iced::Theme::GruvboxLight
+            | iced::Theme::TokyoNightLight
+            | iced::Theme::KanagawaLotus
+    )
 }
 
 pub fn bg(theme: &iced::Theme) -> Color {
@@ -174,44 +175,84 @@ pub fn bg(theme: &iced::Theme) -> Color {
 }
 
 pub fn sidebar_surface(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { SIDEBAR_BG } else { SIDEBAR_BG_LIGHT }
+    if is_dark(theme) {
+        SIDEBAR_BG
+    } else {
+        SIDEBAR_BG_LIGHT
+    }
 }
 
 pub fn card_surface(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { CARD_DARK } else { CARD_LIGHT_BG }
+    if is_dark(theme) {
+        CARD_DARK
+    } else {
+        CARD_LIGHT_BG
+    }
 }
 
 pub fn elevated_surface(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { CARD_ELEVATED_DARK } else { CARD_SELECTED_LIGHT }
+    if is_dark(theme) {
+        CARD_ELEVATED_DARK
+    } else {
+        CARD_SELECTED_LIGHT
+    }
 }
 
 pub fn border_color(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { BORDER_DARK } else { BORDER_LIGHT }
+    if is_dark(theme) {
+        BORDER_DARK
+    } else {
+        BORDER_LIGHT
+    }
 }
 
 #[allow(dead_code)]
 pub fn border_strong(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { BORDER_STRONG_DARK } else { BORDER_STRONG_LIGHT }
+    if is_dark(theme) {
+        BORDER_STRONG_DARK
+    } else {
+        BORDER_STRONG_LIGHT
+    }
 }
 
 pub fn text_primary(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { TEXT_PRIMARY_DARK } else { TEXT_PRIMARY_LIGHT }
+    if is_dark(theme) {
+        TEXT_PRIMARY_DARK
+    } else {
+        TEXT_PRIMARY_LIGHT
+    }
 }
 
 pub fn text_muted(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { TEXT_MUTED_DARK } else { TEXT_MUTED_LIGHT }
+    if is_dark(theme) {
+        TEXT_MUTED_DARK
+    } else {
+        TEXT_MUTED_LIGHT
+    }
 }
 
 pub fn text_tertiary(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { TEXT_TERTIARY_DARK } else { TEXT_TERTIARY_LIGHT }
+    if is_dark(theme) {
+        TEXT_TERTIARY_DARK
+    } else {
+        TEXT_TERTIARY_LIGHT
+    }
 }
 
 pub fn input_surface(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { INPUT_BG_DARK } else { INPUT_BG_LIGHT }
+    if is_dark(theme) {
+        INPUT_BG_DARK
+    } else {
+        INPUT_BG_LIGHT
+    }
 }
 
 pub fn console_surface(theme: &iced::Theme) -> Color {
-    if is_dark(theme) { CONSOLE_BG_DARK } else { CONSOLE_BG_LIGHT }
+    if is_dark(theme) {
+        CONSOLE_BG_DARK
+    } else {
+        CONSOLE_BG_LIGHT
+    }
 }
 
 /// Soft tint of a solid color (for badges / banners).
@@ -386,7 +427,10 @@ pub fn status_ring(fill: Color) -> container::Style {
 pub fn tinted_banner(theme: &iced::Theme, accent: Color) -> container::Style {
     let dark = is_dark(theme);
     container::Style {
-        background: Some(Background::Color(with_alpha(accent, if dark { 0.14 } else { 0.10 }))),
+        background: Some(Background::Color(with_alpha(
+            accent,
+            if dark { 0.14 } else { 0.10 },
+        ))),
         border: Border {
             color: with_alpha(accent, if dark { 0.55 } else { 0.45 }),
             width: 1.0,
@@ -460,7 +504,11 @@ pub fn button_secondary(theme: &iced::Theme, status: button::Status) -> button::
         } else {
             BORDER_STRONG_DARK
         };
-        let text = if disabled { TEXT_TERTIARY_DARK } else { TEXT_PRIMARY_DARK };
+        let text = if disabled {
+            TEXT_TERTIARY_DARK
+        } else {
+            TEXT_PRIMARY_DARK
+        };
         (b, border, text)
     } else {
         let b = match status {
@@ -611,7 +659,11 @@ pub fn button_header(theme: &iced::Theme, status: button::Status) -> button::Sty
         }
         _ => Color::TRANSPARENT,
     };
-    let text = if dark { TEXT_MUTED_DARK } else { TEXT_MUTED_LIGHT };
+    let text = if dark {
+        TEXT_MUTED_DARK
+    } else {
+        TEXT_MUTED_LIGHT
+    };
     button::Style {
         background: Some(Background::Color(bg)),
         text_color: text,
@@ -625,7 +677,11 @@ pub fn button_header(theme: &iced::Theme, status: button::Status) -> button::Sty
     }
 }
 
-pub fn list_item_style(theme: &iced::Theme, is_selected: bool, is_hovered: bool) -> container::Style {
+pub fn list_item_style(
+    theme: &iced::Theme,
+    is_selected: bool,
+    is_hovered: bool,
+) -> container::Style {
     let dark = is_dark(theme);
     let base_bg = if dark {
         Color::from_rgb(0.07, 0.08, 0.10)
@@ -671,7 +727,12 @@ pub fn list_item_style(theme: &iced::Theme, is_selected: bool, is_hovered: bool)
     }
 }
 
-pub fn list_item_zebra(theme: &iced::Theme, is_selected: bool, is_hovered: bool, is_zebra: bool) -> container::Style {
+pub fn list_item_zebra(
+    theme: &iced::Theme,
+    is_selected: bool,
+    is_hovered: bool,
+    is_zebra: bool,
+) -> container::Style {
     let mut style = list_item_style(theme, is_selected, is_hovered);
     if !is_selected && !is_hovered && is_zebra {
         let dark = is_dark(theme);
@@ -775,7 +836,10 @@ pub fn pick_list(theme: &iced::Theme, status: iced_pick_list::Status) -> iced_pi
     }
 }
 
-pub fn scrollbar_style(theme: &iced::Theme, _status: iced::widget::scrollable::Status) -> iced::widget::scrollable::Style {
+pub fn scrollbar_style(
+    theme: &iced::Theme,
+    _status: iced::widget::scrollable::Status,
+) -> iced::widget::scrollable::Style {
     use iced::widget::scrollable::{Rail, Scroller};
     let dark = is_dark(theme);
     let rail_bg = if dark {
@@ -832,7 +896,10 @@ pub fn scrollbar_style(theme: &iced::Theme, _status: iced::widget::scrollable::S
     }
 }
 
-pub fn toggler_style(theme: &iced::Theme, status: iced::widget::toggler::Status) -> iced::widget::toggler::Style {
+pub fn toggler_style(
+    theme: &iced::Theme,
+    status: iced::widget::toggler::Status,
+) -> iced::widget::toggler::Style {
     let dark = is_dark(theme);
     let is_toggled = match status {
         iced::widget::toggler::Status::Active { is_toggled } => is_toggled,
@@ -852,8 +919,16 @@ pub fn toggler_style(theme: &iced::Theme, status: iced::widget::toggler::Status)
             padding_ratio: 1.0,
         }
     } else {
-        let bg_color = if dark { Color::from_rgb(0.18, 0.20, 0.25) } else { Color::from_rgb(0.85, 0.86, 0.90) };
-        let fg_color = if dark { Color::from_rgb(0.40, 0.43, 0.50) } else { Color::from_rgb(0.60, 0.62, 0.68) };
+        let bg_color = if dark {
+            Color::from_rgb(0.18, 0.20, 0.25)
+        } else {
+            Color::from_rgb(0.85, 0.86, 0.90)
+        };
+        let fg_color = if dark {
+            Color::from_rgb(0.40, 0.43, 0.50)
+        } else {
+            Color::from_rgb(0.60, 0.62, 0.68)
+        };
         iced::widget::toggler::Style {
             background: Background::Color(bg_color),
             background_border_color: Color::TRANSPARENT,
@@ -869,7 +944,6 @@ pub fn toggler_style(theme: &iced::Theme, status: iced::widget::toggler::Status)
 }
 
 // ── Contrast / palette unit tests ────────────────────────────────────────────
-
 
 #[cfg(test)]
 #[allow(clippy::items_after_test_module, clippy::assertions_on_constants)]
@@ -962,10 +1036,7 @@ mod tests {
         assert!(card_d.border.width >= 1.0);
 
         let card_l = card_bg(&light);
-        assert_ne!(
-            card_d.background.unwrap(),
-            card_l.background.unwrap()
-        );
+        assert_ne!(card_d.background.unwrap(), card_l.background.unwrap());
 
         let sel = card_selected(&dark);
         assert_eq!(sel.border.color, ACCENT_PURPLE);
@@ -1068,12 +1139,18 @@ mod tests {
             let active_dark = tab_style_fn(&dark, button::Status::Active);
             assert_eq!(active_dark.border.width, 1.0);
             assert_eq!(active_dark.border.color, ACCENT_PURPLE);
-            assert_eq!(active_dark.background.unwrap(), Background::Color(with_alpha(ACCENT_PURPLE, 0.25)));
+            assert_eq!(
+                active_dark.background.unwrap(),
+                Background::Color(with_alpha(ACCENT_PURPLE, 0.25))
+            );
 
             let active_light = tab_style_fn(&light, button::Status::Active);
             assert_eq!(active_light.border.width, 1.0);
             assert_eq!(active_light.border.color, ACCENT_PURPLE);
-            assert_eq!(active_light.background.unwrap(), Background::Color(with_alpha(ACCENT_PURPLE, 0.18)));
+            assert_eq!(
+                active_light.background.unwrap(),
+                Background::Color(with_alpha(ACCENT_PURPLE, 0.18))
+            );
         }
 
         #[cfg(target_os = "linux")]
@@ -1093,11 +1170,17 @@ mod tests {
             let tab_style_fn = button_tab(true);
             let active_dark = tab_style_fn(&dark, button::Status::Active);
             assert_eq!(active_dark.border.width, 0.0);
-            assert_eq!(active_dark.background.unwrap(), Background::Color(with_alpha(ACCENT_PURPLE, 0.20)));
+            assert_eq!(
+                active_dark.background.unwrap(),
+                Background::Color(with_alpha(ACCENT_PURPLE, 0.20))
+            );
 
             let active_light = tab_style_fn(&light, button::Status::Active);
             assert_eq!(active_light.border.width, 0.0);
-            assert_eq!(active_light.background.unwrap(), Background::Color(with_alpha(ACCENT_PURPLE, 0.15)));
+            assert_eq!(
+                active_light.background.unwrap(),
+                Background::Color(with_alpha(ACCENT_PURPLE, 0.15))
+            );
         }
     }
 }

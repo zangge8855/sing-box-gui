@@ -10,11 +10,7 @@ pub fn is_running_elevated() -> bool {
             type HANDLE = *mut c_void;
             unsafe extern "system" {
                 fn GetCurrentProcess() -> HANDLE;
-                fn OpenProcessToken(
-                    process: HANDLE,
-                    access: u32,
-                    token: *mut HANDLE,
-                ) -> BOOL;
+                fn OpenProcessToken(process: HANDLE, access: u32, token: *mut HANDLE) -> BOOL;
                 fn GetTokenInformation(
                     token: HANDLE,
                     class: u32,
@@ -64,11 +60,14 @@ pub fn is_running_elevated() -> bool {
 #[cfg(target_os = "linux")]
 fn linux_status_has_cap_net_admin(status: &str) -> bool {
     const CAP_NET_ADMIN_BIT: u32 = 12;
-    status.lines().find_map(|line| {
-        let value = line.strip_prefix("CapEff:")?.trim();
-        let capabilities = u64::from_str_radix(value, 16).ok()?;
-        Some(capabilities & (1u64 << CAP_NET_ADMIN_BIT) != 0)
-    }).unwrap_or(false)
+    status
+        .lines()
+        .find_map(|line| {
+            let value = line.strip_prefix("CapEff:")?.trim();
+            let capabilities = u64::from_str_radix(value, 16).ok()?;
+            Some(capabilities & (1u64 << CAP_NET_ADMIN_BIT) != 0)
+        })
+        .unwrap_or(false)
 }
 
 /// Install or remove per-user launch integration on the current platform.
@@ -78,8 +77,8 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
         use winreg::RegKey;
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let run_key = hkcu
@@ -113,15 +112,15 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
             );
             crate::config::atomic_write(&path, plist.as_bytes())?;
         } else if path.exists() {
-            std::fs::remove_file(path)
-                .map_err(|e| format!("Failed to remove LaunchAgent: {e}"))?;
+            std::fs::remove_file(path).map_err(|e| format!("Failed to remove LaunchAgent: {e}"))?;
         }
         return Ok(());
     }
 
     #[cfg(target_os = "linux")]
     {
-        let config = dirs::config_dir().ok_or_else(|| "Config directory is unavailable".to_string())?;
+        let config =
+            dirs::config_dir().ok_or_else(|| "Config directory is unavailable".to_string())?;
         let autostart = config.join("autostart");
         let path = autostart.join("sing-box-gui.desktop");
         if enable {

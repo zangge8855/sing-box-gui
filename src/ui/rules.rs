@@ -1,9 +1,11 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, responsive};
-use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{GuiConfig, RuleField};
-use crate::ui::theme;
 use crate::ui::page_header;
+use crate::ui::theme;
+use iced::widget::{
+    Column, button, column, container, responsive, row, scrollable, text, text_input,
+};
+use iced::{Alignment, Element, Length};
 
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
@@ -15,7 +17,7 @@ pub fn render<'a>(
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
-    
+
     let theme_cloned = theme.clone();
 
     let main_content = responsive(move |size| {
@@ -26,53 +28,58 @@ pub fn render<'a>(
 
         let builtin_banner = container(
             column![
-                text(tr(lang, "rules_builtin_title")).color(text_primary).size(theme::TYPE_HEADING).font(theme::ui_font(iced::font::Weight::Bold)),
-                text(tr(lang, "rules_builtin_desc")).color(text_muted).size(theme::TYPE_BTN_SM),
+                text(tr(lang, "rules_builtin_title"))
+                    .color(text_primary)
+                    .size(theme::TYPE_HEADING)
+                    .font(theme::ui_font(iced::font::Weight::Bold)),
+                text(tr(lang, "rules_builtin_desc"))
+                    .color(text_muted)
+                    .size(theme::TYPE_BTN_SM),
             ]
-            .spacing(crate::ui::SP_8)
+            .spacing(crate::ui::SP_8),
         )
         .padding(theme::CARD_PAD_DENSE)
         .width(Length::Fill)
         .style(theme::status_card);
 
-        let make_rule_section = |
-            title_key: &'static str,
-            input_value: &'a str,
-            field: RuleField,
-            items: &'a [String],
-        | {
+        let make_rule_section = |title_key: &'static str,
+                                 input_value: &'a str,
+                                 field: RuleField,
+                                 items: &'a [String]| {
             let mut list_col = Column::new().spacing(6);
-            
+
             for (idx, item) in items.iter().enumerate() {
                 let del_btn = button(
                     text(crate::ui::icons::ICON_DELETE.to_string())
                         .font(iced::Font::with_name("Material Icons"))
                         .size(crate::ui::ICON_SIZE),
                 )
-                    .style(theme::button_secondary)
-                    .padding([4, 8])
-                    .on_press(Message::RemoveRule {
-                        field,
-                        index: idx,
-                    });
-                    
+                .style(theme::button_secondary)
+                .padding([4, 8])
+                .on_press(Message::RemoveRule { field, index: idx });
+
                 let item_row = row![
-                    text(item).color(text_primary).size(theme::TYPE_SECTION).width(Length::Fill),
+                    text(item)
+                        .color(text_primary)
+                        .size(theme::TYPE_SECTION)
+                        .width(Length::Fill),
                     del_btn
                 ]
                 .align_y(Alignment::Center)
                 .spacing(crate::ui::SP_12)
                 .padding([4, 8]);
-                
-                list_col = list_col.push(container(item_row).style(move |t| theme::list_item_style(t, false, false)));
+
+                list_col = list_col.push(
+                    container(item_row).style(move |t| theme::list_item_style(t, false, false)),
+                );
             }
-            
+
             let list_content: Element<'_, Message> = if items.is_empty() {
                 container(
                     text(tr(lang, "no_custom_rules"))
                         .color(theme::text_tertiary(theme))
                         .size(theme::TYPE_BTN_SM)
-                        .align_x(Alignment::Center)
+                        .align_x(Alignment::Center),
                 )
                 .width(Length::Fill)
                 .height(180.0)
@@ -85,22 +92,19 @@ pub fn render<'a>(
                     .height(180.0)
                     .into()
             };
-            
+
             let placeholder = if field.is_ip() {
                 tr(lang, "placeholder_ip")
             } else {
                 tr(lang, "placeholder_domain")
             };
-            
+
             let input_box = text_input(placeholder, input_value)
-                .on_input(move |s| Message::RulesInputChanged {
-                    field,
-                    value: s,
-                })
+                .on_input(move |s| Message::RulesInputChanged { field, value: s })
                 .on_submit(Message::AddRule { field })
                 .padding(10)
                 .style(theme::input_field);
-                
+
             let add_btn = button(
                 row![
                     text(crate::ui::icons::ICON_ADD.to_string())
@@ -111,23 +115,28 @@ pub fn render<'a>(
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
             )
-                .style(theme::button_primary)
-                .padding(theme::BTN_PAD_MD)
-                .on_press(Message::AddRule { field });
-                
+            .style(theme::button_primary)
+            .padding(theme::BTN_PAD_MD)
+            .on_press(Message::AddRule { field });
+
             container(
                 column![
-                    text(tr(lang, title_key)).color(text_primary).size(theme::TYPE_HEADING).font(theme::ui_font(iced::font::Weight::Semibold)),
-                    row![input_box, add_btn].spacing(crate::ui::SP_12).align_y(Alignment::Center),
+                    text(tr(lang, title_key))
+                        .color(text_primary)
+                        .size(theme::TYPE_HEADING)
+                        .font(theme::ui_font(iced::font::Weight::Semibold)),
+                    row![input_box, add_btn]
+                        .spacing(crate::ui::SP_12)
+                        .align_y(Alignment::Center),
                     list_content
                 ]
-                .spacing(crate::ui::SP_12)
+                .spacing(crate::ui::SP_12),
             )
             .padding(theme::CARD_PAD_DENSE)
             .width(Length::Fill)
             .style(theme::card_bg)
         };
-        
+
         let left_column = column![
             make_rule_section(
                 "rules_bypass_domains",
@@ -143,8 +152,12 @@ pub fn render<'a>(
             )
         ]
         .spacing(20)
-        .width(if is_compact { Length::Fill } else { Length::FillPortion(1) });
-        
+        .width(if is_compact {
+            Length::Fill
+        } else {
+            Length::FillPortion(1)
+        });
+
         let right_column = column![
             make_rule_section(
                 "rules_proxy_domains",
@@ -160,22 +173,32 @@ pub fn render<'a>(
             )
         ]
         .spacing(20)
-        .width(if is_compact { Length::Fill } else { Length::FillPortion(1) });
-        
-        let rules_layout: Element<'_, Message> = if is_compact {
-            column![left_column, right_column].spacing(20).width(Length::Fill).into()
+        .width(if is_compact {
+            Length::Fill
         } else {
-            row![left_column, right_column].spacing(20).width(Length::Fill).into()
+            Length::FillPortion(1)
+        });
+
+        let rules_layout: Element<'_, Message> = if is_compact {
+            column![left_column, right_column]
+                .spacing(20)
+                .width(Length::Fill)
+                .into()
+        } else {
+            row![left_column, right_column]
+                .spacing(20)
+                .width(Length::Fill)
+                .into()
         };
-        
+
         let header = page_header("tab_rules", lang, None, theme, is_compact);
-        
+
         let content = column![builtin_banner, rules_layout]
             .spacing(20)
             .width(Length::Fill);
 
         crate::ui::page_shell_with_pad(header, content.into(), is_compact)
     });
-    
+
     main_content.into()
 }

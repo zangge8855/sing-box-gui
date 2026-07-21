@@ -1,10 +1,10 @@
-use iced::widget::{button, column, container, row, svg, text, Space, responsive, pick_list};
-use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::state::{Bandwidth, GuiConfig, RoutingMode};
-use crate::ui::theme;
 use crate::ui::page_header;
+use crate::ui::theme;
 use crate::ui::util::{format_size_precise as format_size, format_speed};
+use iced::widget::{Space, button, column, container, pick_list, responsive, row, svg, text};
+use iced::{Alignment, Element, Length};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoutingModeOption {
@@ -41,31 +41,34 @@ pub fn render<'a>(
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
-    
+
     // Clone properties to move them into the responsive Fn closure
     let theme_cloned = theme.clone();
     let speed_cloned = current_speed.clone();
     let history_cloned = speed_history.to_vec();
     let core_busy = core_starting || core_stopping;
-    
+
     let main_content = responsive(move |size| {
         let is_compact = size.width < crate::ui::DASHBOARD_COMPACT_W;
         let theme = &theme_cloned;
         let current_speed = &speed_cloned;
         let speed_history = &history_cloned;
-        
+
         let text_muted = theme::text_muted(theme);
-        
+
         let make_icon_badge = |unicode: char, color: iced::Color| {
             container(
                 text(unicode.to_string())
                     .font(iced::Font::with_name("Material Icons"))
                     .size(crate::ui::ICON_SIZE)
-                    .color(color)
+                    .color(color),
             )
             .padding(6)
             .style(move |t| container::Style {
-                background: Some(iced::Background::Color(theme::with_alpha(color, if theme::is_dark(t) { 0.16 } else { 0.12 }))),
+                background: Some(iced::Background::Color(theme::with_alpha(
+                    color,
+                    if theme::is_dark(t) { 0.16 } else { 0.12 },
+                ))),
                 border: iced::Border {
                     radius: theme::RADIUS_SM.into(),
                     ..Default::default()
@@ -91,7 +94,7 @@ pub fn render<'a>(
             status_color,
             theme::TYPE_BODY,
         );
-        
+
         let core_control_btn = if core_busy {
             button(
                 row![
@@ -104,16 +107,19 @@ pub fn render<'a>(
                     .size(theme::TYPE_BTN_SM)
                 ]
                 .spacing(crate::ui::SP_8)
-                .align_y(Alignment::Center)
+                .align_y(Alignment::Center),
             )
             .padding(theme::BTN_PAD_SM)
             .style(theme::button_secondary)
             // No on_press — disabled while transitioning
         } else if core_running {
             button(
-                row![icon(crate::ui::icons::ICON_STOP), text(tr(lang, "btn_stop_core")).size(theme::TYPE_BTN_SM)]
-                    .spacing(crate::ui::SP_8)
-                    .align_y(Alignment::Center)
+                row![
+                    icon(crate::ui::icons::ICON_STOP),
+                    text(tr(lang, "btn_stop_core")).size(theme::TYPE_BTN_SM)
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
             )
             .padding(theme::BTN_PAD_SM)
             .style(theme::button_danger)
@@ -144,9 +150,12 @@ pub fn render<'a>(
             .on_press(Message::TabChanged(crate::state::Tab::Settings))
         } else {
             button(
-                row![icon(crate::ui::icons::ICON_START), text(tr(lang, "btn_start_core")).size(theme::TYPE_BTN_SM)]
-                    .spacing(crate::ui::SP_8)
-                    .align_y(Alignment::Center)
+                row![
+                    icon(crate::ui::icons::ICON_START),
+                    text(tr(lang, "btn_start_core")).size(theme::TYPE_BTN_SM)
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
             )
             .padding(theme::BTN_PAD_SM)
             .style(theme::button_primary)
@@ -156,11 +165,12 @@ pub fn render<'a>(
         let mut core_card_col = column![
             row![
                 make_icon_badge(crate::ui::icons::ICON_VPN, theme::ACCENT_PURPLE),
-                text(tr(lang, "singbox_core")).color(text_muted).size(theme::TYPE_SECTION)
+                text(tr(lang, "singbox_core"))
+                    .color(text_muted)
+                    .size(theme::TYPE_SECTION)
             ]
             .spacing(crate::ui::SP_8)
             .align_y(Alignment::Center),
-            
             row![
                 status_indicator,
                 Space::new().width(Length::Fill),
@@ -179,44 +189,66 @@ pub fn render<'a>(
         }
 
         let core_status_card = container(core_card_col)
-        .padding(theme::CARD_PAD)
-        .width(Length::FillPortion(1))
-        .style(theme::section_plain);
+            .padding(theme::CARD_PAD)
+            .width(Length::FillPortion(1))
+            .style(theme::section_plain);
 
         // 2. System Proxy Card
         let sys_proxy_indicator = crate::ui::status_dot(
-            if sys_proxy_enabled { theme::SUCCESS } else { text_muted },
+            if sys_proxy_enabled {
+                theme::SUCCESS
+            } else {
+                text_muted
+            },
             sys_proxy_enabled,
             if sys_proxy_enabled {
                 tr(lang, "enabled")
             } else {
                 tr(lang, "disabled")
             },
-            if sys_proxy_enabled { theme::SUCCESS } else { text_muted },
+            if sys_proxy_enabled {
+                theme::SUCCESS
+            } else {
+                text_muted
+            },
             theme::TYPE_BODY,
         );
-        
+
         let sys_proxy_btn = button(
             row![
-                icon(if sys_proxy_enabled { crate::ui::icons::ICON_STOP } else { crate::ui::icons::ICON_START }),
-                text(if sys_proxy_enabled { tr(lang, "btn_disable_proxy") } else { tr(lang, "btn_enable_proxy") }).size(theme::TYPE_BTN_SM)
+                icon(if sys_proxy_enabled {
+                    crate::ui::icons::ICON_STOP
+                } else {
+                    crate::ui::icons::ICON_START
+                }),
+                text(if sys_proxy_enabled {
+                    tr(lang, "btn_disable_proxy")
+                } else {
+                    tr(lang, "btn_enable_proxy")
+                })
+                .size(theme::TYPE_BTN_SM)
             ]
             .spacing(crate::ui::SP_8)
-            .align_y(Alignment::Center)
+            .align_y(Alignment::Center),
         )
         .padding(theme::BTN_PAD_SM)
-        .style(if sys_proxy_enabled { theme::button_danger } else { theme::button_primary })
+        .style(if sys_proxy_enabled {
+            theme::button_danger
+        } else {
+            theme::button_primary
+        })
         .on_press(Message::ToggleSystemProxy);
 
         let proxy_status_card = container(
             column![
                 row![
                     make_icon_badge(crate::ui::icons::ICON_SPEED, theme::ACCENT_BLUE),
-                    text(tr(lang, "system_proxy")).color(text_muted).size(theme::TYPE_SECTION)
+                    text(tr(lang, "system_proxy"))
+                        .color(text_muted)
+                        .size(theme::TYPE_SECTION)
                 ]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
-                
                 row![
                     sys_proxy_indicator,
                     Space::new().width(Length::Fill),
@@ -225,7 +257,7 @@ pub fn render<'a>(
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
             ]
-            .spacing(theme::GRID_GAP)
+            .spacing(theme::GRID_GAP),
         )
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
@@ -236,25 +268,30 @@ pub fn render<'a>(
             column![
                 row![
                     make_icon_badge(crate::ui::icons::ICON_DOWN, theme::ACCENT_BLUE),
-                    text(tr(lang, "download")).color(text_muted).size(theme::TYPE_SECTION)
+                    text(tr(lang, "download"))
+                        .color(text_muted)
+                        .size(theme::TYPE_SECTION)
                 ]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
-                
                 row![
                     text(format_speed(current_speed.down))
                         .font(theme::metric_font())
                         .color(theme::ACCENT_BLUE)
                         .size(theme::TYPE_METRIC),
                     Space::new().width(Length::Fill),
-                    text(format!("{} {}", tr(lang, "total_label"), format_size(total_downloaded)))
-                        .color(theme::text_tertiary(theme))
-                        .size(theme::TYPE_CAPTION)
+                    text(format!(
+                        "{} {}",
+                        tr(lang, "total_label"),
+                        format_size(total_downloaded)
+                    ))
+                    .color(theme::text_tertiary(theme))
+                    .size(theme::TYPE_CAPTION)
                 ]
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
             ]
-            .spacing(theme::GRID_GAP)
+            .spacing(theme::GRID_GAP),
         )
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
@@ -265,25 +302,30 @@ pub fn render<'a>(
             column![
                 row![
                     make_icon_badge(crate::ui::icons::ICON_UP, theme::ACCENT_PURPLE),
-                    text(tr(lang, "upload")).color(text_muted).size(theme::TYPE_SECTION)
+                    text(tr(lang, "upload"))
+                        .color(text_muted)
+                        .size(theme::TYPE_SECTION)
                 ]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
-                
                 row![
                     text(format_speed(current_speed.up))
                         .font(theme::metric_font())
                         .color(theme::ACCENT_PURPLE)
                         .size(theme::TYPE_METRIC),
                     Space::new().width(Length::Fill),
-                    text(format!("{} {}", tr(lang, "total_label"), format_size(total_uploaded)))
-                        .color(theme::text_tertiary(theme))
-                        .size(theme::TYPE_CAPTION)
+                    text(format!(
+                        "{} {}",
+                        tr(lang, "total_label"),
+                        format_size(total_uploaded)
+                    ))
+                    .color(theme::text_tertiary(theme))
+                    .size(theme::TYPE_CAPTION)
                 ]
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
             ]
-            .spacing(theme::GRID_GAP)
+            .spacing(theme::GRID_GAP),
         )
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
@@ -291,20 +333,28 @@ pub fn render<'a>(
 
         // 5. Routing Mode Card
         let mode_options = vec![
-            RoutingModeOption { mode: RoutingMode::Rule, label: tr(lang, "mode_rules") },
-            RoutingModeOption { mode: RoutingMode::Global, label: tr(lang, "mode_global") },
-            RoutingModeOption { mode: RoutingMode::Direct, label: tr(lang, "mode_direct") },
+            RoutingModeOption {
+                mode: RoutingMode::Rule,
+                label: tr(lang, "mode_rules"),
+            },
+            RoutingModeOption {
+                mode: RoutingMode::Global,
+                label: tr(lang, "mode_global"),
+            },
+            RoutingModeOption {
+                mode: RoutingMode::Direct,
+                label: tr(lang, "mode_direct"),
+            },
         ];
-        
-        let selected_mode_opt = mode_options.iter()
+
+        let selected_mode_opt = mode_options
+            .iter()
             .find(|o| o.mode == gui_config.routing_mode)
             .cloned();
-            
-        let mode_selector = pick_list(
-            mode_options,
-            selected_mode_opt,
-            move |opt| Message::RoutingModeChanged(opt.mode)
-        )
+
+        let mode_selector = pick_list(mode_options, selected_mode_opt, move |opt| {
+            Message::RoutingModeChanged(opt.mode)
+        })
         .width(Length::Fill)
         .padding(8)
         .style(theme::pick_list);
@@ -319,21 +369,20 @@ pub fn render<'a>(
             column![
                 row![
                     make_icon_badge(crate::ui::icons::ICON_SETTINGS, theme::ACCENT_BLUE),
-                    text(tr(lang, "active_mode")).color(text_muted).size(theme::TYPE_SECTION),
+                    text(tr(lang, "active_mode"))
+                        .color(text_muted)
+                        .size(theme::TYPE_SECTION),
                     Space::new().width(Length::Fill),
                     text(port_text).color(text_muted).size(theme::TYPE_BTN_SM)
                 ]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center)
                 .width(Length::Fill),
-                
-                row![
-                    mode_selector
-                ]
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
+                row![mode_selector]
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill)
             ]
-            .spacing(theme::GRID_GAP)
+            .spacing(theme::GRID_GAP),
         )
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
@@ -341,23 +390,15 @@ pub fn render<'a>(
 
         // Layout the control status cards responsively
         let control_row: Element<'_, Message> = if is_compact {
-            column![
-                core_status_card,
-                proxy_status_card,
-                routing_mode_card
-            ]
-            .spacing(theme::GRID_GAP)
-            .width(Length::Fill)
-            .into()
+            column![core_status_card, proxy_status_card, routing_mode_card]
+                .spacing(theme::GRID_GAP)
+                .width(Length::Fill)
+                .into()
         } else {
-            row![
-                core_status_card,
-                proxy_status_card,
-                routing_mode_card
-            ]
-            .spacing(theme::GRID_GAP)
-            .width(Length::Fill)
-            .into()
+            row![core_status_card, proxy_status_card, routing_mode_card]
+                .spacing(theme::GRID_GAP)
+                .width(Length::Fill)
+                .into()
         };
         let control_panel = container(control_row)
             .width(Length::Fill)
@@ -365,55 +406,56 @@ pub fn render<'a>(
 
         // Layout the traffic metric cards responsively
         let traffic_row: Element<'_, Message> = if is_compact {
-            column![
-                download_card,
-                upload_card
-            ]
-            .spacing(theme::GRID_GAP)
-            .width(Length::Fill)
-            .into()
+            column![download_card, upload_card]
+                .spacing(theme::GRID_GAP)
+                .width(Length::Fill)
+                .into()
         } else {
-            row![
-                download_card,
-                upload_card
-            ]
-            .spacing(theme::GRID_GAP)
-            .width(Length::Fill)
-            .into()
+            row![download_card, upload_card]
+                .spacing(theme::GRID_GAP)
+                .width(Length::Fill)
+                .into()
         };
         let traffic_panel = container(traffic_row)
             .width(Length::Fill)
             .style(theme::card_bg);
 
         // Render dynamic SVG chart of speed history
-        let max_speed = speed_history.iter()
+        let max_speed = speed_history
+            .iter()
             .map(|&(u, d)| u.max(d))
             .max()
             .unwrap_or(0)
             .max(1024 * 10); // 10 KB/s dynamic min scale
-            
+
         let points_count = speed_history.len();
-        
+
         let mut down_path = String::new();
         let mut up_path = String::new();
-        
+
         if points_count > 1 {
             let get_x = |i: usize| i as f32 * (300.0 / (points_count - 1) as f32);
             let get_y_down = |down: u64| 100.0 - (down as f32 / max_speed as f32 * 80.0);
             let get_y_up = |up: u64| 100.0 - (up as f32 / max_speed as f32 * 80.0);
-            
-            down_path.push_str(&format!("M 0 100 L 0 {:.2}", get_y_down(speed_history[0].1)));
-            
+
+            down_path.push_str(&format!(
+                "M 0 100 L 0 {:.2}",
+                get_y_down(speed_history[0].1)
+            ));
+
             for i in 0..points_count - 1 {
                 let x0 = get_x(i);
                 let y0 = get_y_down(speed_history[i].1);
                 let x1 = get_x(i + 1);
                 let y1 = get_y_down(speed_history[i + 1].1);
                 let cx = (x0 + x1) / 2.0;
-                down_path.push_str(&format!(" C {:.2} {:.2}, {:.2} {:.2}, {:.2} {:.2}", cx, y0, cx, y1, x1, y1));
+                down_path.push_str(&format!(
+                    " C {:.2} {:.2}, {:.2} {:.2}, {:.2} {:.2}",
+                    cx, y0, cx, y1, x1, y1
+                ));
             }
             down_path.push_str(" L 300 100 Z");
-            
+
             up_path.push_str(&format!("M 0 {:.2}", get_y_up(speed_history[0].0)));
             for i in 0..points_count - 1 {
                 let x0 = get_x(i);
@@ -421,13 +463,16 @@ pub fn render<'a>(
                 let x1 = get_x(i + 1);
                 let y1 = get_y_up(speed_history[i + 1].0);
                 let cx = (x0 + x1) / 2.0;
-                up_path.push_str(&format!(" C {:.2} {:.2}, {:.2} {:.2}, {:.2} {:.2}", cx, y0, cx, y1, x1, y1));
+                up_path.push_str(&format!(
+                    " C {:.2} {:.2}, {:.2} {:.2}, {:.2} {:.2}",
+                    cx, y0, cx, y1, x1, y1
+                ));
             }
         } else {
             down_path = "M 0 100 L 300 100 Z".to_string();
             up_path = "M 0 100 L 300 100".to_string();
         }
-        
+
         let grid_color = if theme::is_dark(theme) {
             "rgba(255, 255, 255, 0.05)"
         } else {
@@ -442,8 +487,18 @@ pub fn render<'a>(
             grid_lines.push_str(&format!(r#"<line x1="{}" y1="-5" x2="{}" y2="105" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, x, x, grid_color));
         }
 
-        let down_color_hex = format!("rgba({},{},{},1)", (theme::ACCENT_BLUE.r * 255.0).round() as u8, (theme::ACCENT_BLUE.g * 255.0).round() as u8, (theme::ACCENT_BLUE.b * 255.0).round() as u8);
-        let up_color_hex = format!("rgba({},{},{},1)", (theme::ACCENT_PURPLE.r * 255.0).round() as u8, (theme::ACCENT_PURPLE.g * 255.0).round() as u8, (theme::ACCENT_PURPLE.b * 255.0).round() as u8);
+        let down_color_hex = format!(
+            "rgba({},{},{},1)",
+            (theme::ACCENT_BLUE.r * 255.0).round() as u8,
+            (theme::ACCENT_BLUE.g * 255.0).round() as u8,
+            (theme::ACCENT_BLUE.b * 255.0).round() as u8
+        );
+        let up_color_hex = format!(
+            "rgba({},{},{},1)",
+            (theme::ACCENT_PURPLE.r * 255.0).round() as u8,
+            (theme::ACCENT_PURPLE.g * 255.0).round() as u8,
+            (theme::ACCENT_PURPLE.b * 255.0).round() as u8
+        );
 
         let svg_xml = format!(
             r##"<svg viewBox="-5 -5 310 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
@@ -457,35 +512,56 @@ pub fn render<'a>(
                  <path d="{}" fill="url(#downGrad)" stroke="{}" stroke-width="2.5"/>
                  <path d="{}" fill="none" stroke="{}" stroke-width="2.5"/>
                </svg>"##,
-              down_color_hex, down_color_hex, grid_lines, down_path, down_color_hex, up_path, up_color_hex
+            down_color_hex,
+            down_color_hex,
+            grid_lines,
+            down_path,
+            down_color_hex,
+            up_path,
+            up_color_hex
         );
-        
+
         let chart_handle = svg::Handle::from_memory(svg_xml.into_bytes());
         let chart_svg = svg(chart_handle)
             .width(Length::Fill)
             .height(Length::Fill)
             .content_fit(iced::ContentFit::Fill);
-            
+
         let legend = row![
-            container(Space::new()).width(12).height(4).style(|_t| container::Style {
-                background: Some(iced::Background::Color(theme::ACCENT_BLUE)),
-                border: iced::Border { radius: (theme::RADIUS_MICRO / 2.0).into(), ..Default::default() },
-                ..Default::default()
-            }),
-            text(tr(lang, "chart_legend_down")).color(text_muted).size(theme::TYPE_BTN_SM),
+            container(Space::new())
+                .width(12)
+                .height(4)
+                .style(|_t| container::Style {
+                    background: Some(iced::Background::Color(theme::ACCENT_BLUE)),
+                    border: iced::Border {
+                        radius: (theme::RADIUS_MICRO / 2.0).into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            text(tr(lang, "chart_legend_down"))
+                .color(text_muted)
+                .size(theme::TYPE_BTN_SM),
             Space::new().width(12),
-            container(Space::new()).width(12).height(4).style(|_t| container::Style {
-                background: Some(iced::Background::Color(theme::ACCENT_PURPLE)),
-                border: iced::Border { radius: (theme::RADIUS_MICRO / 2.0).into(), ..Default::default() },
-                ..Default::default()
-            }),
-            text(tr(lang, "chart_legend_up")).color(text_muted).size(theme::TYPE_BTN_SM),
+            container(Space::new())
+                .width(12)
+                .height(4)
+                .style(|_t| container::Style {
+                    background: Some(iced::Background::Color(theme::ACCENT_PURPLE)),
+                    border: iced::Border {
+                        radius: (theme::RADIUS_MICRO / 2.0).into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            text(tr(lang, "chart_legend_up"))
+                .color(text_muted)
+                .size(theme::TYPE_BTN_SM),
         ]
         .spacing(crate::ui::SP_8)
         .align_y(Alignment::Center);
 
-        let idle_chart = !core_running
-            || speed_history.iter().all(|&(u, d)| u == 0 && d == 0);
+        let idle_chart = !core_running || speed_history.iter().all(|&(u, d)| u == 0 && d == 0);
         let chart_caption = if idle_chart {
             Some(
                 text(tr(lang, "chart_waiting_traffic"))
@@ -498,7 +574,10 @@ pub fn render<'a>(
 
         let mut chart_col = column![
             row![
-                text(tr(lang, "speed_history_chart")).color(text_muted).size(theme::TYPE_SECTION).width(Length::Fill),
+                text(tr(lang, "speed_history_chart"))
+                    .color(text_muted)
+                    .size(theme::TYPE_SECTION)
+                    .width(Length::Fill),
                 legend,
             ]
             .align_y(Alignment::Center),
@@ -513,10 +592,14 @@ pub fn render<'a>(
         }
 
         let chart_card = container(chart_col)
-        .padding(theme::CARD_PAD)
-        .width(Length::Fill)
-        .height(if is_compact { Length::Fixed(220.0) } else { Length::Fixed(240.0) })
-        .style(theme::card_bg);
+            .padding(theme::CARD_PAD)
+            .width(Length::Fill)
+            .height(if is_compact {
+                Length::Fixed(220.0)
+            } else {
+                Length::Fixed(240.0)
+            })
+            .style(theme::card_bg);
 
         // Summary: current node + active connections (clickable → Proxies / Connections)
         let node_label = selected_node.unwrap_or_else(|| {
@@ -528,14 +611,16 @@ pub fn render<'a>(
         });
         let node_btn = button(
             column![
-                text(tr(lang, "dash_current_node")).color(text_muted).size(theme::TYPE_BTN_SM),
+                text(tr(lang, "dash_current_node"))
+                    .color(text_muted)
+                    .size(theme::TYPE_BTN_SM),
                 text(crate::ui::util::truncate_chars(node_label, 36))
                     .color(theme::text_primary(theme))
                     .size(theme::TYPE_BODY)
                     .font(theme::ui_font(iced::font::Weight::Medium)),
             ]
             .spacing(4)
-            .width(Length::Fill)
+            .width(Length::Fill),
         )
         .padding([8, 12])
         .style(theme::button_ghost)
@@ -544,14 +629,16 @@ pub fn render<'a>(
 
         let conn_btn = button(
             column![
-                text(tr(lang, "dash_connections")).color(text_muted).size(theme::TYPE_BTN_SM),
+                text(tr(lang, "dash_connections"))
+                    .color(text_muted)
+                    .size(theme::TYPE_BTN_SM),
                 text(format!("{}", active_connections))
                     .color(theme::ACCENT_BLUE)
                     .size(theme::TYPE_TITLE)
                     .font(theme::metric_font()),
             ]
             .spacing(4)
-            .width(Length::Fill)
+            .width(Length::Fill),
         )
         .padding([8, 12])
         .style(theme::button_ghost)
@@ -560,9 +647,9 @@ pub fn render<'a>(
 
         let summary_card = container(
             row![node_btn, conn_btn]
-            .spacing(crate::ui::SP_20)
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
+                .spacing(crate::ui::SP_20)
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
         )
         .padding(theme::CARD_PAD)
         .width(Length::Fill)
@@ -583,16 +670,18 @@ pub fn render<'a>(
             None
         };
 
-        let mut content_col = column![]
-            .spacing(crate::ui::SP_20)
-            .width(Length::Fill);
+        let mut content_col = column![].spacing(crate::ui::SP_20).width(Length::Fill);
 
         if gui_config.tun_mode {
             content_col = content_col.push(
-                container(text(tr(lang, "tun_admin_banner")).size(theme::TYPE_BTN_SM).color(theme::WARNING))
-                    .padding(crate::ui::SP_12)
-                    .width(Length::Fill)
-                    .style(|t| theme::tinted_banner(t, theme::WARNING)),
+                container(
+                    text(tr(lang, "tun_admin_banner"))
+                        .size(theme::TYPE_BTN_SM)
+                        .color(theme::WARNING),
+                )
+                .padding(crate::ui::SP_12)
+                .width(Length::Fill)
+                .style(|t| theme::tinted_banner(t, theme::WARNING)),
             );
         }
 
@@ -605,11 +694,11 @@ pub fn render<'a>(
         if let Some(hint) = empty_hint {
             content_col = content_col.push(hint);
         }
-        
+
         let header = page_header("tab_dashboard", lang, None, theme, is_compact);
-        
+
         crate::ui::page_shell_with_pad(header, content_col.into(), is_compact)
     });
-    
+
     main_content.into()
 }

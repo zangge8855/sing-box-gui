@@ -81,7 +81,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tab_profiles" => "Profiles",
             "tab_logs" => "Logs",
             "tab_settings" => "Settings",
-            
+
             // Missing keys
             "settings" => "Settings",
             "ON" => "ON",
@@ -95,7 +95,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "core_path_label" => "Custom Core Path",
             "placeholder_core_path" => "Leave empty to use built-in bin/sing-box",
             "btn_clear_core_path" => "Use Default Core",
-            "help_core_path" => "Absolute path to sing-box executable. Empty = managed core under data folder.",
+            "help_core_path" => {
+                "Absolute path to sing-box executable. Empty = managed core under data folder."
+            }
             "help_tun_mode" => "Captures all traffic via virtual NIC. Requires Administrator.",
             "help_autostart" => "Launch this app when Windows starts.",
             "help_close_core" => "Stop sing-box process when the GUI exits.",
@@ -105,7 +107,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_tcp_multipath" => "Enable Multipath TCP when the OS supports it.",
             "help_fake_ip" => "Resolve remote domains to fake IPs for better routing.",
             "disable_proxy_on_stop_label" => "Disable system proxy when core stops",
-            "help_disable_proxy_on_stop" => "Turn off system proxy when the core is stopped. App exit always clears the system proxy for safety.",
+            "help_disable_proxy_on_stop" => {
+                "Turn off system proxy when the core is stopped. App exit always clears the system proxy for safety."
+            }
             "auto_update_interval" => "Subscription Auto-Update",
             "help_auto_update" => "Periodically refresh remote subscription URLs.",
             "auto_update_off" => "Off",
@@ -116,7 +120,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_import_clipboard" => "From Clipboard",
             "btn_import_file" => "Import File",
             "expire_at_label" => "Expires",
-            "empty_profiles_hint" => "Paste a subscription URL above, or import from clipboard / local file.",
+            "empty_profiles_hint" => {
+                "Paste a subscription URL above, or import from clipboard / local file."
+            }
             "empty_dashboard_title" => "No active profile yet",
             "empty_dashboard_desc" => "Import a subscription to get started.",
             "btn_goto_profiles" => "Go to Profiles",
@@ -135,8 +141,10 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "empty_logs_hint" => "Start the core to stream live logs here.",
             "rules_builtin_title" => "Built-in routing",
             "more_nodes_hint" => "... and {} more nodes. Use search to filter.",
-            "rules_builtin_desc" => "Rule mode already bypasses private LAN and China mainland (geosite-cn / geoip-cn). Custom rules below are applied on top and take effect after core restart.",
-            
+            "rules_builtin_desc" => {
+                "Rule mode already bypasses private LAN and China mainland (geosite-cn / geoip-cn). Custom rules below are applied on top and take effect after core restart."
+            }
+
             // Dashboard
             "core_status" => "Core Status",
             "status_running" => "Running",
@@ -146,7 +154,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "core_starting_hint" => "Validating config and starting core…",
             "toast_sub_ok" => "Subscription downloaded successfully",
             "toast_profile_deleted" => "Profile deleted",
-            "toast_core_stopped_profile_deleted" => "Core stopped because the active profile was deleted",
+            "toast_core_stopped_profile_deleted" => {
+                "Core stopped because the active profile was deleted"
+            }
             "system_proxy" => "System Proxy",
             "enabled" => "Enabled",
             "disabled" => "Disabled",
@@ -160,19 +170,23 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_enable_proxy" => "Enable Proxy",
             "speed_history_chart" => "Real-time Speed History",
             "singbox_core" => "sing-box Core",
-            
+
             // Proxies
             "proxy_nodes" => "Proxy Nodes",
             "test_latency" => "Test All Latency",
             "testing_latency" => "Testing Latency...",
-            "no_nodes" => "No nodes found in the active profile. Please select or update a profile.",
+            "no_nodes" => {
+                "No nodes found in the active profile. Please select or update a profile."
+            }
             "search_nodes_placeholder" => "Search nodes by name or server...",
             "no_matching_nodes" => "No nodes match your search query.",
             "latency_timeout" => "Timeout",
             "nodes_unit" => "nodes",
             "protocols_unit" => "protocols",
             "groups_unit" => "groups",
-            "invalid_domain_rule" => "Enter a valid domain suffix, for example example.com or *.example.com.",
+            "invalid_domain_rule" => {
+                "Enter a valid domain suffix, for example example.com or *.example.com."
+            }
             "invalid_ip_rule" => "Enter a valid IPv4/IPv6 address or CIDR range.",
             "duplicate_rule" => "This rule already exists.",
             "invalid_dns_server" => "Enter a valid DNS server address, hostname, or DNS URL.",
@@ -184,7 +198,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "port_conflict_error" => "Mixed proxy and Clash API ports must be different.",
             "settings_saved_toast" => "Settings saved and applied.",
             "profile_selected_toast" => "Active profile updated.",
-            
+
             // Profiles
             "profile_manager" => "Profile Manager",
             "btn_download" => "Download",
@@ -196,7 +210,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "import_sub" => "Import New Subscription",
             "no_profiles" => "No profiles imported yet. Enter a subscription URL above to import.",
             "updated_at_label" => "Updated",
-            
+
             // Rules
             "tab_rules" => "Routing Rules",
             "rules_bypass_domains" => "Bypass Domains (Direct)",
@@ -207,12 +221,12 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_add_rule" => "Add",
             "no_custom_rules" => "No custom rules yet",
             "no_groups" => "No active proxy groups. Start the core to enable group routing.",
-            
+
             // Logs
             "console_logs" => "Console Logs",
             "clear_logs" => "Clear",
             "no_logs" => "Log buffer is empty. Start the sing-box core to view live logs.",
-            
+
             // Settings
             "ports_config" => "Ports Configuration",
             "mixed_port" => "Mixed Port",
@@ -261,7 +275,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "mode_direct_desc" => "Bypass all proxy servers",
             "placeholder_domain" => "e.g. google.com",
             "placeholder_ip" => "e.g. 192.168.1.0/24",
-            
+
             "active_mode" => "Active Mode",
             "listen_port" => "Listen Port",
             "btn_update" => "Update",
@@ -289,7 +303,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_clear_search" => "Clear search",
             "btn_goto_proxies" => "Open Proxies",
             "btn_reinstall_core" => "Reinstall Core",
-            "help_reinstall_core" => "Force re-download the managed sing-box binary (replaces existing).",
+            "help_reinstall_core" => {
+                "Force re-download the managed sing-box binary (replaces existing)."
+            }
             "latency_test_url_label" => "Latency test URL",
             "latency_test_timeout_label" => "Latency timeout (ms)",
             "help_latency_test" => "Used by multi-node delay tests via Clash API.",
@@ -297,14 +313,16 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "process_unknown" => "—",
             "empty_connections_hint" => "Start the core to see live connections.",
             "empty_logs_start_hint" => "Start the core to stream logs here.",
-            "tun_admin_banner" => "TUN mode requires running as Administrator. Without elevation, the core may fail to start.",
+            "tun_admin_banner" => {
+                "TUN mode requires running as Administrator. Without elevation, the core may fail to start."
+            }
             "core_not_running_hint" => "Start the core to load proxy groups and test latency.",
             "no_proxy_groups" => "No selector groups available from the core.",
             "toast_start_core_first" => "Start the core before testing latency",
             "toast_no_nodes" => "No nodes available for latency test",
             "toast_latency_done" => "Latency test complete",
             "toast_clipboard_empty" => "Clipboard is empty",
-            
+
             // Connections
             "tab_connections" => "Connections",
             "host" => "Host / IP",
@@ -315,8 +333,10 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "close_conn" => "Close",
             "no_active_connections" => "No active connections.",
             "no_matching_connections" => "No matching connections found.",
-            "connections_hidden_hint" => "additional connections hidden; refine the search to inspect them.",
-            
+            "connections_hidden_hint" => {
+                "additional connections hidden; refine the search to inspect them."
+            }
+
             // Software Update
             "app_update" => "Software Update",
             "current_ver_label" => "Current Version",
@@ -330,7 +350,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "toast_update_downloading" => "Downloading update in the background…",
             "toast_update_installing" => "Installing update and restarting…",
             "status_check_failed" => "Check failed:",
-            
+
             // Sorting
             "sort_connections_by" => "Sort by",
             "sort_nodes_by" => "Sort by",
@@ -353,7 +373,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tab_profiles" => "订阅管理",
             "tab_logs" => "实时日志",
             "tab_settings" => "系统设置",
-            
+
             // Missing keys
             "settings" => "系统设置",
             "ON" => "开启",
@@ -377,7 +397,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_tcp_multipath" => "在系统支持时启用多径 TCP。",
             "help_fake_ip" => "将远程域名解析为虚假 IP，便于分流。",
             "disable_proxy_on_stop_label" => "停止内核时关闭系统代理",
-            "help_disable_proxy_on_stop" => "关闭内核时自动关闭系统代理。退出应用时始终清除系统代理（安全策略）。",
+            "help_disable_proxy_on_stop" => {
+                "关闭内核时自动关闭系统代理。退出应用时始终清除系统代理（安全策略）。"
+            }
             "auto_update_interval" => "订阅自动更新",
             "help_auto_update" => "按间隔自动刷新远程订阅链接。",
             "auto_update_off" => "关闭",
@@ -406,8 +428,10 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "no_matching_logs" => "没有匹配当前筛选条件的日志。",
             "empty_logs_hint" => "启动内核后可在此查看实时日志。",
             "rules_builtin_title" => "内置分流说明",
-            "rules_builtin_desc" => "规则模式下已默认绕过局域网与中国大陆（geosite-cn / geoip-cn）。下方自定义规则会叠加生效，修改后将重启内核应用。",
-            
+            "rules_builtin_desc" => {
+                "规则模式下已默认绕过局域网与中国大陆（geosite-cn / geoip-cn）。下方自定义规则会叠加生效，修改后将重启内核应用。"
+            }
+
             // Dashboard
             "core_status" => "内核状态",
             "status_running" => "正在运行",
@@ -431,7 +455,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_enable_proxy" => "启用代理",
             "speed_history_chart" => "实时速度历史流量图",
             "singbox_core" => "sing-box 内核控制",
-            
+
             // Proxies
             "proxy_nodes" => "节点列表",
             "test_latency" => "测试所有节点延迟",
@@ -455,7 +479,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "port_conflict_error" => "混合代理端口和 Clash API 端口不能相同。",
             "settings_saved_toast" => "设置已保存并应用。",
             "profile_selected_toast" => "已切换活动订阅。",
-            
+
             // Profiles
             "profile_manager" => "订阅列表",
             "btn_download" => "下载订阅",
@@ -467,7 +491,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "import_sub" => "导入新订阅",
             "no_profiles" => "尚未导入订阅，请在上方输入订阅链接进行下载导入。",
             "updated_at_label" => "更新时间",
-            
+
             // Rules
             "tab_rules" => "分流规则",
             "rules_bypass_domains" => "绕过域名 (直连)",
@@ -478,12 +502,12 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_add_rule" => "添加",
             "no_custom_rules" => "暂无自定义规则",
             "no_groups" => "没有活动代理组。启动内核以启用分组路由。",
-            
+
             // Logs
             "console_logs" => "控制台日志",
             "clear_logs" => "清空日志",
             "no_logs" => "日志缓冲区为空。启动 sing-box 内核即可查看实时运行日志。",
-            
+
             // Settings
             "ports_config" => "网络端口配置",
             "mixed_port" => "混合代理端口",
@@ -532,7 +556,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "mode_direct_desc" => "直接连接网络，不通过代理服务器",
             "placeholder_domain" => "例如 google.com",
             "placeholder_ip" => "例如 192.168.1.0/24",
-            
+
             "active_mode" => "当前模式",
             "listen_port" => "监听端口",
             "btn_update" => "更新",
@@ -575,7 +599,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "toast_no_nodes" => "当前没有可测速的节点",
             "toast_latency_done" => "延迟测试完成",
             "toast_clipboard_empty" => "剪贴板为空",
-            
+
             // Connections
             "tab_connections" => "连接管理",
             "host" => "目标主机 / IP",
@@ -587,7 +611,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "no_active_connections" => "当前没有活动的连接。",
             "no_matching_connections" => "未找到匹配的活动连接。",
             "connections_hidden_hint" => "个额外连接已隐藏，请缩小搜索范围后查看。",
-            
+
             // Software Update
             "app_update" => "软件更新",
             "current_ver_label" => "当前版本",
@@ -602,7 +626,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "more_nodes_hint" => "... 还有 {} 个节点。使用搜索以过滤。",
             "toast_update_installing" => "正在安装更新并重启…",
             "status_check_failed" => "检查更新失败:",
-            
+
             // Sorting
             "sort_connections_by" => "排序依据",
             "sort_nodes_by" => "节点排序",
@@ -615,9 +639,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "sort_rule" => "分流规则",
             "sort_download" => "下载流量",
             "sort_upload" => "上传流量",
-            
+
             _ => key,
-        }
+        },
     }
 }
 
@@ -676,8 +700,16 @@ mod tests {
                         continue;
                     }
                     let key: &'static str = Box::leak(key.to_string().into_boxed_str());
-                    assert_ne!(tr(Language::En, key), key, "missing English translation: {key}");
-                    assert_ne!(tr(Language::Zh, key), key, "missing Chinese translation: {key}");
+                    assert_ne!(
+                        tr(Language::En, key),
+                        key,
+                        "missing English translation: {key}"
+                    );
+                    assert_ne!(
+                        tr(Language::Zh, key),
+                        key,
+                        "missing Chinese translation: {key}"
+                    );
                 }
             }
         }

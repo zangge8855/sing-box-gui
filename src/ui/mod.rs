@@ -1,20 +1,20 @@
-pub mod theme;
-pub mod dashboard;
-pub mod proxies;
-pub mod profiles;
-pub mod logs;
-pub mod settings;
-pub mod i18n;
 pub mod connections;
+pub mod dashboard;
+pub mod i18n;
+pub mod icons;
+pub mod logs;
+pub mod profiles;
+pub mod proxies;
 pub mod rules;
+pub mod settings;
+pub mod theme;
 pub mod toast;
 pub mod util;
-pub mod icons;
 
-use iced::widget::{column, container, row, scrollable, text, Space};
-use iced::{Alignment, Element, Length};
 use crate::message::Message;
 use crate::ui::theme as ui_theme;
+use iced::widget::{Space, column, container, row, scrollable, text};
+use iced::{Alignment, Element, Length};
 
 // ── Responsive breakpoints (content / window width in px) ────────────────────
 /// Minimum window width — must stay below SHELL_COMPACT_W so icon sidebar is reachable.
@@ -96,14 +96,24 @@ mod tests {
                 || &bytes[0..4] == b"OTTO"
                 || &bytes[0..4] == b"true"
                 || &bytes[0..4] == b"ttcf");
-        assert!(is_ttf, "material-icons.ttf does not look like a font header");
+        assert!(
+            is_ttf,
+            "material-icons.ttf does not look like a font header"
+        );
     }
 
     #[test]
     fn bundled_cjk_font_asset_is_present() {
         let bytes = include_bytes!("../../assets/NotoSansCJK-Regular.ttc");
-        assert!(bytes.len() > 1_000_000, "bundled CJK font is unexpectedly small");
-        assert_eq!(&bytes[0..4], b"ttcf", "bundled CJK font must be a TTC collection");
+        assert!(
+            bytes.len() > 1_000_000,
+            "bundled CJK font is unexpectedly small"
+        );
+        assert_eq!(
+            &bytes[0..4],
+            b"ttcf",
+            "bundled CJK font must be a TTC collection"
+        );
     }
 
     #[test]
@@ -169,13 +179,10 @@ pub fn page_header<'a>(
 
     let content: Element<'a, Message> = if is_compact {
         if let Some(actions_el) = actions {
-            column![
-                title,
-                actions_el
-            ]
-            .spacing(SP_12)
-            .width(Length::Fill)
-            .into()
+            column![title, actions_el]
+                .spacing(SP_12)
+                .width(Length::Fill)
+                .into()
         } else {
             row![title].into()
         }
@@ -217,9 +224,7 @@ pub fn page_shell_with_pad<'a>(
     content: Element<'a, Message>,
     is_compact: bool,
 ) -> Element<'a, Message> {
-    let col = column![header, content]
-        .spacing(SP_20)
-        .width(Length::Fill);
+    let col = column![header, content].spacing(SP_20).width(Length::Fill);
 
     let inner = container(col)
         .width(Length::Fill)
@@ -227,10 +232,14 @@ pub fn page_shell_with_pad<'a>(
         .center_x(Length::Fill)
         .padding(page_pad(is_compact));
 
-    container(scrollable(inner).style(ui_theme::scrollbar_style).height(Length::Fill))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    container(
+        scrollable(inner)
+            .style(ui_theme::scrollbar_style)
+            .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 /// Non-scrolling shell for pages that manage their own inner scroll area
@@ -381,11 +390,8 @@ pub fn status_dot<'a, Message: Clone + 'a>(
         container(dot).padding(4)
     };
 
-    row![
-        dot_wrapper,
-        text(label).color(text_color).size(text_size)
-    ]
-    .spacing(theme::SP_8)
-    .align_y(Alignment::Center)
-    .into()
+    row![dot_wrapper, text(label).color(text_color).size(text_size)]
+        .spacing(theme::SP_8)
+        .align_y(Alignment::Center)
+        .into()
 }

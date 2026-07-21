@@ -1,9 +1,11 @@
-use iced::widget::{button, container, scrollable, text, text_input, Column, responsive, column, row};
-use iced::{Element, Length, Alignment};
 use crate::message::Message;
 use crate::state::LogFilter;
-use crate::ui::theme;
 use crate::ui::page_header;
+use crate::ui::theme;
+use iced::widget::{
+    Column, button, column, container, responsive, row, scrollable, text, text_input,
+};
+use iced::{Alignment, Element, Length};
 use std::sync::OnceLock;
 
 pub fn get_logs_scrollable_id() -> &'static iced::widget::Id {
@@ -20,7 +22,7 @@ pub fn render<'a>(
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
     use crate::ui::i18n::tr;
-    
+
     let theme_cloned = theme.clone();
     let search_cloned = log_search.to_string();
     let total_lines = log_lines.len();
@@ -35,7 +37,7 @@ pub fn render<'a>(
     if filtered_lines.len() > MAX_VISIBLE_LOG_LINES {
         filtered_lines.drain(..filtered_lines.len() - MAX_VISIBLE_LOG_LINES);
     }
-    
+
     let main_content = responsive(move |size| {
         let theme = &theme_cloned;
         let is_compact = size.width < crate::ui::PAGE_COMPACT_W;
@@ -45,7 +47,11 @@ pub fn render<'a>(
             let active = log_filter == f;
             let mut b = button(text(tr(lang, key)).size(theme::TYPE_BTN_SM))
                 .padding(theme::BTN_PAD_SM)
-                .style(if active { theme::button_primary } else { theme::button_secondary });
+                .style(if active {
+                    theme::button_primary
+                } else {
+                    theme::button_secondary
+                });
             if !active {
                 b = b.on_press(Message::LogFilterChanged(f));
             }
@@ -55,7 +61,11 @@ pub fn render<'a>(
         let search_input = text_input(tr(lang, "log_search_placeholder"), &search_cloned)
             .on_input(Message::LogSearchChanged)
             .padding(8)
-            .width(if is_compact { Length::Fill } else { Length::Fixed(theme::SEARCH_WIDTH) })
+            .width(if is_compact {
+                Length::Fill
+            } else {
+                Length::Fixed(theme::SEARCH_WIDTH)
+            })
             .style(theme::input_field);
 
         let clear_logs_btn = button(text(tr(lang, "clear_logs")).size(theme::TYPE_BTN_MD))
@@ -91,13 +101,16 @@ pub fn render<'a>(
                 .align_y(Alignment::Center)
                 .into()
         };
-        
+
         let mut logs_col = Column::new().spacing(4);
         let shown = filtered_lines.len();
-        
+
         for line in &filtered_lines {
             let line_upper = line.to_uppercase();
-            let line_color = if line_upper.contains("ERROR") || line_upper.contains("FATAL") || line_upper.contains("FAILED") {
+            let line_color = if line_upper.contains("ERROR")
+                || line_upper.contains("FATAL")
+                || line_upper.contains("FAILED")
+            {
                 theme::DANGER
             } else if line_upper.contains("WARN") || line_upper.contains("WARNING") {
                 theme::WARNING
@@ -107,29 +120,27 @@ pub fn render<'a>(
             } else {
                 text_muted
             };
-            
+
             logs_col = logs_col.push(
                 text(line.as_str())
                     .font(theme::mono_font())
                     .color(line_color)
                     .size(theme::TYPE_MONO)
-                    .width(Length::Fill)
+                    .width(Length::Fill),
             );
         }
-        
+
         let log_terminal = if total_lines == 0 {
             let cta = button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
                 .padding(theme::BTN_PAD_MD)
                 .style(theme::button_primary)
                 .on_press(Message::ToggleCore);
-            container(
-                crate::ui::empty_state(
-                    tr(lang, "no_logs"),
-                    Some(tr(lang, "empty_logs_start_hint")),
-                    Some(cta.into()),
-                    theme,
-                )
-            )
+            container(crate::ui::empty_state(
+                tr(lang, "no_logs"),
+                Some(tr(lang, "empty_logs_start_hint")),
+                Some(cta.into()),
+                theme,
+            ))
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(Alignment::Center)
@@ -140,14 +151,12 @@ pub fn render<'a>(
                 .padding(theme::BTN_PAD_MD)
                 .style(theme::button_secondary)
                 .on_press(Message::LogSearchChanged(String::new()));
-            container(
-                crate::ui::empty_state(
-                    tr(lang, "no_matching_logs"),
-                    None,
-                    Some(cta.into()),
-                    theme,
-                )
-            )
+            container(crate::ui::empty_state(
+                tr(lang, "no_matching_logs"),
+                None,
+                Some(cta.into()),
+                theme,
+            ))
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(Alignment::Center)
@@ -159,16 +168,16 @@ pub fn render<'a>(
                     .id(get_logs_scrollable_id().clone())
                     .style(theme::scrollbar_style)
                     .height(Length::Fill)
-                    .width(Length::Fill)
+                    .width(Length::Fill),
             )
             .padding(theme::CARD_PAD_DENSE)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(theme::console_bg)
         };
-        
+
         let header = page_header("tab_logs", lang, Some(actions), theme, is_compact);
-        
+
         let col = column![header, log_terminal]
             .spacing(crate::ui::SP_20)
             .width(Length::Fill)
@@ -176,6 +185,6 @@ pub fn render<'a>(
 
         crate::ui::page_body_fixed_with_pad(col.into(), is_compact)
     });
-    
+
     main_content.into()
 }

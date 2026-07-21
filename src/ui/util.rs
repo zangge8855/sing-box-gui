@@ -129,6 +129,9 @@ mod tests {
         assert_eq!(format_size(1024 * 1024), "1.0 MB");
         let speed = format_speed(2048);
         assert!(speed.ends_with("/s"), "speed={speed}");
-        assert!(speed.contains("KB") || speed.contains("2.00"), "speed={speed}");
+        assert!(
+            speed.contains("KB") || speed.contains("2.00"),
+            "speed={speed}"
+        );
     }
 }

@@ -12,15 +12,13 @@ pub enum Tab {
     Connections,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RoutingMode {
     #[default]
     Rule,
     Global,
     Direct,
 }
-
 
 impl RoutingMode {
     /// Clash-compatible mode string for sing-box clash_api /configs.
@@ -95,8 +93,6 @@ impl Toast {
     }
 }
 
-
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub id: String,
@@ -154,9 +150,7 @@ impl LogFilter {
         let u = line.to_uppercase();
         match self {
             LogFilter::All => true,
-            LogFilter::Error => {
-                u.contains("ERROR") || u.contains("FATAL") || u.contains("FAILED")
-            }
+            LogFilter::Error => u.contains("ERROR") || u.contains("FATAL") || u.contains("FAILED"),
             LogFilter::Warn => {
                 u.contains("WARN")
                     || u.contains("WARNING")
@@ -182,8 +176,6 @@ pub enum Language {
     En,
     Zh,
 }
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuiConfig {
@@ -259,11 +251,13 @@ impl Default for GuiConfig {
         {
             use winreg::RegKey;
             use winreg::enums::HKEY_CURRENT_USER;
-            if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International")
+            if let Ok(hkcu) =
+                RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International")
                 && let Ok(locale) = hkcu.get_value::<String, _>("LocaleName")
-                    && locale.to_lowercase().starts_with("zh") {
-                        lang = Language::Zh;
-                    }
+                && locale.to_lowercase().starts_with("zh")
+            {
+                lang = Language::Zh;
+            }
         }
         Self {
             subscriptions: Vec::new(),
