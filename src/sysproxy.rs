@@ -464,7 +464,7 @@ mod platform {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    fn service_for_interface(order: &str, device: &str) -> Option<String> {
+    pub(super) fn service_for_interface(order: &str, device: &str) -> Option<String> {
         let mut current_service = None;
         for line in order.lines().map(str::trim) {
             // `-listnetworkserviceorder` emits entries such as
