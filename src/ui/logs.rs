@@ -26,13 +26,35 @@ pub fn render<'a>(
     let theme_cloned = theme.clone();
     let search_cloned = log_search.to_string();
     let total_lines = log_lines.len();
-    // Filter once per view rebuild (not full buffer clone when search/filter reduces size).
+    // Precompute case-folded text and severity once per view rebuild. The
+    // responsive closure may be evaluated repeatedly while resizing, so it
+    // should only assemble widgets, not re-scan every log line.
     let q_lower = log_search.to_lowercase();
     const MAX_VISIBLE_LOG_LINES: usize = 400;
-    let mut filtered_lines: Vec<&String> = log_lines
+    let mut filtered_lines: Vec<(&str, u8)> = log_lines
         .iter()
-        .filter(|line| log_filter.matches(line))
-        .filter(|line| q_lower.is_empty() || line.to_lowercase().contains(&q_lower))
+        .filter_map(|line| {
+            let uppercase = line.to_uppercase();
+            if !log_filter.matches_upper(&uppercase) {
+                return None;
+            }
+            if !q_lower.is_empty() && !line.to_lowercase().contains(&q_lower) {
+                return None;
+            }
+            let severity = if uppercase.contains("ERROR")
+                || uppercase.contains("FATAL")
+                || uppercase.contains("FAILED")
+            {
+                3
+            } else if uppercase.contains("WARN") || uppercase.contains("WARNING") {
+                2
+            } else if uppercase.contains("INFO") {
+                1
+            } else {
+                0
+            };
+            Some((line.as_str(), severity))
+        })
         .collect();
     if filtered_lines.len() > MAX_VISIBLE_LOG_LINES {
         filtered_lines.drain(..filtered_lines.len() - MAX_VISIBLE_LOG_LINES);
@@ -105,24 +127,17 @@ pub fn render<'a>(
         let mut logs_col = Column::new().spacing(4);
         let shown = filtered_lines.len();
 
-        for line in &filtered_lines {
-            let line_upper = line.to_uppercase();
-            let line_color = if line_upper.contains("ERROR")
-                || line_upper.contains("FATAL")
-                || line_upper.contains("FAILED")
-            {
-                theme::DANGER
-            } else if line_upper.contains("WARN") || line_upper.contains("WARNING") {
-                theme::WARNING
-            } else if line_upper.contains("INFO") {
-                // Info is informational, not a success outcome
-                theme::ACCENT_BLUE
-            } else {
-                text_muted
+        for (line, severity) in &filtered_lines {
+            let line_color = match severity {
+                3 => theme::DANGER,
+                2 => theme::WARNING,
+                // Info is informational, not a success outcome.
+                1 => theme::ACCENT_BLUE,
+                _ => text_muted,
             };
 
             logs_col = logs_col.push(
-                text(line.as_str())
+                text(*line)
                     .font(theme::mono_font())
                     .color(line_color)
                     .size(theme::TYPE_MONO)

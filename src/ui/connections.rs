@@ -20,6 +20,18 @@ impl std::fmt::Display for ConnectionSortOption {
     }
 }
 
+struct PreparedConnection<'a> {
+    connection: &'a Connection,
+    host_key: String,
+    process_label: String,
+    process_key: String,
+    network_key: String,
+    chains_label: String,
+    chains_key: String,
+    rule_key: String,
+    search_key: String,
+}
+
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
     active_connections: &'a [Connection],
@@ -35,6 +47,80 @@ pub fn render<'a>(
     let theme_cloned = theme.clone();
     let query_str = search_query.to_string();
 
+    // Build display/search/sort keys once per snapshot. The responsive view can
+    // be evaluated more than once during a resize; doing the string work here
+    // avoids repeated lowercase allocations and path parsing in each pass.
+    let query_lower = query_str.to_lowercase();
+    let mut prepared_connections: Vec<PreparedConnection<'a>> = active_connections
+        .iter()
+        .map(|connection| {
+            let host = if !connection.metadata.host.is_empty() {
+                &connection.metadata.host
+            } else {
+                &connection.metadata.destination_ip
+            };
+            let process_label = connection.metadata.process_display().unwrap_or_default();
+            let chains_label = if connection.chains.is_empty() {
+                String::new()
+            } else {
+                connection.chains.join(" ➔ ")
+            };
+            let host_key = host.to_lowercase();
+            let process_key = process_label.to_lowercase();
+            let network_key = connection.metadata.network.to_lowercase();
+            let chains_key = chains_label.to_lowercase();
+            let rule_key = connection.rule.to_lowercase();
+            let search_key = format!(
+                "{} {} {} {} {} {}",
+                host_key,
+                connection.metadata.destination_ip.to_lowercase(),
+                process_key,
+                chains_key,
+                rule_key,
+                network_key
+            );
+            PreparedConnection {
+                connection,
+                host_key,
+                process_label,
+                process_key,
+                network_key,
+                chains_label,
+                chains_key,
+                rule_key,
+                search_key,
+            }
+        })
+        .filter(|prepared| {
+            query_lower.trim().is_empty() || prepared.search_key.contains(&query_lower)
+        })
+        .collect();
+
+    prepared_connections.sort_by(|a, b| {
+        let ord = match connections_sort {
+            crate::state::ConnectionSort::None => std::cmp::Ordering::Equal,
+            crate::state::ConnectionSort::Host => a.host_key.cmp(&b.host_key),
+            crate::state::ConnectionSort::Process => a.process_key.cmp(&b.process_key),
+            crate::state::ConnectionSort::Network => a.network_key.cmp(&b.network_key),
+            crate::state::ConnectionSort::Chains => a.chains_key.cmp(&b.chains_key),
+            crate::state::ConnectionSort::Rule => a.rule_key.cmp(&b.rule_key),
+            crate::state::ConnectionSort::Download => {
+                a.connection.download.cmp(&b.connection.download)
+            }
+            crate::state::ConnectionSort::Upload => a.connection.upload.cmp(&b.connection.upload),
+        };
+        if connections_sort_desc {
+            ord.reverse()
+        } else {
+            ord
+        }
+    });
+    const MAX_VISIBLE_CONNECTIONS: usize = 100;
+    let hidden_connections = prepared_connections
+        .len()
+        .saturating_sub(MAX_VISIBLE_CONNECTIONS);
+    prepared_connections.truncate(MAX_VISIBLE_CONNECTIONS);
+
     let main_content = responsive(move |size| {
         let theme = &theme_cloned;
         let text_primary = theme::text_primary(theme);
@@ -42,86 +128,7 @@ pub fn render<'a>(
         let is_compact = size.width < CONNECTIONS_TABLE_W;
         let is_wide = size.width >= CONNECTIONS_WIDE_W;
 
-        // Filter connections
-        let mut filtered_connections: Vec<&Connection> = if query_str.trim().is_empty() {
-            active_connections.iter().collect()
-        } else {
-            let q = query_str.to_lowercase();
-            active_connections
-                .iter()
-                .filter(|conn| {
-                    let host_text = if !conn.metadata.host.is_empty() {
-                        &conn.metadata.host
-                    } else {
-                        &conn.metadata.destination_ip
-                    };
-                    let process = conn
-                        .metadata
-                        .process_display()
-                        .unwrap_or_default()
-                        .to_lowercase();
-                    host_text.to_lowercase().contains(&q)
-                        || conn.metadata.destination_ip.to_lowercase().contains(&q)
-                        || conn.chains.iter().any(|c| c.to_lowercase().contains(&q))
-                        || conn.rule.to_lowercase().contains(&q)
-                        || conn.metadata.network.to_lowercase().contains(&q)
-                        || process.contains(&q)
-                })
-                .collect()
-        };
-
-        // Sort connections
-        filtered_connections.sort_by(|a, b| {
-            let ord = match connections_sort {
-                crate::state::ConnectionSort::None => std::cmp::Ordering::Equal,
-                crate::state::ConnectionSort::Host => {
-                    let ha = if !a.metadata.host.is_empty() {
-                        &a.metadata.host
-                    } else {
-                        &a.metadata.destination_ip
-                    };
-                    let hb = if !b.metadata.host.is_empty() {
-                        &b.metadata.host
-                    } else {
-                        &b.metadata.destination_ip
-                    };
-                    ha.to_lowercase().cmp(&hb.to_lowercase())
-                }
-                crate::state::ConnectionSort::Process => {
-                    let pa = a.metadata.process_display().unwrap_or_default();
-                    let pb = b.metadata.process_display().unwrap_or_default();
-                    pa.to_lowercase().cmp(&pb.to_lowercase())
-                }
-                crate::state::ConnectionSort::Network => a
-                    .metadata
-                    .network
-                    .to_lowercase()
-                    .cmp(&b.metadata.network.to_lowercase()),
-                crate::state::ConnectionSort::Chains => {
-                    let ca = a.chains.join(" ➔ ");
-                    let cb = b.chains.join(" ➔ ");
-                    ca.to_lowercase().cmp(&cb.to_lowercase())
-                }
-                crate::state::ConnectionSort::Rule => {
-                    a.rule.to_lowercase().cmp(&b.rule.to_lowercase())
-                }
-                crate::state::ConnectionSort::Download => a.download.cmp(&b.download),
-                crate::state::ConnectionSort::Upload => a.upload.cmp(&b.upload),
-            };
-            if connections_sort_desc {
-                ord.reverse()
-            } else {
-                ord
-            }
-        });
-
-        // Iced builds widget trees eagerly. Bound the visible rows so a busy
-        // torrent/browser session cannot freeze the UI with thousands of rows.
-        const MAX_VISIBLE_CONNECTIONS: usize = 100;
-        let hidden_connections = filtered_connections
-            .len()
-            .saturating_sub(MAX_VISIBLE_CONNECTIONS);
-        filtered_connections.truncate(MAX_VISIBLE_CONNECTIONS);
+        let filtered_connections = &prepared_connections;
 
         let search_input = text_input(tr(lang, "placeholder_connections_search"), &query_str)
             .on_input(Message::ConnectionsSearchChanged)
@@ -269,36 +276,36 @@ pub fn render<'a>(
                 };
                 list = list.push(crate::ui::empty_state(empty_msg, hint, cta, theme));
             } else {
-                for conn in filtered_connections {
+                for prepared in filtered_connections.iter() {
+                    let conn = prepared.connection;
                     let host_full = if !conn.metadata.host.is_empty() {
-                        conn.metadata.host.clone()
+                        conn.metadata.host.as_str()
                     } else {
-                        conn.metadata.destination_ip.clone()
+                        conn.metadata.destination_ip.as_str()
                     };
-
-                    let chains_text = if conn.chains.is_empty() {
-                        tr(lang, "direct_chain").to_string()
+                    let chains_text = if prepared.chains_label.is_empty() {
+                        tr(lang, "direct_chain")
                     } else {
-                        conn.chains.join(" ➔ ")
+                        prepared.chains_label.as_str()
                     };
-
-                    let process_label = conn
-                        .metadata
-                        .process_display()
-                        .unwrap_or_else(|| tr(lang, "process_unknown").to_string());
+                    let process_label = if prepared.process_label.is_empty() {
+                        tr(lang, "process_unknown")
+                    } else {
+                        prepared.process_label.as_str()
+                    };
 
                     let dl_text = format_size(conn.download);
                     let ul_text = format_size(conn.upload);
 
                     let close_btn = button(text(tr(lang, "close_conn")).size(theme::TYPE_CAPTION))
                         .style(theme::button_danger)
-                        .padding([4, 8])
+                        .padding(theme::BTN_PAD_SM)
                         .on_press(Message::CloseConnection(conn.id.clone()));
 
                     let card = container(
                         column![
                             row![
-                                text(truncate_chars(&host_full, 48))
+                                text(truncate_chars(host_full, 48))
                                     .color(text_primary)
                                     .size(theme::TYPE_SECTION)
                                     .font(theme::ui_font(iced::font::Weight::Bold))
@@ -328,14 +335,14 @@ pub fn render<'a>(
                             text(format!(
                                 "{}: {}",
                                 tr(lang, "col_process"),
-                                truncate_chars(&process_label, 36)
+                                truncate_chars(process_label, 36)
                             ))
                             .color(text_muted)
                             .size(theme::TYPE_CAPTION),
                             text(format!(
                                 "{}: {}",
                                 tr(lang, "chains"),
-                                truncate_chars(&chains_text, 40)
+                                truncate_chars(chains_text, 40)
                             ))
                             .color(text_muted)
                             .size(theme::TYPE_CAPTION),
@@ -515,33 +522,34 @@ pub fn render<'a>(
                 list = list.push(crate::ui::empty_state(empty_msg, hint, cta, theme));
             } else {
                 let len = filtered_connections.len();
-                for (idx, conn) in filtered_connections.into_iter().enumerate() {
+                for (idx, prepared) in filtered_connections.iter().enumerate() {
+                    let conn = prepared.connection;
                     let host_full = if !conn.metadata.host.is_empty() {
-                        conn.metadata.host.clone()
+                        conn.metadata.host.as_str()
                     } else {
-                        conn.metadata.destination_ip.clone()
+                        conn.metadata.destination_ip.as_str()
                     };
-                    let host_text = truncate_chars(&host_full, if is_wide { 48 } else { 32 });
-                    let process_label = conn
-                        .metadata
-                        .process_display()
-                        .unwrap_or_else(|| tr(lang, "process_unknown").to_string());
-                    let process_text =
-                        truncate_chars(&process_label, if is_wide { 28 } else { 18 });
+                    let host_text = truncate_chars(host_full, if is_wide { 48 } else { 32 });
+                    let process_label = if prepared.process_label.is_empty() {
+                        tr(lang, "process_unknown")
+                    } else {
+                        prepared.process_label.as_str()
+                    };
+                    let process_text = truncate_chars(process_label, if is_wide { 28 } else { 18 });
 
-                    let chains_text = if conn.chains.is_empty() {
-                        tr(lang, "direct_chain").to_string()
+                    let chains_text = if prepared.chains_label.is_empty() {
+                        tr(lang, "direct_chain")
                     } else {
-                        conn.chains.join(" ➔ ")
+                        prepared.chains_label.as_str()
                     };
-                    let chains_text = truncate_chars(&chains_text, if is_wide { 36 } else { 24 });
+                    let chains_text = truncate_chars(chains_text, if is_wide { 36 } else { 24 });
 
                     let dl_text = format_size(conn.download);
                     let ul_text = format_size(conn.upload);
 
                     let close_btn = button(text(tr(lang, "close_conn")).size(theme::TYPE_BTN_SM))
                         .style(theme::button_danger)
-                        .padding([4, 8])
+                        .padding(theme::BTN_PAD_SM)
                         .on_press(Message::CloseConnection(conn.id.clone()));
 
                     let row_content: Element<'_, Message> = if is_wide {

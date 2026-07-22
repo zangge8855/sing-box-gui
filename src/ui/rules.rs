@@ -55,7 +55,7 @@ pub fn render<'a>(
                         .size(crate::ui::ICON_SIZE),
                 )
                 .style(theme::button_secondary)
-                .padding([4, 8])
+                .padding(theme::BTN_PAD_SM)
                 .on_press(Message::RemoveRule { field, index: idx });
 
                 let item_row = row![
@@ -67,7 +67,7 @@ pub fn render<'a>(
                 ]
                 .align_y(Alignment::Center)
                 .spacing(crate::ui::SP_12)
-                .padding([4, 8]);
+                .padding(theme::BTN_PAD_SM);
 
                 list_col = list_col.push(
                     container(item_row).style(move |t| theme::list_item_style(t, false, false)),

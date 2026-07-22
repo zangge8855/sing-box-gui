@@ -97,7 +97,7 @@ impl ConnectionMetadata {
 }
 
 #[cfg(test)]
-mod tests {
+mod traffic_tests {
     use super::*;
 
     #[test]
@@ -290,10 +290,22 @@ pub async fn close_all_connections(api_port: u16) -> Result<(), String> {
         match fetch_connections(api_port).await {
             Ok(resp) => {
                 let conns = resp.connections.unwrap_or_default();
+                let mut failures = Vec::new();
                 for conn in &conns {
-                    let _ = close_connection(api_port, &conn.id).await;
+                    if let Err(error) = close_connection(api_port, &conn.id).await {
+                        failures.push(format!("{}: {}", conn.id, error));
+                    }
                 }
-                Ok(())
+                if failures.is_empty() {
+                    Ok(())
+                } else {
+                    let total = failures.len();
+                    failures.truncate(5);
+                    Err(format!(
+                        "Close-all fallback partially failed for {total} connection(s): {}",
+                        failures.join("; ")
+                    ))
+                }
             }
             Err(e) => Err(format!(
                 "Close-all failed (status {}) and fallback failed: {}",
@@ -302,6 +314,24 @@ pub async fn close_all_connections(api_port: u16) -> Result<(), String> {
             )),
         }
     }
+}
+
+const MAX_TRAFFIC_LINE_BYTES: usize = 64 * 1024;
+
+fn append_traffic_chunk(buffer: &mut String, chunk: &str) -> bool {
+    buffer.push_str(chunk);
+    if buffer.len() <= MAX_TRAFFIC_LINE_BYTES {
+        return false;
+    }
+    while buffer.len() > MAX_TRAFFIC_LINE_BYTES {
+        if let Some(first_newline) = buffer.find('\n') {
+            buffer.drain(..=first_newline);
+        } else {
+            buffer.clear();
+            break;
+        }
+    }
+    true
 }
 
 pub fn spawn_traffic_monitor(
@@ -330,7 +360,7 @@ pub fn spawn_traffic_monitor(
                                     match chunk_res {
                                         Ok(Some(chunk)) => {
                                             let chunk_str = String::from_utf8_lossy(&chunk);
-                                            line_buffer.push_str(&chunk_str);
+                                            append_traffic_chunk(&mut line_buffer, &chunk_str);
 
                                             while let Some(pos) = line_buffer.find('\n') {
                                                 let line = line_buffer[..pos].trim();
@@ -357,4 +387,28 @@ pub fn spawn_traffic_monitor(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn traffic_buffer_drops_unbounded_partial_lines() {
+        let mut buffer = String::new();
+        assert!(append_traffic_chunk(
+            &mut buffer,
+            &"x".repeat(MAX_TRAFFIC_LINE_BYTES + 1)
+        ));
+        assert!(buffer.len() <= MAX_TRAFFIC_LINE_BYTES);
+    }
+
+    #[test]
+    fn traffic_buffer_keeps_complete_lines_after_overflow() {
+        let mut buffer = String::new();
+        let chunk = format!("{}\n{{\"up\":1}}\n", "x".repeat(MAX_TRAFFIC_LINE_BYTES));
+        append_traffic_chunk(&mut buffer, &chunk);
+        assert!(buffer.len() <= MAX_TRAFFIC_LINE_BYTES);
+        assert!(buffer.contains("{\"up\":1}"));
+    }
 }

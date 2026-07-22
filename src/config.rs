@@ -62,11 +62,28 @@ pub fn get_config_path() -> PathBuf {
 
 pub fn load_gui_config() -> GuiConfig {
     let path = get_config_path();
+    let mut migrated_proxy_ownership = false;
     #[allow(unused_mut)]
     let mut config = if path.exists() {
         if let Ok(content) = fs::read_to_string(&path) {
             match serde_json::from_str::<GuiConfig>(&content) {
-                Ok(cfg) => cfg,
+                Ok(mut cfg) => {
+                    // Versions before `system_proxy_owned` only persisted the
+                    // enabled bit. Treat an enabled legacy endpoint as
+                    // application-owned for one migration pass; the async
+                    // startup probe below still verifies the actual endpoint
+                    // before any cleanup is attempted.
+                    if cfg.system_proxy_enabled
+                        && serde_json::from_str::<serde_json::Value>(&content)
+                            .ok()
+                            .and_then(|value| value.get("system_proxy_owned").cloned())
+                            .is_none()
+                    {
+                        cfg.system_proxy_owned = true;
+                        migrated_proxy_ownership = true;
+                    }
+                    cfg
+                }
                 Err(e) => {
                     eprintln!(
                         "Failed to parse gui_config.json: {}. Backing up and resetting to default.",
@@ -83,6 +100,10 @@ pub fn load_gui_config() -> GuiConfig {
     } else {
         GuiConfig::default()
     };
+
+    if migrated_proxy_ownership {
+        let _ = save_gui_config(&config);
+    }
 
     // One-time migration for existing users to match system locale if not migrated yet
     let migration_file = get_app_dir().join(".migrated_locale");
@@ -120,6 +141,9 @@ pub fn save_gui_config(config: &GuiConfig) -> Result<(), String> {
 /// a direct `fs::write` would otherwise reset the application on next launch.
 pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     let parent = path
         .parent()
@@ -127,35 +151,107 @@ pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> 
     fs::create_dir_all(parent).map_err(|e| format!("Failed to create data directory: {e}"))?;
 
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("data");
-    let temp_path = parent.join(format!(".{file_name}.tmp"));
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp_path = parent.join(format!(
+        ".{file_name}.tmp-{}-{sequence}-{nonce}",
+        std::process::id(),
+    ));
     let backup_path = parent.join(format!("{file_name}.bak"));
 
-    {
-        let mut file = fs::File::create(&temp_path)
+    let write_result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
             .map_err(|e| format!("Failed to create temporary file: {e}"))?;
         file.write_all(bytes)
             .map_err(|e| format!("Failed to write temporary file: {e}"))?;
         file.sync_all()
             .map_err(|e| format!("Failed to flush temporary file: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("Failed to restrict temporary file permissions: {e}"))?;
+        }
+        Ok::<(), String>(())
+    })();
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
     }
 
     if path.exists() {
-        let _ = fs::copy(path, &backup_path);
+        if let Err(error) = fs::copy(path, &backup_path) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(format!("Failed to create recovery backup: {error}"));
+        }
+        if let Ok(backup) = fs::File::open(&backup_path) {
+            let _ = backup.sync_all();
+        }
     }
 
     #[cfg(target_os = "windows")]
-    if path.exists() {
-        fs::remove_file(path).map_err(|e| format!("Failed to replace existing file: {e}"))?;
-    }
+    let commit_result = windows_replace_file(&temp_path, path);
+    #[cfg(not(target_os = "windows"))]
+    let commit_result = fs::rename(&temp_path, path)
+        .map_err(|error| format!("Failed to commit temporary file: {error}"));
 
-    if let Err(e) = fs::rename(&temp_path, path) {
-        #[cfg(target_os = "windows")]
-        if backup_path.exists() && !path.exists() {
-            let _ = fs::copy(&backup_path, path);
-        }
-        return Err(format!("Failed to commit temporary file: {e}"));
+    if let Err(e) = commit_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(e);
+    }
+    #[cfg(unix)]
+    if let Ok(dir) = fs::File::open(parent) {
+        let _ = dir.sync_all();
     }
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_replace_file(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
+
+    #[link(name = "Kernel32")]
+    unsafe extern "system" {
+        fn MoveFileExW(
+            existing_file_name: *const u16,
+            new_file_name: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+
+    let source_wide: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination_wide: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let replaced = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if replaced == 0 {
+        Err(format!(
+            "Failed to commit temporary file: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn decode_base64_padded(input: &str) -> Option<String> {
@@ -3107,11 +3203,87 @@ pub fn generate_preview_config(gui_config: &GuiConfig) -> String {
         convert_clash_to_singbox(&content, gui_config)
     };
     match res {
-        Ok(val) => match serde_json::to_string_pretty(&val) {
-            Ok(json_str) => json_str,
-            Err(e) => format!("Failed to serialize config: {}", e),
-        },
+        Ok(mut val) => {
+            redact_sensitive_json(&mut val);
+            match serde_json::to_string_pretty(&val) {
+                Ok(json_str) => json_str,
+                Err(e) => format!("Failed to serialize config: {}", e),
+            }
+        }
         Err(e) => format!("Failed to generate preview: {}", e),
+    }
+}
+
+fn is_sensitive_json_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase().replace(['-', ' '], "_");
+    key.contains("secret")
+        || key.contains("token")
+        || key.contains("password")
+        || key.contains("passwd")
+        || key.contains("private_key")
+        || key.contains("passphrase")
+        || key.contains("credential")
+        || key.contains("auth")
+        || key.contains("uuid")
+        || key == "key"
+        || key == "psk"
+}
+
+pub(crate) fn redact_sensitive_json(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                if is_sensitive_json_key(key) {
+                    *child = serde_json::Value::String("******".to_string());
+                } else {
+                    redact_sensitive_json(child);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                redact_sensitive_json(item);
+            }
+        }
+        serde_json::Value::String(text) => {
+            if let Ok(mut parsed) = url::Url::parse(text)
+                && matches!(parsed.scheme(), "http" | "https")
+            {
+                let mut changed = false;
+                if parsed.password().is_some() {
+                    let _ = parsed.set_password(Some("******"));
+                    changed = true;
+                }
+                let pairs: Vec<(String, String)> = parsed
+                    .query_pairs()
+                    .map(|(key, value)| {
+                        if is_sensitive_json_key(&key) {
+                            changed = true;
+                            (key.into_owned(), "******".to_string())
+                        } else {
+                            (key.into_owned(), value.into_owned())
+                        }
+                    })
+                    .collect();
+                if !pairs.is_empty() {
+                    let mut query = parsed.query_pairs_mut();
+                    query.clear();
+                    for (key, value) in pairs {
+                        query.append_pair(&key, &value);
+                    }
+                }
+                if let Some(fragment) = parsed.fragment().map(str::to_string)
+                    && (is_sensitive_json_key(&fragment) || fragment.len() > 32)
+                {
+                    parsed.set_fragment(Some("******"));
+                    changed = true;
+                }
+                if changed {
+                    *text = parsed.to_string();
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -3143,6 +3315,22 @@ mod tests {
             rewrite_remote_rule_set_url("https://cdn.jsdelivr.net/gh/x@y/z.srs"),
             "https://cdn.jsdelivr.net/gh/x@y/z.srs"
         );
+    }
+
+    #[test]
+    fn preview_redaction_masks_sensitive_keys_and_url_credentials() {
+        let mut value = serde_json::json!({
+            "password": "secret",
+            "nested": {"private_key": "pem"},
+            "url": "https://user:pass@example.com/sub?token=abc&x=1#access-token-value"
+        });
+        redact_sensitive_json(&mut value);
+        assert_eq!(value["password"], "******");
+        assert_eq!(value["nested"]["private_key"], "******");
+        let url = value["url"].as_str().unwrap();
+        assert!(url.contains("user:******@example.com"));
+        assert!(url.contains("token=******"));
+        assert!(url.ends_with("#******"), "url={url}");
     }
 
     #[test]

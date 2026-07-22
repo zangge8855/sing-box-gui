@@ -50,15 +50,16 @@ impl Toast {
     /// Seconds to show a toast: scale with message length so long errors stay
     /// on screen long enough to read; clamped to [3, 20].
     fn duration_for(msg: &str) -> u8 {
-        let base: u8 = if msg.len() < 80 {
+        let char_count = msg.chars().count();
+        let base: u8 = if char_count < 80 {
             3
-        } else if msg.len() < 240 {
+        } else if char_count < 240 {
             6
         } else {
             10
         };
         // Extra second per ~25 chars in long messages, capped at 20
-        let extra = (msg.len() as u32 / 25).min(10) as u8;
+        let extra = (char_count as u32 / 25).min(10) as u8;
         base.saturating_add(extra).clamp(3, 20)
     }
 
@@ -93,7 +94,7 @@ impl Toast {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     pub id: String,
     pub name: String,
@@ -146,8 +147,13 @@ pub enum LogFilter {
 }
 
 impl LogFilter {
+    #[allow(dead_code)]
     pub fn matches(self, line: &str) -> bool {
-        let u = line.to_uppercase();
+        self.matches_upper(&line.to_uppercase())
+    }
+
+    pub fn matches_upper(self, uppercase_line: &str) -> bool {
+        let u = uppercase_line;
         match self {
             LogFilter::All => true,
             LogFilter::Error => u.contains("ERROR") || u.contains("FATAL") || u.contains("FAILED"),
@@ -177,7 +183,7 @@ pub enum Language {
     Zh,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuiConfig {
     pub subscriptions: Vec<Profile>,
     pub active_profile_id: Option<String>,
@@ -190,6 +196,11 @@ pub struct GuiConfig {
     pub start_on_boot: bool,
     pub tun_mode: bool,
     pub system_proxy_enabled: bool,
+    /// True only when this application enabled the currently configured
+    /// system proxy. Persisting ownership lets a restarted GUI safely clean up
+    /// a proxy it previously installed without touching an unrelated proxy.
+    #[serde(default)]
+    pub system_proxy_owned: bool,
     pub language: Language,
     pub selected_node_tag: Option<String>,
     pub fake_ip: bool,
@@ -271,6 +282,7 @@ impl Default for GuiConfig {
             start_on_boot: false,
             tun_mode: false,
             system_proxy_enabled: false,
+            system_proxy_owned: false,
             language: lang,
             selected_node_tag: None,
             fake_ip: false,
@@ -292,6 +304,73 @@ impl Default for GuiConfig {
     }
 }
 
+/// Editable runtime-affecting settings. Language and theme intentionally stay
+/// on [`GuiConfig`] because they are applied and persisted immediately.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSettingsDraft {
+    pub mixed_port: String,
+    pub api_port: String,
+    pub dns_server_local: String,
+    pub dns_server_remote: String,
+    pub core_path: String,
+    pub latency_test_url: String,
+    pub latency_test_timeout_ms: String,
+    pub start_on_boot: bool,
+    pub tun_mode: bool,
+    pub fake_ip: bool,
+    pub tcp_fast_open: bool,
+    pub tcp_multipath: bool,
+    pub close_core_on_exit: bool,
+    pub auto_start_core: bool,
+    pub auto_sys_proxy: bool,
+    pub auto_update_interval_hours: u32,
+    pub disable_proxy_on_core_stop: bool,
+}
+
+impl RuntimeSettingsDraft {
+    pub fn from_config(config: &GuiConfig) -> Self {
+        Self {
+            mixed_port: config.mixed_port.to_string(),
+            api_port: config.api_port.to_string(),
+            dns_server_local: config.dns_server_local.clone(),
+            dns_server_remote: config.dns_server_remote.clone(),
+            core_path: config.core_path.clone().unwrap_or_default(),
+            latency_test_url: config.latency_test_url.clone(),
+            latency_test_timeout_ms: config.latency_test_timeout_ms.to_string(),
+            start_on_boot: config.start_on_boot,
+            tun_mode: config.tun_mode,
+            fake_ip: config.fake_ip,
+            tcp_fast_open: config.tcp_fast_open,
+            tcp_multipath: config.tcp_multipath,
+            close_core_on_exit: config.close_core_on_exit,
+            auto_start_core: config.auto_start_core,
+            auto_sys_proxy: config.auto_sys_proxy,
+            auto_update_interval_hours: config.auto_update_interval_hours,
+            disable_proxy_on_core_stop: config.disable_proxy_on_core_stop,
+        }
+    }
+
+    pub fn has_pending_changes(&self, config: &GuiConfig) -> bool {
+        self.mixed_port.trim() != config.mixed_port.to_string()
+            || self.api_port.trim() != config.api_port.to_string()
+            || self.dns_server_local.trim() != config.dns_server_local
+            || self.dns_server_remote.trim() != config.dns_server_remote
+            || self.core_path.trim() != config.core_path.as_deref().unwrap_or_default()
+            || self.latency_test_url.trim() != config.latency_test_url
+            || self.latency_test_timeout_ms.trim() != config.latency_test_timeout_ms.to_string()
+            || self.start_on_boot != config.start_on_boot
+            || self.tun_mode != config.tun_mode
+            || self.fake_ip != config.fake_ip
+            || self.tcp_fast_open != config.tcp_fast_open
+            || self.tcp_multipath != config.tcp_multipath
+            || self.close_core_on_exit != config.close_core_on_exit
+            || self.auto_start_core != config.auto_start_core
+            || self.auto_sys_proxy != config.auto_sys_proxy
+            || self.auto_update_interval_hours != config.auto_update_interval_hours
+            || self.disable_proxy_on_core_stop != config.disable_proxy_on_core_stop
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ProxyNode {
     pub name: String,
@@ -310,6 +389,18 @@ pub struct Bandwidth {
     pub down: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum CoreInstallState {
+    #[default]
+    Idle,
+    Downloading,
+    Verifying,
+    Extracting,
+    Installing,
+    Installed,
+    Error(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateStatus {
     NotChecked,
@@ -319,9 +410,16 @@ pub enum UpdateStatus {
     NewVersion {
         tag: String,
         download_url: Option<String>,
+        sha256: Option<String>,
+        size: Option<u64>,
     },
     /// In-app download of the release binary is in progress.
     Downloading {
+        tag: String,
+    },
+    /// The verified binary is staged and the core/proxy shutdown sequence is
+    /// preparing the atomic replacement.
+    Installing {
         tag: String,
     },
     Error(String),
@@ -370,9 +468,28 @@ mod tests {
     }
 
     #[test]
+    fn toast_duration_uses_unicode_characters_not_utf8_bytes() {
+        let ascii = Toast::info("a".repeat(80));
+        let chinese = Toast::info("界".repeat(80));
+        assert_eq!(ascii.remaining_secs, chinese.remaining_secs);
+    }
+
+    #[test]
     fn routing_modes_have_clash_strings() {
         assert_eq!(RoutingMode::Rule.as_clash_mode(), "Rule");
         assert_eq!(RoutingMode::Global.as_clash_mode(), "Global");
         assert_eq!(RoutingMode::Direct.as_clash_mode(), "Direct");
+    }
+
+    #[test]
+    fn runtime_draft_only_reports_unapplied_changes() {
+        let config = GuiConfig::default();
+        let mut draft = RuntimeSettingsDraft::from_config(&config);
+        assert!(!draft.has_pending_changes(&config));
+        draft.latency_test_timeout_ms.clear();
+        assert!(draft.has_pending_changes(&config));
+        draft = RuntimeSettingsDraft::from_config(&config);
+        draft.tun_mode = !draft.tun_mode;
+        assert!(draft.has_pending_changes(&config));
     }
 }

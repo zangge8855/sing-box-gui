@@ -42,6 +42,31 @@ pub fn render<'a>(
         .map(|node| node.node_type.to_ascii_lowercase())
         .collect::<std::collections::BTreeSet<_>>()
         .len();
+    let mut node_meta_index: std::collections::HashMap<String, (String, Option<u64>, bool)> = nodes
+        .iter()
+        .map(|node| {
+            (
+                node.name.clone(),
+                (node.node_type.clone(), node.latency, node.selectable),
+            )
+        })
+        .collect();
+    for (name, info) in proxy_groups {
+        let api_latency = info
+            .history
+            .as_ref()
+            .and_then(|history| history.last())
+            .and_then(|sample| sample.get("delay"))
+            .and_then(|delay| delay.as_u64())
+            .filter(|delay| *delay < 9999);
+        let entry = node_meta_index
+            .entry(name.clone())
+            .or_insert_with(|| (info.proxy_type.clone(), None, true));
+        entry.0 = info.proxy_type.clone();
+        if api_latency.is_some() {
+            entry.1 = api_latency;
+        }
+    }
 
     let make_header_actions = move |search_query: &str, is_compact: bool| -> Element<'a, Message> {
         // Disabled (no on_press) when core is stopped or already testing
@@ -131,10 +156,8 @@ pub fn render<'a>(
     };
 
     // Check if we have active groups from Clash API
-    let mut groups: Vec<&crate::api::ProxyInfo> = proxy_groups
-        .values()
-        .filter(|p| p.all.is_some() && p.now.is_some())
-        .collect();
+    let mut groups: Vec<&crate::api::ProxyInfo> =
+        proxy_groups.values().filter(|p| p.all.is_some()).collect();
 
     if !groups.is_empty() {
         // Sort groups (e.g. Proxy first, then alphabetical)
@@ -168,7 +191,7 @@ pub fn render<'a>(
         let selected_group_moved = group_name;
         let group_info_moved = group_info;
         let nodes_moved = nodes;
-        let proxy_groups_moved = proxy_groups;
+        let node_meta_index_moved = node_meta_index;
         let search_query_moved = search_query;
         let theme_moved = theme;
 
@@ -298,19 +321,10 @@ pub fn render<'a>(
                 match proxy_sort {
                     crate::state::ProxySort::Latency => {
                         filtered_sub_nodes.sort_by(|a, b| {
-                            let lat = |name: &str| -> Option<u64> {
-                                if let Some(n_info) = proxy_groups_moved.get(name)
-                                    && let Some(ref hist) = n_info.history
-                                    && let Some(last) = hist.last()
-                                    && let Some(d) = last.get("delay").and_then(|d| d.as_u64())
-                                    && d < 9999
-                                {
-                                    return Some(d);
-                                }
-                                nodes_moved
-                                    .iter()
-                                    .find(|n| n.name == name)
-                                    .and_then(|n| n.latency.filter(|&ms| ms < 9999))
+                            let lat = |name: &str| {
+                                node_meta_index_moved
+                                    .get(name)
+                                    .and_then(|metadata| metadata.1.filter(|ms| *ms < 9999))
                             };
                             match (lat(a), lat(b)) {
                                 (Some(la), Some(lb)) => la.cmp(&lb).then_with(|| a.cmp(b)),
@@ -352,26 +366,10 @@ pub fn render<'a>(
                     for &node_name in display_nodes {
                         let active = Some(node_name.as_str()) == group_info_moved.now.as_deref();
 
-                        let mut latency = None;
-                        let mut node_type = "unknown".to_string();
-
-                        if let Some(n_info) = proxy_groups_moved.get(node_name) {
-                            node_type = n_info.proxy_type.clone();
-                            if let Some(ref hist) = n_info.history
-                                && let Some(last) = hist.last()
-                                && let Some(d) = last.get("delay").and_then(|d| d.as_u64())
-                            {
-                                latency = Some(d);
-                            }
-                        } else if let Some(n) = nodes_moved.iter().find(|n| n.name == *node_name) {
-                            node_type = n.node_type.clone();
-                        }
-
-                        if latency.is_none()
-                            && let Some(n) = nodes_moved.iter().find(|n| n.name == *node_name)
-                        {
-                            latency = n.latency;
-                        }
+                        let (node_type, latency, selectable) = node_meta_index_moved
+                            .get(node_name)
+                            .cloned()
+                            .unwrap_or_else(|| ("unknown".to_string(), None, true));
 
                         let card = render_proxy_card(
                             node_name,
@@ -381,7 +379,7 @@ pub fn render<'a>(
                             latency,
                             active,
                             is_selector,
-                            true,
+                            selectable,
                             Some(group_name.to_string()),
                             theme,
                             lang,
@@ -496,17 +494,21 @@ pub fn render<'a>(
                 .collect()
         };
 
-        filtered_nodes.sort_by(|a, b| {
-            match (
-                a.latency.filter(|&ms| ms < 9999),
-                b.latency.filter(|&ms| ms < 9999),
-            ) {
-                (Some(la), Some(lb)) => la.cmp(&lb).then_with(|| a.name.cmp(&b.name)),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => a.name.cmp(&b.name),
-            }
-        });
+        match proxy_sort {
+            crate::state::ProxySort::Latency => filtered_nodes.sort_by(|a, b| {
+                match (
+                    a.latency.filter(|&ms| ms < 9999),
+                    b.latency.filter(|&ms| ms < 9999),
+                ) {
+                    (Some(la), Some(lb)) => la.cmp(&lb).then_with(|| a.name.cmp(&b.name)),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.name.cmp(&b.name),
+                }
+            }),
+            crate::state::ProxySort::Name => filtered_nodes.sort_by(|a, b| a.name.cmp(&b.name)),
+            crate::state::ProxySort::Original => {}
+        }
 
         if filtered_nodes.is_empty() {
             let cta = button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))

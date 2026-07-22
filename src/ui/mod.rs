@@ -34,7 +34,7 @@ pub const CONNECTIONS_WIDE_W: f32 = 1100.0;
 pub const SETTINGS_2COL_W: f32 = 800.0;
 pub const SETTINGS_3COL_W: f32 = 1150.0;
 /// Dashboard stacks status cards below this.
-pub const DASHBOARD_COMPACT_W: f32 = 900.0;
+pub const DASHBOARD_COMPACT_W: f32 = 780.0;
 /// Content max width for page shells.
 pub const PAGE_MAX_WIDTH: f32 = 1200.0;
 

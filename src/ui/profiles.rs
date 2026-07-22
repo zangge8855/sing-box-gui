@@ -528,40 +528,50 @@ pub fn render<'a>(
 }
 
 pub fn mask_sensitive_url(url: &str) -> String {
-    if let Ok(mut parsed) = url::Url::parse(url) {
-        let mut query_pairs = Vec::new();
-        let mut modified = false;
+    let Ok(mut parsed) = url::Url::parse(url) else {
+        return url.to_string();
+    };
 
-        for (k, v) in parsed.query_pairs() {
-            let k_lower = k.to_lowercase();
-            if k_lower.contains("token")
-                || k_lower.contains("uuid")
-                || k_lower.contains("key")
-                || k_lower.contains("pwd")
-                || k_lower.contains("password")
-                || k_lower.contains("secret")
-            {
-                query_pairs.push((k.into_owned(), "******".to_string()));
-                modified = true;
+    let sensitive_key = |key: &str| {
+        let key = key.to_ascii_lowercase().replace('-', "_");
+        key.contains("token")
+            || key.contains("uuid")
+            || key.contains("key")
+            || key.contains("pwd")
+            || key.contains("password")
+            || key.contains("secret")
+            || key.contains("auth")
+    };
+    let has_password = parsed.password().is_some();
+    if has_password {
+        let _ = parsed.set_password(Some("******"));
+    }
+    let mut query_changed = false;
+    let query_pairs: Vec<(String, String)> = parsed
+        .query_pairs()
+        .map(|(key, value)| {
+            if sensitive_key(&key) {
+                query_changed = true;
+                (key.into_owned(), "******".to_string())
             } else {
-                query_pairs.push((k.into_owned(), v.into_owned()));
+                (key.into_owned(), value.into_owned())
             }
+        })
+        .collect();
+    if query_changed {
+        let mut pairs = parsed.query_pairs_mut();
+        pairs.clear();
+        for (key, value) in query_pairs {
+            pairs.append_pair(&key, &value);
         }
-
-        if modified {
-            parsed.set_query(None);
-            let mut new_url = parsed.to_string();
-            if !query_pairs.is_empty() {
-                let query_str = query_pairs
-                    .iter()
-                    .map(|(k, v)| format!("{}={}", k, v))
-                    .collect::<Vec<_>>()
-                    .join("&");
-                new_url.push('?');
-                new_url.push_str(&query_str);
-            }
-            return new_url;
-        }
+    }
+    if let Some(fragment) = parsed.fragment().map(str::to_string)
+        && (sensitive_key(&fragment) || fragment.len() > 32)
+    {
+        parsed.set_fragment(Some("******"));
+    }
+    if has_password || query_changed || parsed.fragment() == Some("******") {
+        return parsed.to_string();
     }
     url.to_string()
 }
@@ -588,6 +598,12 @@ mod tests {
             mask_sensitive_url("invalid_url_string"),
             "invalid_url_string"
         );
+        let masked = mask_sensitive_url(
+            "https://user:pa%20ss@example.com/sub?token=a%2Fb&name=a%20b#fragment-token",
+        );
+        assert!(masked.contains("user:******@example.com"));
+        assert!(masked.contains("token=******"));
+        assert!(masked.contains("name=a+b") || masked.contains("name=a%20b"));
     }
 
     /// Structural: shipped profiles UI source must not use bare numeric text sizes

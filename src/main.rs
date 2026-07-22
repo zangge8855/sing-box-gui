@@ -29,7 +29,7 @@ use futures::{SinkExt, StreamExt};
 use iced::widget::{button, column, container, responsive, row, text, tooltip};
 use iced::{Alignment, Element, Font, Length, Subscription, Task};
 use message::Message;
-use state::{Bandwidth, GuiConfig, Profile, ProxyNode, Tab, Toast};
+use state::{Bandwidth, GuiConfig, Profile, ProxyNode, RuntimeSettingsDraft, Tab, Toast};
 use std::sync::{Mutex, OnceLock};
 use tokio::sync::mpsc;
 
@@ -41,6 +41,7 @@ static TRAFFIC_RX: OnceLock<Mutex<Option<mpsc::Receiver<api::TrafficInfo>>>> = O
 static TRAFFIC_TX: OnceLock<mpsc::Sender<api::TrafficInfo>> = OnceLock::new();
 
 const MAX_LOG_LINES: usize = 500;
+const MAX_LOG_LINE_CHARS: usize = 4096;
 const MAX_CONNECTION_SNAPSHOT: usize = 1_000;
 
 pub fn get_log_tx() -> mpsc::Sender<String> {
@@ -80,7 +81,7 @@ struct App {
     downloading: bool,
     url_input: String,
     core_installed: bool,
-    core_install_msg: Option<String>,
+    core_install_state: state::CoreInstallState,
     update_status: state::UpdateStatus,
     node_search: String,
     profile_error: Option<String>,
@@ -90,10 +91,8 @@ struct App {
     proxy_domain_input: String,
     bypass_ip_input: String,
     proxy_ip_input: String,
-    mixed_port_input_str: String,
-    api_port_input_str: String,
-    dns_server_local_input_str: String,
-    dns_server_remote_input_str: String,
+    settings_draft: RuntimeSettingsDraft,
+    settings_errors: std::collections::BTreeMap<&'static str, &'static str>,
     connections_search: String,
     _tray_icon: Option<tray_icon::TrayIcon>,
     tray_menu_show: tray_icon::menu::MenuItem,
@@ -104,6 +103,7 @@ struct App {
     tray_menu_global_mode: tray_icon::menu::CheckMenuItem,
     tray_menu_direct_mode: tray_icon::menu::CheckMenuItem,
     tray_menu_system_proxy: tray_icon::menu::CheckMenuItem,
+    logo_handle: iced::widget::image::Handle,
     window_id: Option<iced::window::Id>,
 
     // Performance and UX optimizations
@@ -119,7 +119,6 @@ struct App {
     last_routing_mode: state::RoutingMode,
 
     toast: Option<Toast>,
-    core_path_input_str: String,
     log_filter: state::LogFilter,
     log_search: String,
     core_version: Option<String>,
@@ -152,6 +151,14 @@ struct App {
     last_proxies_fetch: Option<std::time::Instant>,
     last_connections_fetch: Option<std::time::Instant>,
     config_save_in_flight: bool,
+    config_save_failures: u32,
+    config_save_retry_at: Option<std::time::Instant>,
+    last_config_save_log_at: Option<std::time::Instant>,
+    pending_restart_after_save: bool,
+    pending_proxy_reapply_after_save: bool,
+    pending_settings_save_feedback: bool,
+    system_proxy_busy: bool,
+    autostart_busy: bool,
 
     connections_sort: state::ConnectionSort,
     connections_sort_desc: bool,
@@ -161,7 +168,23 @@ struct App {
     theme_check_counter: u32,
     config_dirty: bool,
     pending_exit: bool,
-    pending_update_path: Option<std::path::PathBuf>,
+    pending_update: Option<PendingAppUpdate>,
+}
+
+struct RuntimeSettingsCommit {
+    config: GuiConfig,
+    restart_required: bool,
+    proxy_reapply_required: bool,
+    autostart_target: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingAppUpdate {
+    tag: String,
+    url: String,
+    sha256: String,
+    size: u64,
+    path: std::path::PathBuf,
 }
 
 impl App {
@@ -219,14 +242,13 @@ impl App {
 
     fn new() -> (Self, Task<Message>) {
         let gui_config = config::load_gui_config();
-        let cached_system_is_light = detect_system_theme();
+        // Theme detection may invoke a platform command (gsettings/defaults),
+        // so start with a safe dark fallback and refresh it asynchronously.
+        let cached_system_is_light = false;
         let core_installed = core::is_core_installed(&gui_config);
         let selected_node_tag = gui_config.selected_node_tag.clone();
 
-        let mixed_port_input_str = gui_config.mixed_port.to_string();
-        let api_port_input_str = gui_config.api_port.to_string();
-        let dns_server_local_input_str = gui_config.dns_server_local.clone();
-        let dns_server_remote_input_str = gui_config.dns_server_remote.clone();
+        let settings_draft = RuntimeSettingsDraft::from_config(&gui_config);
 
         use tray_icon::{
             TrayIconBuilder,
@@ -234,67 +256,33 @@ impl App {
         };
 
         // Create the tray menu (labels match current language; update_tray_menu refreshes later)
-        let is_zh = gui_config.language == state::Language::Zh;
+        let tray_tr = |key: &'static str| ui::i18n::tr(gui_config.language, key);
         let tray_menu = Menu::new();
-        let show_item = MenuItem::with_id(
-            "show_window",
-            if is_zh {
-                "显示主界面"
-            } else {
-                "Show Window"
-            },
-            true,
-            None,
-        );
-        let toggle_core_item = MenuItem::with_id(
-            "toggle_core",
-            if is_zh { "启动内核" } else { "Start Core" },
-            true,
-            None,
-        );
+        let show_item = MenuItem::with_id("show_window", tray_tr("tray_show_window"), true, None);
+        let toggle_core_item =
+            MenuItem::with_id("toggle_core", tray_tr("tray_start_core"), true, None);
 
-        let rule_mode_item = CheckMenuItem::with_id(
-            "mode_rule",
-            if is_zh { "规则分流" } else { "Rules" },
-            true,
-            false,
-            None,
-        );
-        let global_mode_item = CheckMenuItem::with_id(
-            "mode_global",
-            if is_zh { "全局代理" } else { "Global" },
-            true,
-            false,
-            None,
-        );
-        let direct_mode_item = CheckMenuItem::with_id(
-            "mode_direct",
-            if is_zh { "直接连接" } else { "Direct" },
-            true,
-            false,
-            None,
-        );
+        let rule_mode_item =
+            CheckMenuItem::with_id("mode_rule", tray_tr("tray_rules"), true, false, None);
+        let global_mode_item =
+            CheckMenuItem::with_id("mode_global", tray_tr("tray_global"), true, false, None);
+        let direct_mode_item =
+            CheckMenuItem::with_id("mode_direct", tray_tr("tray_direct"), true, false, None);
 
         let system_proxy_item = CheckMenuItem::with_id(
             "toggle_system_proxy",
-            if is_zh {
-                "系统代理"
-            } else {
-                "System Proxy"
-            },
+            tray_tr("tray_system_proxy"),
             true,
             gui_config.system_proxy_enabled,
             None,
         );
 
-        let mode_submenu =
-            tray_icon::menu::Submenu::new(if is_zh { "代理模式" } else { "Proxy Mode" }, true);
+        let mode_submenu = tray_icon::menu::Submenu::new(tray_tr("tray_proxy_mode"), true);
         let _ = mode_submenu.append(&rule_mode_item);
         let _ = mode_submenu.append(&global_mode_item);
         let _ = mode_submenu.append(&direct_mode_item);
 
-        let exit_item =
-            MenuItem::with_id("exit_app", if is_zh { "退出" } else { "Exit" }, true, None);
+        let exit_item = MenuItem::with_id("exit_app", tray_tr("tray_exit"), true, None);
 
         let _ = tray_menu.append(&show_item);
         let _ = tray_menu.append(&PredefinedMenuItem::separator());
@@ -314,9 +302,10 @@ impl App {
         });
 
         let initial_routing_mode = gui_config.routing_mode;
-        let core_path_input_str = gui_config.core_path.clone().unwrap_or_default();
-
-        let mut app = Self {
+        let logo_handle = iced::widget::image::Handle::from_bytes(
+            include_bytes!("../assets/app-icon.png").as_slice(),
+        );
+        let app = Self {
             current_tab: Tab::Dashboard,
             gui_config,
             core_running: false,
@@ -333,7 +322,7 @@ impl App {
             downloading: false,
             url_input: String::new(),
             core_installed,
-            core_install_msg: None,
+            core_install_state: state::CoreInstallState::Idle,
             update_status: state::UpdateStatus::NotChecked,
             node_search: String::new(),
             profile_error: None,
@@ -343,10 +332,8 @@ impl App {
             proxy_domain_input: String::new(),
             bypass_ip_input: String::new(),
             proxy_ip_input: String::new(),
-            mixed_port_input_str,
-            api_port_input_str,
-            dns_server_local_input_str,
-            dns_server_remote_input_str,
+            settings_draft,
+            settings_errors: std::collections::BTreeMap::new(),
             connections_search: String::new(),
             _tray_icon: tray_icon,
             tray_menu_show: show_item,
@@ -357,6 +344,7 @@ impl App {
             tray_menu_global_mode: global_mode_item,
             tray_menu_direct_mode: direct_mode_item,
             tray_menu_system_proxy: system_proxy_item,
+            logo_handle,
             window_id: None,
 
             traffic_cancel_tx: None,
@@ -369,7 +357,6 @@ impl App {
             last_sys_proxy_enabled: false,
             last_routing_mode: initial_routing_mode,
             toast: None,
-            core_path_input_str,
             log_filter: state::LogFilter::All,
             log_search: String::new(),
             core_version: None,
@@ -390,6 +377,14 @@ impl App {
             last_proxies_fetch: None,
             last_connections_fetch: None,
             config_save_in_flight: false,
+            config_save_failures: 0,
+            config_save_retry_at: None,
+            last_config_save_log_at: None,
+            pending_restart_after_save: false,
+            pending_proxy_reapply_after_save: false,
+            pending_settings_save_feedback: false,
+            system_proxy_busy: false,
+            autostart_busy: false,
             connections_sort: state::ConnectionSort::None,
             connections_sort_desc: false,
             proxy_sort: state::ProxySort::Latency,
@@ -398,22 +393,40 @@ impl App {
             theme_check_counter: 0,
             config_dirty: false,
             pending_exit: false,
-            pending_update_path: None,
+            pending_update: None,
         };
 
         // Force initialization of log and traffic streams on startup
         let _ = get_log_tx();
         let _ = get_traffic_tx();
 
-        // Sync system proxy checkbox status with system state
-        let sys_proxy = sysproxy::check_system_proxy(app.gui_config.mixed_port).unwrap_or(false);
-        app.sys_proxy_enabled = sys_proxy;
-        app.gui_config.system_proxy_enabled = sys_proxy;
+        // Restore persisted ownership in memory, then verify the actual system
+        // state asynchronously so registry / networksetup / gsettings never
+        // stalls the UI thread during startup.
+        sysproxy::restore_system_proxy_owned(app.gui_config.system_proxy_owned);
 
         // Initial tray menu synchronization
         app.update_tray_menu();
 
         let mut tasks = Vec::new();
+        tasks.push(Task::perform(
+            async {
+                tokio::task::spawn_blocking(detect_system_theme)
+                    .await
+                    .unwrap_or(false)
+            },
+            Message::SystemThemeDetected,
+        ));
+        let startup_port = app.gui_config.mixed_port;
+        tasks.push(Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || sysproxy::check_system_proxy(startup_port))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|result| result)
+            },
+            Message::StartupSystemProxyChecked,
+        ));
         if app.gui_config.active_profile_id.is_some() {
             tasks.push(app.load_active_nodes_task());
         }
@@ -467,43 +480,21 @@ impl App {
         )
     }
 
-    fn sync_input_buffers(&mut self) {
-        self.mixed_port_input_str = self.gui_config.mixed_port.to_string();
-        self.api_port_input_str = self.gui_config.api_port.to_string();
-        self.dns_server_local_input_str = self.gui_config.dns_server_local.clone();
-        self.dns_server_remote_input_str = self.gui_config.dns_server_remote.clone();
-    }
-
     fn update_tray_menu(&self) {
-        let is_zh = self.gui_config.language == state::Language::Zh;
-
-        if is_zh {
-            self.tray_menu_show.set_text("显示主界面");
-            if self.core_running {
-                self.tray_menu_toggle_core.set_text("关闭内核");
-            } else {
-                self.tray_menu_toggle_core.set_text("启动内核");
-            }
-            self.tray_menu_system_proxy.set_text("系统代理");
-            self.tray_menu_submenu.set_text("代理模式");
-            self.tray_menu_rule_mode.set_text("规则分流");
-            self.tray_menu_global_mode.set_text("全局代理");
-            self.tray_menu_direct_mode.set_text("直接连接");
-            self.tray_menu_exit.set_text("退出");
+        let tr = |key: &'static str| ui::i18n::tr(self.gui_config.language, key);
+        self.tray_menu_show.set_text(tr("tray_show_window"));
+        self.tray_menu_toggle_core.set_text(if self.core_running {
+            tr("tray_stop_core")
         } else {
-            self.tray_menu_show.set_text("Show Window");
-            if self.core_running {
-                self.tray_menu_toggle_core.set_text("Stop Core");
-            } else {
-                self.tray_menu_toggle_core.set_text("Start Core");
-            }
-            self.tray_menu_system_proxy.set_text("System Proxy");
-            self.tray_menu_submenu.set_text("Proxy Mode");
-            self.tray_menu_rule_mode.set_text("Rules");
-            self.tray_menu_global_mode.set_text("Global");
-            self.tray_menu_direct_mode.set_text("Direct");
-            self.tray_menu_exit.set_text("Exit");
-        }
+            tr("tray_start_core")
+        });
+        self.tray_menu_system_proxy
+            .set_text(tr("tray_system_proxy"));
+        self.tray_menu_submenu.set_text(tr("tray_proxy_mode"));
+        self.tray_menu_rule_mode.set_text(tr("tray_rules"));
+        self.tray_menu_global_mode.set_text(tr("tray_global"));
+        self.tray_menu_direct_mode.set_text(tr("tray_direct"));
+        self.tray_menu_exit.set_text(tr("tray_exit"));
 
         self.tray_menu_rule_mode
             .set_checked(self.gui_config.routing_mode == state::RoutingMode::Rule);
@@ -519,27 +510,313 @@ impl App {
         self.core_starting || self.core_stopping
     }
 
-    fn request_exit(&mut self) -> Task<Message> {
-        if !self.gui_config.close_core_on_exit {
-            return iced::exit();
-        }
+    fn core_install_busy(&self) -> bool {
+        matches!(
+            &self.core_install_state,
+            state::CoreInstallState::Downloading
+                | state::CoreInstallState::Verifying
+                | state::CoreInstallState::Extracting
+                | state::CoreInstallState::Installing
+        )
+    }
 
+    fn app_update_busy(&self) -> bool {
+        self.pending_update.is_some()
+            || matches!(
+                &self.update_status,
+                state::UpdateStatus::Downloading { .. } | state::UpdateStatus::Installing { .. }
+            )
+    }
+
+    fn maintenance_busy(&self) -> bool {
+        self.core_install_busy() || self.app_update_busy()
+    }
+
+    fn request_exit(&mut self) -> Task<Message> {
+        if self.pending_exit {
+            return Task::none();
+        }
+        if self.maintenance_busy() {
+            self.toast_info(self.tr("operation_in_progress"));
+            return Task::none();
+        }
         self.pending_exit = true;
+        let settings_task = match self.commit_runtime_settings(true) {
+            Ok(task) => task,
+            Err(()) => {
+                self.pending_exit = false;
+                return Task::none();
+            }
+        };
+        Task::batch(vec![settings_task, self.continue_exit()])
+    }
+
+    fn continue_exit(&mut self) -> Task<Message> {
+        if self.autostart_busy || self.config_save_in_flight || self.system_proxy_busy {
+            return Task::none();
+        }
+        if self.config_dirty {
+            return self.start_config_save();
+        }
+        if self.gui_config.close_core_on_exit {
+            if self.core_starting {
+                self.force_stop_after_start = true;
+                return Task::none();
+            }
+            if self.core_stopping {
+                return Task::none();
+            }
+            if self.core_running || core::is_core_running_fast() {
+                return self.task_stop_core();
+            }
+        }
+        if self.gui_config.system_proxy_owned || sysproxy::is_system_proxy_owned() {
+            return self.task_set_system_proxy(false, message::SystemProxyContext::Exit);
+        }
+        iced::exit()
+    }
+
+    fn fail_pending_update(&mut self, pending: PendingAppUpdate, error: String) -> Task<Message> {
+        if let Err(cleanup_error) = std::fs::remove_file(&pending.path)
+            && cleanup_error.kind() != std::io::ErrorKind::NotFound
+        {
+            self.log_lines.push_back(format!(
+                "[GUI] Failed to remove staged update {}: {cleanup_error}",
+                pending.path.display()
+            ));
+        }
+        self.update_status = state::UpdateStatus::NewVersion {
+            tag: pending.tag,
+            download_url: Some(pending.url),
+            sha256: Some(pending.sha256),
+            size: Some(pending.size),
+        };
+        self.log_lines
+            .push_back(format!("[GUI] Failed to apply update: {error}"));
+        self.toast_error(format!("{}: {error}", self.tr("update_apply_failed")));
+        Task::none()
+    }
+
+    fn continue_update_install(&mut self) -> Task<Message> {
+        if self.pending_update.is_none() {
+            return Task::none();
+        }
         if self.core_starting {
             self.force_stop_after_start = true;
             return Task::none();
         }
-        if self.core_stopping {
+        if self.core_stopping || self.system_proxy_busy || self.config_save_in_flight {
             return Task::none();
         }
         if self.core_running || core::is_core_running_fast() {
             return self.task_stop_core();
         }
-
-        if sysproxy::is_system_proxy_owned() {
-            let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
+        if self.gui_config.system_proxy_owned || sysproxy::is_system_proxy_owned() {
+            return self.task_set_system_proxy(false, message::SystemProxyContext::Update);
         }
-        iced::exit()
+        if self.config_dirty {
+            return self.start_config_save();
+        }
+
+        let pending = self.pending_update.take().expect("checked pending update");
+        match apply_update_and_restart(&pending.path) {
+            Ok(()) => {
+                self.log_lines
+                    .push_back("[GUI] Update scheduled; exiting to apply.".to_string());
+                iced::exit()
+            }
+            Err(error) => self.fail_pending_update(pending, error),
+        }
+    }
+
+    fn start_config_save(&mut self) -> Task<Message> {
+        if self.config_save_in_flight || self.autostart_busy || !self.config_dirty {
+            return Task::none();
+        }
+        let cfg = self.gui_config.clone();
+        let saved_config = cfg.clone();
+        self.config_save_in_flight = true;
+        self.config_save_retry_at = None;
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || config::save_gui_config(&cfg))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|result| result)
+            },
+            move |result| Message::ConfigSaved {
+                saved_config: saved_config.clone(),
+                result,
+            },
+        )
+    }
+
+    fn task_set_system_proxy(
+        &mut self,
+        target: bool,
+        context: message::SystemProxyContext,
+    ) -> Task<Message> {
+        if self.system_proxy_busy {
+            return Task::none();
+        }
+        self.system_proxy_busy = true;
+        let port = self.gui_config.mixed_port;
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || sysproxy::set_system_proxy(target, port))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|result| result)
+            },
+            move |result| Message::SystemProxySetFinished {
+                target,
+                context,
+                result,
+            },
+        )
+    }
+
+    fn validate_runtime_settings(
+        &self,
+    ) -> Result<RuntimeSettingsCommit, std::collections::BTreeMap<&'static str, &'static str>> {
+        let draft = &self.settings_draft;
+        let mut errors = std::collections::BTreeMap::new();
+        let mixed_port = match parse_runtime_port(&draft.mixed_port) {
+            Ok(value) => Some(value),
+            Err(key) => {
+                errors.insert("mixed_port", key);
+                None
+            }
+        };
+        let api_port = match parse_runtime_port(&draft.api_port) {
+            Ok(value) => Some(value),
+            Err(key) => {
+                errors.insert("api_port", key);
+                None
+            }
+        };
+        if mixed_port.is_some() && mixed_port == api_port {
+            errors.insert("mixed_port", "port_conflict_error");
+            errors.insert("api_port", "port_conflict_error");
+        }
+        if !is_valid_dns_server_address(draft.dns_server_local.trim()) {
+            errors.insert("dns_local", "invalid_dns_server");
+        }
+        if !is_valid_dns_server_address(draft.dns_server_remote.trim()) {
+            errors.insert("dns_remote", "invalid_dns_server");
+        }
+        let latency_url = draft.latency_test_url.trim();
+        if !url::Url::parse(latency_url)
+            .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+        {
+            errors.insert("latency_url", "invalid_latency_url");
+        }
+        let latency_timeout = match parse_latency_timeout(&draft.latency_test_timeout_ms) {
+            Ok(value) => Some(value),
+            Err(()) => {
+                errors.insert("latency_timeout", "invalid_latency_timeout");
+                None
+            }
+        };
+        let core_path = draft.core_path.trim();
+        if !core_path.is_empty() && !std::path::Path::new(core_path).is_file() {
+            errors.insert("core_path", "invalid_core_path");
+        }
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+
+        let mut next = self.gui_config.clone();
+        let mixed_port = mixed_port.expect("validated mixed port");
+        let api_port = api_port.expect("validated API port");
+        let latency_timeout = latency_timeout.expect("validated latency timeout");
+        let proxy_reapply_required = next.mixed_port != mixed_port
+            && self.sys_proxy_enabled
+            && (next.system_proxy_owned || sysproxy::is_system_proxy_owned());
+        let restart_required = next.mixed_port != mixed_port
+            || next.api_port != api_port
+            || next.dns_server_local != draft.dns_server_local.trim()
+            || next.dns_server_remote != draft.dns_server_remote.trim()
+            || next.core_path.as_deref().unwrap_or_default() != core_path
+            || next.tun_mode != draft.tun_mode
+            || next.fake_ip != draft.fake_ip
+            || next.tcp_fast_open != draft.tcp_fast_open
+            || next.tcp_multipath != draft.tcp_multipath;
+        let autostart_target =
+            (next.start_on_boot != draft.start_on_boot).then_some(draft.start_on_boot);
+
+        next.mixed_port = mixed_port;
+        next.api_port = api_port;
+        next.dns_server_local = draft.dns_server_local.trim().to_string();
+        next.dns_server_remote = draft.dns_server_remote.trim().to_string();
+        next.core_path = (!core_path.is_empty()).then(|| core_path.to_string());
+        next.latency_test_url = latency_url.to_string();
+        next.latency_test_timeout_ms = latency_timeout;
+        next.start_on_boot = draft.start_on_boot;
+        next.tun_mode = draft.tun_mode;
+        next.fake_ip = draft.fake_ip;
+        next.tcp_fast_open = draft.tcp_fast_open;
+        next.tcp_multipath = draft.tcp_multipath;
+        next.close_core_on_exit = draft.close_core_on_exit;
+        next.auto_start_core = draft.auto_start_core;
+        next.auto_sys_proxy = draft.auto_sys_proxy;
+        next.auto_update_interval_hours = draft.auto_update_interval_hours;
+        next.disable_proxy_on_core_stop = draft.disable_proxy_on_core_stop;
+
+        Ok(RuntimeSettingsCommit {
+            config: next,
+            restart_required,
+            proxy_reapply_required,
+            autostart_target,
+        })
+    }
+
+    fn commit_runtime_settings(&mut self, for_exit: bool) -> Result<Task<Message>, ()> {
+        if !self.settings_draft.has_pending_changes(&self.gui_config) {
+            self.settings_errors.clear();
+            return Ok(self.start_config_save());
+        }
+        let commit = match self.validate_runtime_settings() {
+            Ok(commit) => commit,
+            Err(errors) => {
+                self.settings_errors = errors;
+                let key = self
+                    .settings_errors
+                    .values()
+                    .next()
+                    .copied()
+                    .unwrap_or("settings_invalid");
+                self.toast_error(self.tr(key));
+                return Err(());
+            }
+        };
+
+        self.settings_errors.clear();
+        self.gui_config = commit.config;
+        self.core_installed = core::is_core_installed(&self.gui_config);
+        self.config_dirty = true;
+        self.pending_restart_after_save =
+            !for_exit && commit.restart_required && (self.core_running || self.core_starting);
+        self.pending_proxy_reapply_after_save = !for_exit && commit.proxy_reapply_required;
+        if self.gui_config.tun_mode && !platform::is_running_elevated() {
+            self.toast_info(self.tr("tun_admin_banner"));
+        }
+
+        if let Some(target) = commit.autostart_target {
+            self.autostart_busy = true;
+            return Ok(Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || platform::set_autostart(target))
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|result| result)
+                },
+                move |result| Message::AutostartSetFinished { target, result },
+            ));
+        }
+
+        self.settings_draft = RuntimeSettingsDraft::from_config(&self.gui_config);
+        Ok(self.start_config_save())
     }
 
     /// Schedule an async core stop (runs off the UI thread).
@@ -575,27 +852,6 @@ impl App {
         self.log_lines
             .push_back("[GUI] sing-box core started successfully.".to_string());
 
-        if self.gui_config.auto_sys_proxy && !self.sys_proxy_enabled {
-            match sysproxy::set_system_proxy(true, self.gui_config.mixed_port) {
-                Ok(_) => {
-                    self.sys_proxy_enabled = true;
-                    self.gui_config.system_proxy_enabled = true;
-                    self.config_dirty = true;
-                    self.log_lines
-                        .push_back("[GUI] System proxy auto-enabled on core start.".to_string());
-                }
-                Err(e) => {
-                    let msg = format!("Failed to auto-enable system proxy: {}", e);
-                    self.log_lines.push_back(format!("[GUI] {}", msg));
-                    self.toast_error(if self.gui_config.language == state::Language::Zh {
-                        format!("自动开启系统代理失败: {}", e)
-                    } else {
-                        msg
-                    });
-                }
-            }
-        }
-
         if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
             let _ = cancel_tx.send(());
         }
@@ -604,12 +860,20 @@ impl App {
         let traffic_tx = get_traffic_tx();
         api::spawn_traffic_monitor(self.gui_config.api_port, traffic_tx, rx);
 
-        Task::perform(
+        let wake_task = Task::perform(
             async {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             },
             |_| Message::Tick,
-        )
+        );
+        if self.gui_config.auto_sys_proxy && !self.sys_proxy_enabled {
+            Task::batch(vec![
+                wake_task,
+                self.task_set_system_proxy(true, message::SystemProxyContext::CoreStart),
+            ])
+        } else {
+            wake_task
+        }
     }
 
     /// Tear down traffic monitor and optionally disable system proxy after stop.
@@ -617,27 +881,6 @@ impl App {
         self.core_running = false;
         if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
             let _ = cancel_tx.send(());
-        }
-        if self.gui_config.disable_proxy_on_core_stop
-            && self.sys_proxy_enabled
-            && sysproxy::is_system_proxy_owned()
-        {
-            match sysproxy::set_system_proxy(false, self.gui_config.mixed_port) {
-                Ok(_) => {
-                    self.sys_proxy_enabled = false;
-                    self.gui_config.system_proxy_enabled = false;
-                    self.config_dirty = true;
-                }
-                Err(e) => {
-                    self.log_lines
-                        .push_back(format!("[GUI] Failed to disable system proxy: {}", e));
-                    self.toast_error(if self.gui_config.language == state::Language::Zh {
-                        format!("关闭系统代理失败: {}", e)
-                    } else {
-                        format!("Failed to disable system proxy: {}", e)
-                    });
-                }
-            }
         }
         self.current_speed = Bandwidth::default();
         self.total_uploaded = 0;
@@ -755,6 +998,36 @@ impl App {
                     self.request_exit()
                 }
             }
+            Message::KeyboardEvent(iced::keyboard::Event::KeyPressed {
+                key,
+                modifiers,
+                repeat,
+                ..
+            }) if !repeat => {
+                match key.as_ref() {
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                        if self.editing_profile_id.is_some() {
+                            return Task::done(Message::CancelProfileEdit);
+                        }
+                        if self.confirm_delete_profile_id.is_some() {
+                            return Task::done(Message::CancelDeleteProfile);
+                        }
+                        self.toast = None;
+                    }
+                    iced::keyboard::Key::Character(character)
+                        if modifiers.command() && character.eq_ignore_ascii_case("s") =>
+                    {
+                        return if self.editing_profile_id.is_some() {
+                            Task::done(Message::SaveProfileEdit)
+                        } else {
+                            Task::done(Message::SaveSettings)
+                        };
+                    }
+                    _ => {}
+                }
+                Task::none()
+            }
+            Message::KeyboardEvent(_) => Task::none(),
             Message::TabChanged(tab) => {
                 self.current_tab = tab;
                 let mut tasks = Vec::new();
@@ -943,6 +1216,10 @@ impl App {
                 Task::none()
             }
             Message::ToggleCore => {
+                if self.maintenance_busy() {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 if self.core_busy() {
                     return Task::none();
                 }
@@ -972,19 +1249,16 @@ impl App {
                         self.on_core_started_ok()
                     }
                     Err(e) => {
+                        let detail = redact_log_line(&e);
                         self.core_running = false;
                         self.force_stop_after_start = false;
                         self.log_lines
-                            .push_back(format!("[GUI] Error starting core: {}", e));
-                        self.toast_error(e);
+                            .push_back(format!("[GUI] Error starting core: {detail}"));
+                        self.toast_error(self.tr("core_start_failed").to_string() + ": " + &detail);
                         // Drop pending restart so we don't loop on a broken config.
                         self.pending_core_restart = false;
                         if self.pending_exit {
-                            if sysproxy::is_system_proxy_owned() {
-                                let _ =
-                                    sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
-                            }
-                            return iced::exit();
+                            return self.continue_exit();
                         }
                         Task::none()
                     }
@@ -993,42 +1267,40 @@ impl App {
             Message::CoreStopFinished => {
                 self.core_stopping = false;
                 self.on_core_stopped_cleanup();
-                if self.pending_exit {
-                    if sysproxy::is_system_proxy_owned() {
-                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
-                    }
-                    return iced::exit();
+                if self.pending_update.is_some() {
+                    return self.continue_update_install();
                 }
-
-                if let Some(path) = self.pending_update_path.take() {
-                    if sysproxy::is_system_proxy_owned() {
-                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
-                    }
-                    match apply_update_and_restart(&path) {
-                        Ok(()) => {
-                            self.log_lines
-                                .push_back("[GUI] Update scheduled; exiting to apply.".to_string());
-                            return iced::exit();
-                        }
-                        Err(e) => {
-                            self.log_lines
-                                .push_back(format!("[GUI] Failed to apply update: {}", e));
-                            self.toast_error(format!("Update failed: {}", e));
-                        }
-                    }
+                if self.pending_exit {
+                    return self.continue_exit();
                 }
 
                 if self.pending_core_restart {
                     self.pending_core_restart = false;
                     return self.task_start_core();
                 }
+                if self.gui_config.disable_proxy_on_core_stop
+                    && self.sys_proxy_enabled
+                    && (self.gui_config.system_proxy_owned || sysproxy::is_system_proxy_owned())
+                {
+                    return self
+                        .task_set_system_proxy(false, message::SystemProxyContext::CoreStop);
+                }
                 Task::none()
             }
-            Message::NewLogLine(line) => {
-                self.log_lines.push_back(line);
-                // When the GUI log window oversize its cap, drop the oldest 10%
-                // entries in a single drain (one memmove) to keep memory bounded
-                // without paying per-line overhead on every message.
+            Message::NewLogBatch(lines) => {
+                for line in lines {
+                    if line.contains("Downloading sing-box core") {
+                        self.core_install_state = state::CoreInstallState::Downloading;
+                    } else if line.contains("Verifying core") {
+                        self.core_install_state = state::CoreInstallState::Verifying;
+                    } else if line.contains("Extracting core") {
+                        self.core_install_state = state::CoreInstallState::Extracting;
+                    } else if line.contains("Installing core") {
+                        self.core_install_state = state::CoreInstallState::Installing;
+                    }
+                    self.log_lines
+                        .push_back(truncate_log_line(&redact_log_line(&line)));
+                }
                 while self.log_lines.len() > MAX_LOG_LINES {
                     self.log_lines.pop_front();
                 }
@@ -1067,16 +1339,15 @@ impl App {
             Message::LogsExported(Ok(path)) => {
                 self.log_lines
                     .push_back(format!("[GUI] Logs exported to {}", path));
-                self.toast_success(if self.gui_config.language == state::Language::Zh {
-                    format!("日志已导出: {}", path)
-                } else {
-                    format!("Logs exported: {}", path)
-                });
-                open_path_in_system(std::path::Path::new(&path));
-                Task::none()
+                self.toast_success(self.tr("logs_exported").replace("{}", &path));
+                task_open_path(std::path::PathBuf::from(path))
             }
             Message::LogsExported(Err(e)) => {
-                self.toast_error(e);
+                self.toast_error(format!(
+                    "{}: {}",
+                    self.tr("logs_export_failed"),
+                    redact_log_line(&e)
+                ));
                 Task::none()
             }
             Message::CoreVersionFetched(Ok(ver)) => {
@@ -1088,14 +1359,12 @@ impl App {
                 Task::none()
             }
             Message::AutoUpdateIntervalChanged(hours) => {
-                self.gui_config.auto_update_interval_hours = hours;
-                self.config_dirty = true;
+                self.settings_draft.auto_update_interval_hours = hours;
                 Task::none()
             }
             Message::ToggleDisableProxyOnCoreStop => {
-                self.gui_config.disable_proxy_on_core_stop =
-                    !self.gui_config.disable_proxy_on_core_stop;
-                self.config_dirty = true;
+                self.settings_draft.disable_proxy_on_core_stop =
+                    !self.settings_draft.disable_proxy_on_core_stop;
                 Task::none()
             }
             Message::ImportFromClipboard => iced::clipboard::read().map(Message::ClipboardContent),
@@ -1109,11 +1378,7 @@ impl App {
                 Task::done(Message::DownloadSubscription)
             }
             Message::ClipboardContent(None) => {
-                self.toast_info(if self.gui_config.language == state::Language::Zh {
-                    "无法读取剪贴板"
-                } else {
-                    "Could not read clipboard"
-                });
+                self.toast_info(self.tr("clipboard_read_failed"));
                 Task::none()
             }
             Message::ImportLocalFile => Task::perform(
@@ -1132,51 +1397,77 @@ impl App {
             }
             Message::LocalFilePicked(None) => Task::none(),
             Message::TriggerCoreDownload => {
+                if self.app_update_busy() {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
+                if self.core_running || self.core_busy() {
+                    self.toast_info(self.tr("core_download_requires_stop"));
+                    return Task::none();
+                }
+                if !matches!(
+                    &self.core_install_state,
+                    state::CoreInstallState::Idle
+                        | state::CoreInstallState::Installed
+                        | state::CoreInstallState::Error(_)
+                ) {
+                    return Task::none();
+                }
                 let log_tx = get_log_tx();
                 self.log_lines
                     .push_back("[GUI] Starting sing-box core download...".to_string());
-                self.core_install_msg = Some("Downloading...".to_string());
+                self.core_install_state = state::CoreInstallState::Downloading;
                 Task::perform(
                     async move { core::download_core(log_tx, false).await },
                     Message::CoreDownloaded,
                 )
             }
             Message::ForceCoreDownload => {
+                if self.app_update_busy() {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
+                if self.core_running || self.core_busy() {
+                    self.toast_info(self.tr("core_download_requires_stop"));
+                    return Task::none();
+                }
+                if !matches!(
+                    &self.core_install_state,
+                    state::CoreInstallState::Idle
+                        | state::CoreInstallState::Installed
+                        | state::CoreInstallState::Error(_)
+                ) {
+                    return Task::none();
+                }
                 let log_tx = get_log_tx();
                 self.log_lines
                     .push_back("[GUI] Force reinstalling sing-box core...".to_string());
-                self.core_install_msg = Some("Reinstalling...".to_string());
+                self.core_install_state = state::CoreInstallState::Downloading;
                 Task::perform(
                     async move { core::download_core(log_tx, true).await },
                     Message::CoreDownloaded,
                 )
             }
             Message::LatencyTestUrlChanged(url) => {
-                self.gui_config.latency_test_url = url;
-                self.config_dirty = true;
+                self.settings_draft.latency_test_url = url;
+                self.settings_errors.remove("latency_url");
                 Task::none()
             }
             Message::LatencyTestTimeoutChanged(s) => {
-                if let Ok(ms) = s.parse::<u32>() {
-                    self.gui_config.latency_test_timeout_ms = ms.clamp(500, 30_000);
-                    self.config_dirty = true;
-                }
+                self.settings_draft.latency_test_timeout_ms = s;
+                self.settings_errors.remove("latency_timeout");
                 Task::none()
             }
             Message::CoreDownloaded(res) => {
                 match res {
                     Ok(_) => {
                         self.core_installed = true;
-                        self.core_install_msg = None;
+                        self.core_install_state = state::CoreInstallState::Installed;
                         self.log_lines.push_back(
                             "[GUI] sing-box core downloaded and installed successfully."
                                 .to_string(),
                         );
-                        self.toast_success(if self.gui_config.language == state::Language::Zh {
-                            "内核下载安装成功"
-                        } else {
-                            "Core downloaded successfully"
-                        });
+                        self.toast_success(self.tr("core_download_success"));
                         let cfg = self.gui_config.clone();
                         return Task::perform(
                             async move {
@@ -1189,47 +1480,27 @@ impl App {
                         );
                     }
                     Err(e) => {
-                        self.core_install_msg = Some(e.clone());
+                        let detail = redact_log_line(&e);
+                        self.core_install_state = state::CoreInstallState::Error(detail.clone());
                         self.log_lines
-                            .push_back(format!("[GUI ERROR] Failed to download core: {}", e));
-                        self.toast_error(e);
+                            .push_back(format!("[GUI ERROR] Failed to download core: {detail}"));
+                        self.toast_error(
+                            self.tr("core_install_failed").to_string() + ": " + &detail,
+                        );
                     }
                 }
                 Task::none()
             }
             Message::TrafficUpdated { up, down } => {
-                if self.current_speed.up == up && self.current_speed.down == down {
-                    return Task::none();
-                }
                 self.current_speed = Bandwidth { up, down };
-                self.speed_history.push((up, down));
-                if self.speed_history.len() > 30 {
-                    let excess = self.speed_history.len() - 30;
-                    self.speed_history.drain(..excess);
-                }
                 Task::none()
             }
             Message::ToggleSystemProxy => {
-                let target = !self.sys_proxy_enabled;
-                match sysproxy::set_system_proxy(target, self.gui_config.mixed_port) {
-                    Ok(_) => {
-                        self.sys_proxy_enabled = target;
-                        self.gui_config.system_proxy_enabled = target;
-                        self.config_dirty = true;
-                        self.log_lines
-                            .push_back(format!("[GUI] System proxy toggled to: {}", target));
-                    }
-                    Err(e) => {
-                        self.log_lines
-                            .push_back(format!("[GUI] System proxy error: {}", e));
-                        self.toast_error(if self.gui_config.language == state::Language::Zh {
-                            format!("系统代理切换失败: {}", e)
-                        } else {
-                            format!("System proxy error: {}", e)
-                        });
-                    }
+                if self.system_proxy_busy {
+                    return Task::none();
                 }
-                Task::none()
+                let target = !self.sys_proxy_enabled;
+                self.task_set_system_proxy(target, message::SystemProxyContext::Manual)
             }
             Message::SubscriptionInputChanged(url) => {
                 self.url_input = url;
@@ -1280,10 +1551,12 @@ impl App {
                 self.downloading = false;
                 let mut load_nodes = false;
                 if let Some(err) = error {
-                    self.profile_error = Some(err.clone());
+                    let detail = redact_log_line(&err);
+                    self.profile_error =
+                        Some(format!("{}: {detail}", self.tr("profile_download_failed")));
                     self.log_lines
-                        .push_back(format!("[GUI] Download failed: {}", err));
-                    self.toast_error(err);
+                        .push_back(format!("[GUI] Download failed: {detail}"));
+                    self.toast_error(format!("{}: {detail}", self.tr("profile_download_failed")));
                 } else {
                     self.profile_error = None;
                     self.url_input.clear();
@@ -1339,8 +1612,6 @@ impl App {
                         self.config_dirty = true;
                     }
 
-                    self.sync_input_buffers();
-
                     if self.gui_config.active_profile_id.is_none() && !id.is_empty() {
                         self.gui_config.active_profile_id = Some(id.clone());
                         self.config_dirty = true;
@@ -1351,10 +1622,11 @@ impl App {
                     self.toast_success(self.tr("toast_sub_ok"));
                 }
                 let next_update = self.kick_pending_auto_update();
+                let save_task = self.start_config_save();
                 if load_nodes {
-                    Task::batch(vec![self.load_active_nodes_task(), next_update])
+                    Task::batch(vec![self.load_active_nodes_task(), next_update, save_task])
                 } else {
-                    next_update
+                    Task::batch(vec![next_update, save_task])
                 }
             }
             Message::SelectProfile(id) => {
@@ -1367,7 +1639,12 @@ impl App {
                 self.log_lines
                     .push_back("[GUI] Active profile updated.".to_string());
                 self.toast_success(self.tr("profile_selected_toast"));
-                Task::batch(vec![self.load_active_nodes_task(), self.restart_core()])
+                let save_task = self.start_config_save();
+                Task::batch(vec![
+                    save_task,
+                    self.load_active_nodes_task(),
+                    self.restart_core(),
+                ])
             }
             Message::ActiveNodesLoaded { profile_id, result } => {
                 if self.gui_config.active_profile_id.as_deref() != Some(profile_id.as_str()) {
@@ -1384,6 +1661,10 @@ impl App {
                 Task::none()
             }
             Message::RequestDeleteProfile(id) => {
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 self.confirm_delete_profile_id = Some(id);
                 Task::none()
             }
@@ -1392,41 +1673,69 @@ impl App {
                 Task::none()
             }
             Message::ConfirmDeleteProfile => {
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    self.confirm_delete_profile_id = None;
+                    return Task::none();
+                }
                 if let Some(id) = self.confirm_delete_profile_id.take() {
                     let path = config::get_profile_path(&id);
-                    let _ = std::fs::remove_file(path);
-
                     let was_active = self.gui_config.active_profile_id.as_ref() == Some(&id);
-                    self.gui_config.subscriptions.retain(|p| p.id != id);
-                    if was_active {
-                        self.gui_config.active_profile_id = None;
-                        self.active_profile_nodes.clear();
-                    }
-                    self.config_dirty = true;
-                    self.log_lines
-                        .push_back("[GUI] Profile deleted.".to_string());
-                    self.toast_success(self.tr("toast_profile_deleted"));
-
-                    // Active profile deleted while core runs → stop to avoid orphan config.
-                    if was_active {
-                        self.pending_core_restart = false;
-                        if self.core_starting {
-                            self.force_stop_after_start = true;
-                            self.toast_info(self.tr("toast_core_stopped_profile_deleted"));
-                        } else if self.core_running && !self.core_stopping {
-                            self.toast_info(self.tr("toast_core_stopped_profile_deleted"));
-                            return self.task_stop_core();
-                        }
-                    }
+                    return Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || remove_profile_file(&path))
+                                .await
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result)
+                        },
+                        move |result| Message::ProfileDeleteFinished {
+                            id,
+                            was_active,
+                            result,
+                        },
+                    );
                 }
                 Task::none()
+            }
+            Message::ProfileDeleteFinished {
+                id,
+                was_active,
+                result,
+            } => {
+                if let Err(error) = result {
+                    self.toast_error(format!("{}: {error}", self.tr("profile_delete_failed")));
+                    return Task::none();
+                }
+                self.gui_config.subscriptions.retain(|p| p.id != id);
+                if was_active {
+                    self.gui_config.active_profile_id = None;
+                    self.active_profile_nodes.clear();
+                }
+                self.config_dirty = true;
+                self.log_lines
+                    .push_back("[GUI] Profile deleted.".to_string());
+                self.toast_success(self.tr("toast_profile_deleted"));
+                let save_task = self.start_config_save();
+
+                // Active profile deleted while core runs → stop to avoid orphan config.
+                if was_active {
+                    self.pending_core_restart = false;
+                    if self.core_starting {
+                        self.force_stop_after_start = true;
+                        self.toast_info(self.tr("toast_core_stopped_profile_deleted"));
+                    } else if self.core_running && !self.core_stopping {
+                        self.toast_info(self.tr("toast_core_stopped_profile_deleted"));
+                        return Task::batch(vec![save_task, self.task_stop_core()]);
+                    }
+                }
+                save_task
             }
             Message::SelectNode(tag) => {
                 if !self.core_running {
                     self.selected_node_tag = Some(tag.clone());
                     self.gui_config.selected_node_tag = Some(tag.clone());
                     self.config_dirty = true;
-                    return Task::none();
+                    return self.start_config_save();
                 }
                 let tag_clone = tag.clone();
                 let api_port = self.gui_config.api_port;
@@ -1455,6 +1764,7 @@ impl App {
                     self.config_dirty = true;
                     self.log_lines
                         .push_back(format!("[GUI] Selected node: {}", tag));
+                    return self.start_config_save();
                 }
                 Task::none()
             }
@@ -1463,7 +1773,7 @@ impl App {
                     self.toast_info(self.tr("toast_start_core_first"));
                     return Task::none();
                 }
-                if self.active_profile_nodes.is_empty() {
+                if !self.active_profile_nodes.iter().any(|node| node.selectable) {
                     self.toast_info(self.tr("toast_no_nodes"));
                     return Task::none();
                 }
@@ -1477,6 +1787,7 @@ impl App {
                 let tasks = self
                     .active_profile_nodes
                     .iter()
+                    .filter(|node| node.selectable)
                     .map(|node| {
                         let tag = node.name.clone();
                         let test_url = test_url.clone();
@@ -1513,6 +1824,10 @@ impl App {
                 Task::none()
             }
             Message::UpdateSubscription(id) => {
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 self.confirm_delete_profile_id = None;
                 let sub = self.gui_config.subscriptions.iter().find(|p| p.id == id);
                 if let Some(profile) = sub {
@@ -1520,8 +1835,10 @@ impl App {
                     let id_clone = id.clone();
                     self.downloading = true;
                     self.profile_error = None;
-                    self.log_lines
-                        .push_back(format!("[GUI] Updating subscription: {}", url));
+                    self.log_lines.push_back(format!(
+                        "[GUI] Updating subscription: {}",
+                        ui::profiles::mask_sensitive_url(&url)
+                    ));
 
                     Task::perform(
                         async move { fetch_and_save_subscription(url, id_clone).await },
@@ -1565,20 +1882,21 @@ impl App {
                 self.theme_check_counter = self.theme_check_counter.wrapping_add(1);
 
                 let mut tasks = Vec::new();
-                if self.config_dirty && !self.config_save_in_flight {
-                    let cfg = self.gui_config.clone();
-                    self.config_dirty = false;
-                    self.config_save_in_flight = true;
-                    tasks.push(Task::perform(
-                        async move {
-                            tokio::task::spawn_blocking(move || config::save_gui_config(&cfg))
-                                .await
-                                .map_err(|e| e.to_string())
-                                .and_then(|result| result)
-                        },
-                        Message::ConfigSaved,
-                    ));
+                let retry_ready = self
+                    .config_save_retry_at
+                    .is_none_or(|deadline| std::time::Instant::now() >= deadline);
+                if self.config_dirty
+                    && !self.config_save_in_flight
+                    && !self.autostart_busy
+                    && retry_ready
+                {
+                    tasks.push(self.start_config_save());
                 }
+
+                // Advance the chart exactly once per wall-clock tick. Traffic
+                // events only update the latest sample, so zero or constant
+                // speeds no longer freeze the time axis.
+                advance_speed_history(&mut self.speed_history, &self.current_speed);
 
                 // Lock-free fast path; during async start/stop prefer the transition flags.
                 if !self.core_busy() {
@@ -1666,14 +1984,187 @@ impl App {
 
                 Task::batch(tasks)
             }
-            Message::ConfigSaved(result) => {
+            Message::ConfigSaved {
+                saved_config,
+                result,
+            } => {
                 self.config_save_in_flight = false;
-                if let Err(error) = result {
-                    self.config_dirty = true;
-                    self.log_lines
-                        .push_back(format!("[GUI] Failed to save settings: {error}"));
+                let mut tasks = vec![self.refresh_config_preview()];
+                match result {
+                    Ok(()) => {
+                        self.config_save_failures = 0;
+                        self.config_save_retry_at = None;
+                        self.config_dirty = self.gui_config != saved_config;
+                        if self.config_dirty {
+                            tasks.push(self.start_config_save());
+                        } else if self.pending_update.is_some() {
+                            tasks.push(self.continue_update_install());
+                        } else if self.pending_exit {
+                            tasks.push(self.continue_exit());
+                        } else {
+                            if self.pending_settings_save_feedback
+                                && !self.pending_proxy_reapply_after_save
+                            {
+                                self.pending_settings_save_feedback = false;
+                                self.toast_success(self.tr("settings_saved_toast"));
+                            }
+                            if self.pending_proxy_reapply_after_save {
+                                self.pending_proxy_reapply_after_save = false;
+                                tasks.push(self.task_set_system_proxy(
+                                    true,
+                                    message::SystemProxyContext::SettingsReapply,
+                                ));
+                            } else if self.pending_restart_after_save {
+                                self.pending_restart_after_save = false;
+                                tasks.push(self.restart_core());
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        self.config_dirty = true;
+                        self.config_save_failures = self.config_save_failures.saturating_add(1);
+                        let exponent = self.config_save_failures.saturating_sub(1).min(5);
+                        let delay_secs = 2u64.saturating_pow(exponent).min(60);
+                        self.config_save_retry_at = Some(
+                            std::time::Instant::now() + std::time::Duration::from_secs(delay_secs),
+                        );
+                        let should_log = self.last_config_save_log_at.is_none_or(|last| {
+                            last.elapsed() >= std::time::Duration::from_secs(30)
+                        });
+                        if should_log {
+                            self.last_config_save_log_at = Some(std::time::Instant::now());
+                            self.log_lines
+                                .push_back(format!("[GUI] Failed to save settings: {error}"));
+                        }
+                        if self.pending_exit {
+                            self.pending_exit = false;
+                            self.toast_error(format!("{}: {error}", self.tr("config_save_failed")));
+                        } else if let Some(pending) = self.pending_update.take() {
+                            tasks.push(self.fail_pending_update(
+                                pending,
+                                format!("{}: {error}", self.tr("config_save_failed")),
+                            ));
+                        }
+                    }
                 }
-                self.refresh_config_preview()
+                Task::batch(tasks)
+            }
+            Message::StartupSystemProxyChecked(result) => {
+                match result {
+                    Ok(enabled) => {
+                        self.sys_proxy_enabled = enabled;
+                        let owned = enabled && self.gui_config.system_proxy_owned;
+                        sysproxy::restore_system_proxy_owned(owned);
+                        if self.gui_config.system_proxy_enabled != enabled
+                            || self.gui_config.system_proxy_owned != owned
+                        {
+                            self.gui_config.system_proxy_enabled = enabled;
+                            self.gui_config.system_proxy_owned = owned;
+                            self.config_dirty = true;
+                            return self.start_config_save();
+                        }
+                    }
+                    Err(error) => self
+                        .log_lines
+                        .push_back(format!("[GUI] Failed to detect system proxy: {error}")),
+                }
+                Task::none()
+            }
+            Message::AutostartSetFinished { target, result } => {
+                self.autostart_busy = false;
+                match result {
+                    Ok(()) => {
+                        self.settings_draft = RuntimeSettingsDraft::from_config(&self.gui_config);
+                        let save_task = self.start_config_save();
+                        if self.pending_exit {
+                            Task::batch(vec![save_task, self.continue_exit()])
+                        } else {
+                            save_task
+                        }
+                    }
+                    Err(error) => {
+                        self.gui_config.start_on_boot = !target;
+                        self.settings_draft.start_on_boot = !target;
+                        self.settings_errors
+                            .insert("autostart", "autostart_apply_failed");
+                        self.toast_error(format!("{}: {error}", self.tr("autostart_apply_failed")));
+                        self.pending_exit = false;
+                        self.start_config_save()
+                    }
+                }
+            }
+            Message::SystemProxySetFinished {
+                target,
+                context,
+                result,
+            } => {
+                self.system_proxy_busy = false;
+                match result {
+                    Ok(()) => {
+                        self.sys_proxy_enabled = target;
+                        let proxy_config_changed = self.gui_config.system_proxy_enabled != target
+                            || self.gui_config.system_proxy_owned != target;
+                        self.gui_config.system_proxy_enabled = target;
+                        self.gui_config.system_proxy_owned = target;
+                        sysproxy::restore_system_proxy_owned(target);
+                        self.config_dirty |= proxy_config_changed;
+                        self.log_lines.push_back(format!(
+                            "[GUI] System proxy changed to {target} ({context:?})."
+                        ));
+                        if context == message::SystemProxyContext::Exit {
+                            return self.continue_exit();
+                        }
+                        if context == message::SystemProxyContext::Update {
+                            return self.continue_update_install();
+                        }
+                        if context == message::SystemProxyContext::SettingsReapply {
+                            if self.pending_settings_save_feedback {
+                                self.pending_settings_save_feedback = false;
+                                self.toast_success(self.tr("settings_saved_toast"));
+                            }
+                            if self.pending_restart_after_save {
+                                self.pending_restart_after_save = false;
+                                return self.restart_core();
+                            }
+                        }
+                        self.start_config_save()
+                    }
+                    Err(error) => {
+                        self.log_lines.push_back(format!(
+                            "[GUI] Failed to change system proxy ({context:?}): {error}"
+                        ));
+                        self.toast_error(format!(
+                            "{}: {error}",
+                            self.tr("system_proxy_apply_failed")
+                        ));
+                        if context == message::SystemProxyContext::Exit {
+                            self.pending_exit = false;
+                        }
+                        if context == message::SystemProxyContext::SettingsReapply {
+                            self.pending_settings_save_feedback = false;
+                            self.sys_proxy_enabled = false;
+                            self.gui_config.system_proxy_enabled = false;
+                            self.gui_config.system_proxy_owned = false;
+                            sysproxy::restore_system_proxy_owned(false);
+                            self.config_dirty = true;
+                            let save_task = self.start_config_save();
+                            if self.pending_restart_after_save {
+                                self.pending_restart_after_save = false;
+                                return Task::batch(vec![save_task, self.restart_core()]);
+                            }
+                            return save_task;
+                        }
+                        if context == message::SystemProxyContext::Update
+                            && let Some(pending) = self.pending_update.take()
+                        {
+                            return self.fail_pending_update(
+                                pending,
+                                format!("{}: {error}", self.tr("system_proxy_apply_failed")),
+                            );
+                        }
+                        Task::none()
+                    }
+                }
             }
             Message::SystemThemeDetected(is_light) => {
                 self.cached_system_is_light = is_light;
@@ -1686,16 +2177,17 @@ impl App {
                     && !self.core_running
                     && let Some(msg) = core::take_unexpected_core_exit()
                 {
-                    self.log_lines.push_back(format!("[GUI] {}", msg));
-                    self.toast_error(msg);
+                    let detail = redact_log_line(&msg);
+                    self.log_lines.push_back(format!("[GUI] {detail}"));
+                    self.toast_error(format!("{}: {detail}", self.tr("core_unexpected_exit")));
                     if self.gui_config.disable_proxy_on_core_stop
                         && self.sys_proxy_enabled
-                        && sysproxy::is_system_proxy_owned()
+                        && (self.gui_config.system_proxy_owned || sysproxy::is_system_proxy_owned())
                     {
-                        let _ = sysproxy::set_system_proxy(false, self.gui_config.mixed_port);
-                        self.sys_proxy_enabled = false;
-                        self.gui_config.system_proxy_enabled = false;
-                        self.config_dirty = true;
+                        return self.task_set_system_proxy(
+                            false,
+                            message::SystemProxyContext::UnexpectedCoreStop,
+                        );
                     }
                     if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
                         let _ = cancel_tx.send(());
@@ -1761,16 +2253,16 @@ impl App {
             Message::ConnectionClosed(Err(e)) => {
                 self.log_lines
                     .push_back(format!("[GUI] Failed to close connection: {}", e));
-                self.toast_error(e);
+                self.toast_error(format!(
+                    "{}: {}",
+                    self.tr("connection_close_failed"),
+                    redact_log_line(&e)
+                ));
                 Task::none()
             }
             Message::CloseAllConnections => {
                 if !self.core_running {
-                    self.toast_info(if self.gui_config.language == state::Language::Zh {
-                        "内核未运行"
-                    } else {
-                        "Core is not running"
-                    });
+                    self.toast_info(self.tr("core_not_running"));
                     return Task::none();
                 }
                 let api_port = self.gui_config.api_port;
@@ -1783,61 +2275,51 @@ impl App {
                 self.active_connections.clear();
                 self.log_lines
                     .push_back("[GUI] Closed all connections.".to_string());
-                self.toast_success(if self.gui_config.language == state::Language::Zh {
-                    "已关闭全部连接"
-                } else {
-                    "All connections closed"
-                });
+                self.toast_success(self.tr("all_connections_closed"));
                 Task::none()
             }
             Message::AllConnectionsClosed(Err(e)) => {
                 self.log_lines
                     .push_back(format!("[GUI] Failed to close all connections: {}", e));
-                self.toast_error(e);
+                self.toast_error(format!(
+                    "{}: {}",
+                    self.tr("connections_close_failed"),
+                    redact_log_line(&e)
+                ));
                 Task::none()
             }
             Message::RoutingModeChanged(mode) => {
                 self.gui_config.routing_mode = mode;
                 self.config_dirty = true;
                 let mode_label = mode.as_clash_mode();
+                let save_task = self.start_config_save();
                 if self.core_running {
                     let api_port = self.gui_config.api_port;
                     let mode_str = mode_label.to_string();
-                    Task::perform(
+                    let api_task = Task::perform(
                         async move { api::set_mode(api_port, &mode_str).await.map(|_| mode_str) },
                         Message::ModeSet,
-                    )
+                    );
+                    Task::batch(vec![save_task, api_task])
                 } else {
                     self.log_lines.push_back(format!(
                         "[GUI] Routing mode set to {} (will apply on next core start).",
                         mode_label
                     ));
-                    self.toast_success(if self.gui_config.language == state::Language::Zh {
-                        format!("路由模式已设为 {}（下次启动生效）", mode_label)
-                    } else {
-                        format!("Routing mode set to {} (applies on next start)", mode_label)
-                    });
-                    Task::none()
+                    self.toast_success(self.tr("routing_mode_pending").replace("{}", mode_label));
+                    save_task
                 }
             }
             Message::ModeSet(Ok(mode)) => {
                 self.log_lines
                     .push_back(format!("[GUI] Routing mode switched to {}.", mode));
-                self.toast_success(if self.gui_config.language == state::Language::Zh {
-                    format!("路由模式已切换为 {}", mode)
-                } else {
-                    format!("Routing mode: {}", mode)
-                });
+                self.toast_success(self.tr("routing_mode_switched").replace("{}", &mode));
                 Task::none()
             }
             Message::ModeSet(Err(e)) => {
                 self.log_lines
                     .push_back(format!("[GUI] Failed to set routing mode: {}", e));
-                self.toast_error(if self.gui_config.language == state::Language::Zh {
-                    format!("切换路由模式失败: {}", e)
-                } else {
-                    format!("Failed to set mode: {}", e)
-                });
+                self.toast_error(self.tr("routing_mode_failed").replace("{}", &e));
                 Task::none()
             }
             Message::DismissToast => {
@@ -1847,105 +2329,75 @@ impl App {
 
             // New type-safe configuration messages
             Message::MixedPortChanged(val) => {
-                self.mixed_port_input_str = val;
+                self.settings_draft.mixed_port = val;
+                self.settings_errors.remove("mixed_port");
                 Task::none()
             }
             Message::ApiPortChanged(val) => {
-                self.api_port_input_str = val;
+                self.settings_draft.api_port = val;
+                self.settings_errors.remove("api_port");
                 Task::none()
             }
             Message::DnsLocalChanged(val) => {
-                self.dns_server_local_input_str = val;
+                self.settings_draft.dns_server_local = val;
+                self.settings_errors.remove("dns_local");
                 Task::none()
             }
             Message::DnsRemoteChanged(val) => {
-                self.dns_server_remote_input_str = val;
+                self.settings_draft.dns_server_remote = val;
+                self.settings_errors.remove("dns_remote");
                 Task::none()
             }
             Message::CorePathChanged(val) => {
-                self.core_path_input_str = val.clone();
-                let trimmed = val.trim();
-                if trimmed.is_empty() {
-                    self.gui_config.core_path = None;
-                } else {
-                    self.gui_config.core_path = Some(trimmed.to_string());
-                }
-                self.core_installed = core::is_core_installed(&self.gui_config);
+                self.settings_draft.core_path = val;
+                self.settings_errors.remove("core_path");
                 Task::none()
             }
             Message::ClearCorePath => {
-                self.core_path_input_str.clear();
-                self.gui_config.core_path = None;
-                self.core_installed = core::is_core_installed(&self.gui_config);
-                self.config_dirty = true;
-                self.toast_info(if self.gui_config.language == state::Language::Zh {
-                    "已恢复默认内核路径"
-                } else {
-                    "Restored default core path"
-                });
+                self.settings_draft.core_path.clear();
+                self.settings_errors.remove("core_path");
+                self.toast_info(self.tr("core_path_default_draft"));
                 Task::none()
             }
             Message::ToggleTun => {
-                self.gui_config.tun_mode = !self.gui_config.tun_mode;
-                self.config_dirty = true;
-                // Admin-elevation sanity check: TUN inbound needs CAP_NET_ADMIN /
-                // the Windows wintun driver via an elevated process. Tell the user
-                // *now* instead of letting them discover it from a FATAL toast.
-                if self.gui_config.tun_mode && !platform::is_running_elevated() {
-                    self.toast_info(if self.gui_config.language == state::Language::Zh {
-                        "TUN 模式需要管理员权限，内核可能启动失败。请以管理员身份重启本程序。"
-                    } else {
-                        "TUN mode requires Administrator privileges. Restart this app elevated to enable it."
-                    });
-                }
-                self.restart_core()
+                self.settings_draft.tun_mode = !self.settings_draft.tun_mode;
+                Task::none()
             }
             Message::ToggleAutostart => {
-                let target = !self.gui_config.start_on_boot;
-                match platform::set_autostart(target) {
-                    Ok(()) => {
-                        self.gui_config.start_on_boot = target;
-                        self.config_dirty = true;
-                    }
-                    Err(e) => self.toast_error(e),
-                }
+                self.settings_draft.start_on_boot = !self.settings_draft.start_on_boot;
+                self.settings_errors.remove("autostart");
                 Task::none()
             }
             Message::ToggleAutoStartCore => {
-                self.gui_config.auto_start_core = !self.gui_config.auto_start_core;
-                self.config_dirty = true;
+                self.settings_draft.auto_start_core = !self.settings_draft.auto_start_core;
                 Task::none()
             }
             Message::ToggleAutoSysProxy => {
-                self.gui_config.auto_sys_proxy = !self.gui_config.auto_sys_proxy;
-                self.config_dirty = true;
+                self.settings_draft.auto_sys_proxy = !self.settings_draft.auto_sys_proxy;
                 Task::none()
             }
             Message::SetLanguage(lang) => {
                 self.gui_config.language = lang;
                 self.config_dirty = true;
                 self.update_tray_menu();
-                Task::none()
+                self.start_config_save()
             }
             Message::SetTheme(theme) => {
                 self.gui_config.theme = theme;
                 self.config_dirty = true;
-                Task::none()
+                self.start_config_save()
             }
-            Message::OpenDataDir => {
-                open_path_in_system(&config::get_app_dir());
-                Task::none()
-            }
-            Message::OpenProfilesFolder => {
-                open_path_in_system(&config::get_app_dir().join("profiles"));
-                Task::none()
-            }
+            Message::OpenDataDir => task_open_path(config::get_app_dir()),
+            Message::OpenProfilesFolder => task_open_path(config::get_app_dir().join("profiles")),
             Message::EditProfile(id) => {
                 let path = config::get_profile_path(&id);
-                open_path_in_system(&path);
-                Task::none()
+                task_open_path(path)
             }
             Message::StartEditProfile(id) => {
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 if let Some(profile) = self.gui_config.subscriptions.iter().find(|p| p.id == id) {
                     self.editing_profile_id = Some(id);
                     self.editing_profile_name = profile.name.clone();
@@ -1962,18 +2414,40 @@ impl App {
                 Task::none()
             }
             Message::SaveProfileEdit => {
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 if let Some(id) = self.editing_profile_id.clone() {
+                    let name = self.editing_profile_name.trim().to_string();
+                    let url = self.editing_profile_url.trim().to_string();
+                    if name.is_empty() {
+                        self.toast_error(self.tr("profile_name_required"));
+                        return Task::none();
+                    }
+                    if !is_valid_profile_source(&url) {
+                        self.toast_error(self.tr("profile_url_invalid"));
+                        return Task::none();
+                    }
                     if let Some(profile) = self
                         .gui_config
                         .subscriptions
                         .iter_mut()
                         .find(|p| p.id == id)
                     {
-                        profile.name = self.editing_profile_name.clone();
-                        profile.url = self.editing_profile_url.clone();
+                        let url_changed = profile.url != url;
+                        profile.name = name;
+                        profile.url = url;
                         self.config_dirty = true;
+                        if url_changed {
+                            self.toast_info(self.tr("profile_url_update_required"));
+                        }
                     }
                     self.editing_profile_id = None;
+                    // Profile edits are an explicit save action. Persist them
+                    // immediately instead of waiting for the next one-second
+                    // tick (the retry path still handles a transient failure).
+                    return self.start_config_save();
                 }
                 Task::none()
             }
@@ -2016,95 +2490,42 @@ impl App {
                 Task::none()
             }
             Message::ToggleCloseCoreOnExit => {
-                self.gui_config.close_core_on_exit = !self.gui_config.close_core_on_exit;
-                self.config_dirty = true;
+                self.settings_draft.close_core_on_exit = !self.settings_draft.close_core_on_exit;
                 Task::none()
             }
             Message::ToggleFakeIp => {
-                self.gui_config.fake_ip = !self.gui_config.fake_ip;
-                self.config_dirty = true;
-                self.restart_core()
+                self.settings_draft.fake_ip = !self.settings_draft.fake_ip;
+                Task::none()
             }
             Message::ToggleTcpFastOpen => {
-                self.gui_config.tcp_fast_open = !self.gui_config.tcp_fast_open;
-                self.config_dirty = true;
-                self.restart_core()
+                self.settings_draft.tcp_fast_open = !self.settings_draft.tcp_fast_open;
+                Task::none()
             }
             Message::ToggleTcpMultipath => {
-                self.gui_config.tcp_multipath = !self.gui_config.tcp_multipath;
-                self.config_dirty = true;
-                self.restart_core()
+                self.settings_draft.tcp_multipath = !self.settings_draft.tcp_multipath;
+                Task::none()
             }
             Message::SaveSettings => {
-                if self.mixed_port_input_str.trim().is_empty()
-                    || self.api_port_input_str.trim().is_empty()
-                {
-                    let err = self.tr("port_empty_error").to_string();
-                    self.log_lines.push_back(format!("[GUI ERROR] {}", err));
-                    self.core_install_msg = Some(err);
-                    return Task::none();
-                }
-
-                let (mixed_p, api_p) = match (
-                    self.mixed_port_input_str.trim().parse::<u16>(),
-                    self.api_port_input_str.trim().parse::<u16>(),
-                ) {
-                    (Ok(mixed), Ok(api)) => (mixed, api),
-                    _ => {
-                        let err = self.tr("port_invalid_error").to_string();
-                        self.log_lines.push_back(format!("[GUI ERROR] {}", err));
-                        self.core_install_msg = Some(err);
-                        return Task::none();
+                self.pending_settings_save_feedback = true;
+                match self.commit_runtime_settings(false) {
+                    Ok(task) => {
+                        if !self.config_dirty && !self.autostart_busy {
+                            self.pending_settings_save_feedback = false;
+                            self.toast_success(self.tr("settings_saved_toast"));
+                        }
+                        task
                     }
-                };
-
-                // Reject reserved (0..1024) and identical mixed/api ports —
-                // the latter would collide on 127.0.0.1:port and FATAL the core.
-                let reserved_msg = self.tr("port_reserved_error").to_string();
-                if mixed_p < 1024 || api_p < 1024 {
-                    self.log_lines
-                        .push_back(format!("[GUI ERROR] {}", reserved_msg));
-                    self.core_install_msg = Some(reserved_msg);
-                    return Task::none();
+                    Err(()) => {
+                        self.pending_settings_save_feedback = false;
+                        Task::none()
+                    }
                 }
-                if mixed_p == api_p {
-                    let err = self.tr("port_conflict_error").to_string();
-                    self.log_lines.push_back(format!("[GUI ERROR] {}", err));
-                    self.core_install_msg = Some(err);
-                    return Task::none();
-                }
-
-                let dns_local = self.dns_server_local_input_str.trim();
-                let dns_remote = self.dns_server_remote_input_str.trim();
-                if !is_valid_dns_server_address(dns_local)
-                    || !is_valid_dns_server_address(dns_remote)
-                {
-                    let err = self.tr("invalid_dns_server").to_string();
-                    self.log_lines.push_back(format!("[GUI ERROR] {err}"));
-                    self.core_install_msg = Some(err.clone());
-                    self.toast_error(err);
-                    return Task::none();
-                }
-
-                self.core_install_msg = None;
-                self.gui_config.mixed_port = mixed_p;
-                self.gui_config.api_port = api_p;
-                self.gui_config.dns_server_local = dns_local.to_string();
-                self.gui_config.dns_server_remote = dns_remote.to_string();
-                let trimmed_core = self.core_path_input_str.trim();
-                if trimmed_core.is_empty() {
-                    self.gui_config.core_path = None;
-                } else {
-                    self.gui_config.core_path = Some(trimmed_core.to_string());
-                }
-                self.core_installed = core::is_core_installed(&self.gui_config);
-                self.config_dirty = true;
-                self.log_lines
-                    .push_back("[GUI] Settings saved and applied successfully.".to_string());
-                self.toast_success(self.tr("settings_saved_toast"));
-                self.restart_core()
             }
             Message::CheckUpdate => {
+                if self.maintenance_busy() {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 self.update_status = state::UpdateStatus::Checking;
                 Task::perform(check_app_update(), Message::UpdateChecked)
             }
@@ -2116,6 +2537,8 @@ impl App {
                             self.update_status = state::UpdateStatus::NewVersion {
                                 tag: info.tag_name,
                                 download_url: info.download_url,
+                                sha256: info.sha256,
+                                size: info.size,
                             };
                         } else {
                             // Same or lower remote tag, or both unreadable → up-to-date.
@@ -2128,18 +2551,37 @@ impl App {
                 }
                 Task::none()
             }
-            Message::DownloadAppUpdate { tag, url } => {
+            Message::DownloadAppUpdate {
+                tag,
+                url,
+                sha256,
+                size,
+            } => {
+                if self.maintenance_busy() || self.pending_exit {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 self.update_status = state::UpdateStatus::Downloading { tag: tag.clone() };
                 let url_for_msg = url.clone();
-                Task::perform(download_app_update_binary(url), move |result| {
-                    Message::AppUpdateDownloaded {
+                let digest_for_msg = sha256.clone();
+                Task::perform(
+                    download_app_update_binary(tag.clone(), url, sha256, size),
+                    move |result| Message::AppUpdateDownloaded {
                         tag,
                         url: url_for_msg,
+                        sha256: digest_for_msg,
+                        size,
                         result,
-                    }
-                })
+                    },
+                )
             }
-            Message::AppUpdateDownloaded { tag, url, result } => {
+            Message::AppUpdateDownloaded {
+                tag,
+                url,
+                sha256,
+                size,
+                result,
+            } => {
                 match result {
                     Ok(path) => {
                         self.log_lines.push_back(format!(
@@ -2151,8 +2593,15 @@ impl App {
                         // Stop core and clear proxy before replacing the binary.
                         self.force_stop_after_start = false;
                         self.pending_core_restart = false;
-                        self.pending_update_path = Some(path);
-                        self.task_stop_core()
+                        self.pending_update = Some(PendingAppUpdate {
+                            tag: tag.clone(),
+                            url,
+                            sha256,
+                            size,
+                            path,
+                        });
+                        self.update_status = state::UpdateStatus::Installing { tag };
+                        self.continue_update_install()
                     }
                     Err(e) => {
                         self.log_lines
@@ -2161,8 +2610,10 @@ impl App {
                         self.update_status = state::UpdateStatus::NewVersion {
                             tag,
                             download_url: Some(url),
+                            sha256: Some(sha256),
+                            size: Some(size),
                         };
-                        self.toast_error(e);
+                        self.toast_error(self.tr("update_download_failed").replace("{}", &e));
                         Task::none()
                     }
                 }
@@ -2170,8 +2621,12 @@ impl App {
             Message::OpenUrl(url) => {
                 // `open::that` delegates to ShellExecuteW / open / xdg-open
                 // safely, avoiding cmd-shell injection on user-controlled URLs.
-                let _ = open::that(&url);
-                Task::none()
+                Task::perform(
+                    async move {
+                        let _ = tokio::task::spawn_blocking(move || open::that(&url)).await;
+                    },
+                    |_| Message::Tick,
+                )
             }
         }
     }
@@ -2210,16 +2665,13 @@ impl App {
         let active_connections_ref = &self.active_connections;
         let connections_search_ref = &self.connections_search;
         let log_lines_ref = &self.log_lines;
-        let mixed_port_input_str_ref = &self.mixed_port_input_str;
-        let api_port_input_str_ref = &self.api_port_input_str;
-        let dns_server_local_input_str_ref = &self.dns_server_local_input_str;
-        let dns_server_remote_input_str_ref = &self.dns_server_remote_input_str;
-        let core_install_msg_ref = self.core_install_msg.as_deref();
+        let settings_draft_ref = &self.settings_draft;
+        let settings_errors_ref = &self.settings_errors;
+        let core_install_state_ref = &self.core_install_state;
         let update_status_ref = &self.update_status;
         let editing_profile_id_ref = self.editing_profile_id.as_deref();
         let editing_profile_name_ref = &self.editing_profile_name;
         let editing_profile_url_ref = &self.editing_profile_url;
-        let core_path_input_str_ref = &self.core_path_input_str;
         let toast_ref = self.toast.as_ref();
         let log_filter = self.log_filter;
         let log_search_ref = &self.log_search;
@@ -2301,13 +2753,10 @@ impl App {
                 ),
                 Tab::Settings => ui::settings::render(
                     gui_config_ref,
-                    mixed_port_input_str_ref,
-                    api_port_input_str_ref,
-                    dns_server_local_input_str_ref,
-                    dns_server_remote_input_str_ref,
-                    core_path_input_str_ref,
+                    settings_draft_ref,
+                    settings_errors_ref,
                     core_installed,
-                    core_install_msg_ref,
+                    core_install_state_ref,
                     core_version_ref,
                     update_status_ref,
                     config_preview_expanded,
@@ -2394,9 +2843,7 @@ impl App {
                     }
                 };
 
-            let logo_handle = iced::widget::image::Handle::from_bytes(
-                include_bytes!("../assets/app-icon.png").as_slice(),
-            );
+            let logo_handle = self.logo_handle.clone();
             let status_dot_color = if core_running {
                 ui::theme::SUCCESS
             } else {
@@ -2550,7 +2997,7 @@ impl App {
                     .spacing(8)
                     .align_y(Alignment::Center)
                 ])
-                .width(Length::Fixed(224.0))
+                .width(Length::Fixed(216.0))
                 .height(Length::Fill)
                 .padding(20)
                 .style(ui::theme::sidebar_bg)
@@ -2610,6 +3057,7 @@ impl App {
         subs.push(Subscription::run(log_subscription));
         subs.push(Subscription::run(traffic_subscription));
         subs.push(Subscription::run(tray_subscription));
+        subs.push(iced::keyboard::listen().map(Message::KeyboardEvent));
 
         Subscription::batch(subs)
     }
@@ -2646,7 +3094,16 @@ fn log_subscription() -> impl iced::futures::Stream<Item = Message> {
             };
             if let Some(r) = lease.rx.as_mut() {
                 while let Some(line) = r.recv().await {
-                    let _ = output.send(Message::NewLogLine(line)).await;
+                    let mut batch = Vec::with_capacity(32);
+                    batch.push(line);
+                    while batch.len() < 64 {
+                        match r.try_recv() {
+                            Ok(next) => batch.push(next),
+                            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                            | Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                        }
+                    }
+                    let _ = output.send(Message::NewLogBatch(batch)).await;
                     if output.is_closed() {
                         break;
                     }
@@ -2808,6 +3265,7 @@ struct ProfileFetchResult {
 /// Download or open a profile URL/path and write the profile file only.
 /// The GUI thread owns `gui_config` mutations (avoids load/save races).
 async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
+    let url = url.trim().to_string();
     let (content, meta) = load_profile_content(&url).await?;
     config::validate_profile_content(&content)?;
 
@@ -2846,6 +3304,7 @@ async fn fetch_and_save_subscription(
     url: String,
     id: String,
 ) -> Result<ProfileFetchResult, String> {
+    let url = url.trim().to_string();
     let (content, meta) = load_profile_content(&url).await?;
     config::validate_profile_content(&content)?;
     let path = config::get_profile_path(&id);
@@ -2887,6 +3346,10 @@ fn decode_profile_bytes(bytes: &[u8]) -> Result<String, String> {
 }
 
 async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta), String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err("Profile source is empty".to_string());
+    }
     let mut meta = ProfileContentMeta {
         display_name: None,
         traffic_upload: None,
@@ -2895,7 +3358,7 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
         expire_at: None,
     };
 
-    if std::path::Path::new(url).exists() {
+    if std::path::Path::new(url).is_file() {
         let bytes = tokio::fs::read(url)
             .await
             .map_err(|e| format!("Failed to read local file: {}", e))?;
@@ -2904,6 +3367,12 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
         }
         let content = decode_profile_bytes(&bytes)?;
         return Ok((content, meta));
+    }
+
+    let parsed_url = url::Url::parse(url)
+        .map_err(|e| format!("Profile source must be a local file or HTTP(S) URL: {e}"))?;
+    if !matches!(parsed_url.scheme(), "http" | "https") || parsed_url.host_str().is_none() {
+        return Err("Profile source must be a local file or HTTP(S) URL".to_string());
     }
 
     let client = reqwest::Client::builder()
@@ -3087,6 +3556,37 @@ fn normalize_custom_rule(field: state::RuleField, value: &str) -> Result<String,
     }
 }
 
+fn parse_runtime_port(value: &str) -> Result<u16, &'static str> {
+    if value.trim().is_empty() {
+        return Err("port_empty_error");
+    }
+    let port = value
+        .trim()
+        .parse::<u16>()
+        .map_err(|_| "port_invalid_error")?;
+    if port < 1024 {
+        return Err("port_reserved_error");
+    }
+    Ok(port)
+}
+
+fn parse_latency_timeout(value: &str) -> Result<u32, ()> {
+    value
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|timeout| (500..=30_000).contains(timeout))
+        .ok_or(())
+}
+
+fn advance_speed_history(history: &mut Vec<(u64, u64)>, speed: &Bandwidth) {
+    history.push((speed.up, speed.down));
+    if history.len() > 30 {
+        let excess = history.len() - 30;
+        history.drain(..excess);
+    }
+}
+
 fn is_valid_dns_server_address(value: &str) -> bool {
     let value = value.trim();
     if value.is_empty() || value.len() > 2048 || value.chars().any(char::is_whitespace) {
@@ -3114,6 +3614,94 @@ fn is_valid_dns_server_address(value: &str) -> bool {
                     .chars()
                     .all(|character| character.is_alphanumeric() || character == '-')
         })
+}
+
+fn is_valid_profile_source(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 4096 {
+        return false;
+    }
+    if std::path::Path::new(value).is_file() {
+        return true;
+    }
+    url::Url::parse(value)
+        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+}
+
+fn remove_profile_file(path: &std::path::Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn truncate_log_line(line: &str) -> String {
+    if line.chars().count() <= MAX_LOG_LINE_CHARS {
+        return line.to_string();
+    }
+    let mut truncated: String = line.chars().take(MAX_LOG_LINE_CHARS).collect();
+    truncated.push_str(" … [truncated]");
+    truncated
+}
+
+fn redact_log_line(line: &str) -> String {
+    let sensitive_key = |key: &str| {
+        let key = key.to_ascii_lowercase().replace('-', "_");
+        key.contains("token")
+            || key.contains("secret")
+            || key.contains("password")
+            || key.contains("passwd")
+            || key.contains("private_key")
+            || key == "key"
+    };
+    let line = redact_json_segment(line).unwrap_or_else(|| line.to_string());
+    line.split_whitespace()
+        .map(|part| {
+            let url_start = part.find("https://").or_else(|| part.find("http://"));
+            if let Some(prefix_len) = url_start {
+                let candidate = &part[prefix_len..];
+                let trimmed = candidate.trim_end_matches(|c: char| {
+                    matches!(c, '"' | '\'' | ',' | ';' | ')' | ']' | '}' | '.')
+                });
+                if let Ok(parsed) = url::Url::parse(trimmed)
+                    && matches!(parsed.scheme(), "http" | "https")
+                {
+                    let masked = ui::profiles::mask_sensitive_url(trimmed);
+                    let suffix_start = prefix_len.saturating_add(trimmed.len());
+                    return format!("{}{}{}", &part[..prefix_len], masked, &part[suffix_start..]);
+                }
+            }
+            if let Some((key, _value)) = part.split_once('=')
+                && sensitive_key(key.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_'))
+            {
+                return format!("{key}=******");
+            }
+            part.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Redact structured JSON embedded in a core/API log line before the lighter
+/// whitespace-based redaction below. This catches forms such as
+/// `INFO {"password":"...","token":"..."}` that do not contain an `=`
+/// separator and would otherwise be displayed verbatim.
+fn redact_json_segment(line: &str) -> Option<String> {
+    let start = line.find(['{', '['])?;
+    let end = line.rfind(['}', ']'])?;
+    if end < start {
+        return None;
+    }
+    let mut value = serde_json::from_str::<serde_json::Value>(&line[start..=end]).ok()?;
+    config::redact_sensitive_json(&mut value);
+    let replacement = serde_json::to_string(&value).ok()?;
+    Some(format!(
+        "{}{}{}",
+        &line[..start],
+        replacement,
+        &line[end + 1..]
+    ))
 }
 
 #[cfg(test)]
@@ -3242,6 +3830,89 @@ mod tests {
     }
 
     #[test]
+    fn runtime_setting_parsers_enforce_safe_ranges() {
+        assert_eq!(parse_runtime_port("2080"), Ok(2080));
+        assert_eq!(parse_runtime_port(""), Err("port_empty_error"));
+        assert_eq!(parse_runtime_port("80"), Err("port_reserved_error"));
+        assert_eq!(parse_runtime_port("70000"), Err("port_invalid_error"));
+        assert_eq!(parse_latency_timeout("500"), Ok(500));
+        assert_eq!(parse_latency_timeout("30000"), Ok(30_000));
+        assert!(parse_latency_timeout("499").is_err());
+        assert!(parse_latency_timeout("30001").is_err());
+        assert!(parse_latency_timeout("").is_err());
+    }
+
+    #[test]
+    fn zero_and_constant_traffic_advance_the_fixed_history_window() {
+        let mut history = vec![(9, 9); 30];
+        advance_speed_history(&mut history, &Bandwidth { up: 0, down: 0 });
+        assert_eq!(history.len(), 30);
+        assert_eq!(history.last(), Some(&(0, 0)));
+        advance_speed_history(&mut history, &Bandwidth { up: 42, down: 84 });
+        advance_speed_history(&mut history, &Bandwidth { up: 42, down: 84 });
+        assert_eq!(history.len(), 30);
+        assert_eq!(&history[28..], &[(42, 84), (42, 84)]);
+    }
+
+    #[test]
+    fn profile_source_validation_accepts_existing_files_and_http_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profile.yaml");
+        std::fs::write(&path, "proxies: []").unwrap();
+        assert!(is_valid_profile_source(&path.to_string_lossy()));
+        assert!(is_valid_profile_source("https://example.com/sub?token=abc"));
+        assert!(!is_valid_profile_source("ftp://example.com/sub"));
+        assert!(!is_valid_profile_source("not a path or url"));
+    }
+
+    #[test]
+    fn profile_source_validation_rejects_non_http_urls() {
+        assert!(!is_valid_profile_source("ftp://example.com/profile.yaml"));
+        assert!(!is_valid_profile_source("file:///tmp/profile.yaml"));
+    }
+
+    #[test]
+    fn profile_delete_failure_is_reported_without_treating_it_as_success() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(remove_profile_file(&dir.path().join("missing.yaml")).is_ok());
+        assert!(remove_profile_file(dir.path()).is_err());
+    }
+
+    #[test]
+    fn log_redaction_handles_url_punctuation_and_sensitive_keys() {
+        let redacted = redact_log_line(
+            "request=(https://user:pass@example.com/sub?access-token=a%2Fb), private-key=secret",
+        );
+        assert!(!redacted.contains("pass"), "redacted={redacted}");
+        assert!(!redacted.contains("a%2Fb"), "redacted={redacted}");
+        assert!(
+            !redacted.contains("private-key=secret"),
+            "redacted={redacted}"
+        );
+        assert!(redacted.contains("******"));
+    }
+
+    #[test]
+    fn log_redaction_masks_embedded_json_credentials() {
+        let redacted = redact_log_line(
+            r#"INFO {"password":"secret","token":"abc","private-key":"pem","name":"safe"}"#,
+        );
+        assert!(!redacted.contains("secret"));
+        assert!(!redacted.contains("abc"));
+        assert!(!redacted.contains("pem"));
+        assert!(redacted.contains("safe"));
+    }
+
+    #[test]
+    fn ui_log_lines_are_unicode_safe_and_bounded() {
+        let line = "界".repeat(MAX_LOG_LINE_CHARS + 100);
+        let truncated = truncate_log_line(&line);
+        assert!(truncated.ends_with("[truncated]"));
+        assert!(truncated.chars().count() <= MAX_LOG_LINE_CHARS + 16);
+        assert_eq!(truncate_log_line("ok"), "ok");
+    }
+
+    #[test]
     fn window_min_matches_ui_constant() {
         // Keep main window settings aligned with shared tokens.
         assert!(ui::WINDOW_MIN_W < ui::SHELL_COMPACT_W);
@@ -3259,10 +3930,14 @@ mod tests {
             GithubAsset {
                 name: "sing-box-gui-v2026.7.11-windows-amd64.exe".into(),
                 browser_download_url: "https://example.com/win".into(),
+                digest: None,
+                size: None,
             },
             GithubAsset {
                 name: "sing-box-gui-v2026.7.11-linux-amd64".into(),
                 browser_download_url: "https://example.com/linux".into(),
+                digest: None,
+                size: None,
             },
         ];
         assert_eq!(
@@ -3274,6 +3949,46 @@ mod tests {
             Some("https://example.com/linux")
         );
         assert!(pick_release_asset_url(&assets, "macos-universal").is_none());
+    }
+
+    #[test]
+    fn update_asset_url_and_digest_validation_fail_closed() {
+        let tag = "v2026.7.23";
+        let name = expected_update_asset_name(tag);
+        let official = url::Url::parse(&format!(
+            "https://github.com/zangge8855/sing-box-gui/releases/download/{tag}/{name}"
+        ))
+        .unwrap();
+        assert!(is_official_update_asset_url(&official, tag));
+        let wrong_repo = url::Url::parse(&format!(
+            "https://github.com/attacker/sing-box-gui/releases/download/{tag}/{name}"
+        ))
+        .unwrap();
+        assert!(!is_official_update_asset_url(&wrong_repo, tag));
+        let wrong_asset = url::Url::parse(&format!(
+            "https://github.com/zangge8855/sing-box-gui/releases/download/{tag}/SHA256SUMS.txt"
+        ))
+        .unwrap();
+        assert!(!is_official_update_asset_url(&wrong_asset, tag));
+        assert_eq!(
+            normalize_update_digest(&format!("sha256:{}", "A".repeat(64))).unwrap(),
+            "a".repeat(64)
+        );
+        assert!(normalize_update_digest(&"a".repeat(64)).is_err());
+        assert!(normalize_update_digest("sha256:abcd").is_err());
+    }
+
+    #[test]
+    fn updater_scripts_keep_parameterization_cleanup_and_rollback_guards() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("[int]$ProcessId"));
+        assert!(source.contains("-ProcessId"));
+        let forbidden_legacy_parameter = ["[int]", "$", "Pid"].concat();
+        assert!(!source.contains(&forbidden_legacy_parameter));
+        assert!(source.contains("-LiteralPath $Target"));
+        assert!(source.contains("$replaced = $true"));
+        assert!(source.contains("rm -f -- \"$TARGET\""));
+        assert!(source.contains("mv -f -- \"$BACKUP\" \"$TARGET\""));
     }
 
     #[test]
@@ -3295,6 +4010,7 @@ mod tests {
     #[test]
     fn memory_bounds_are_conservative() {
         assert!(MAX_LOG_LINES <= 500);
+        assert!(MAX_LOG_LINE_CHARS <= 4096);
         assert!(MAX_CONNECTION_SNAPSHOT <= 1_000);
         let manifest = include_str!("../Cargo.toml");
         assert!(manifest.contains("default-features = false"));
@@ -3412,12 +4128,13 @@ fn detect_system_theme() -> bool {
     false // Default to dark mode (0)
 }
 
-/// Cheap elevation check so TUN mode can warn the user *before* the core
-/// FATALs on permission denied / missing wintun privileges.
-fn open_path_in_system(path: &std::path::Path) {
-    // Use the `open` crate rather than shelling out to `cmd /c start`, which
-    // mishandles paths containing spaces or shell metacharacters like `&`.
-    let _ = open::that(path);
+fn task_open_path(path: std::path::PathBuf) -> Task<Message> {
+    Task::perform(
+        async move {
+            let _ = tokio::task::spawn_blocking(move || open::that(path)).await;
+        },
+        |_| Message::Tick,
+    )
 }
 
 /// Preferred release asset name fragment for this build target.
@@ -3459,19 +4176,40 @@ fn platform_asset_suffix() -> &'static str {
     }
 }
 
-fn pick_release_asset_url(assets: &[GithubAsset], suffix: &str) -> Option<String> {
-    // Prefer exact suffix match (CI naming), then fallback to contains.
-    assets
-        .iter()
-        .find(|a| a.name.ends_with(suffix))
-        .or_else(|| assets.iter().find(|a| a.name.contains(suffix)))
-        .map(|a| a.browser_download_url.clone())
+fn expected_update_asset_name(tag: &str) -> String {
+    let version = tag.trim().trim_start_matches('v');
+    format!("sing-box-gui-v{version}-{}", platform_asset_suffix())
+}
+
+fn is_official_update_asset_url(url: &url::Url, tag: &str) -> bool {
+    if url.scheme() != "https" || url.host_str() != Some("github.com") {
+        return false;
+    }
+    let mut segments = match url.path_segments() {
+        Some(segments) => segments,
+        None => return false,
+    };
+    let expected_tag = tag.trim();
+    let expected_name = expected_update_asset_name(tag);
+    matches!(segments.next(), Some("zangge8855"))
+        && matches!(segments.next(), Some("sing-box-gui"))
+        && matches!(segments.next(), Some("releases"))
+        && matches!(segments.next(), Some("download"))
+        && segments
+            .next()
+            .is_some_and(|release_tag| release_tag == expected_tag)
+        && segments.next().is_some_and(|asset| asset == expected_name)
+        && segments.next().is_none()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 struct GithubAsset {
     name: String,
     browser_download_url: String,
+    #[serde(default)]
+    digest: Option<String>,
+    #[serde(default)]
+    size: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -3479,6 +4217,14 @@ struct GithubRelease {
     tag_name: String,
     #[serde(default)]
     assets: Vec<GithubAsset>,
+}
+
+#[cfg(test)]
+fn pick_release_asset_url(assets: &[GithubAsset], suffix: &str) -> Option<String> {
+    assets
+        .iter()
+        .find(|asset| asset.name.ends_with(suffix))
+        .map(|asset| asset.browser_download_url.clone())
 }
 
 async fn check_app_update() -> Result<message::AppUpdateInfo, String> {
@@ -3508,16 +4254,45 @@ async fn check_app_update() -> Result<message::AppUpdateInfo, String> {
         .await
         .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
-    let download_url = pick_release_asset_url(&release.assets, platform_asset_suffix());
+    let expected_name = expected_update_asset_name(&release.tag_name);
+    let asset = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == expected_name);
     Ok(message::AppUpdateInfo {
         tag_name: release.tag_name,
-        download_url,
+        download_url: asset.map(|asset| asset.browser_download_url.clone()),
+        sha256: asset.and_then(|asset| asset.digest.clone()),
+        size: asset.and_then(|asset| asset.size),
     })
 }
 
+fn normalize_update_digest(expected_sha256: &str) -> Result<String, String> {
+    let digest = expected_sha256
+        .strip_prefix("sha256:")
+        .filter(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or_else(|| "Update asset is missing a valid SHA-256 digest".to_string())?;
+    Ok(digest.to_ascii_lowercase())
+}
+
 /// Download the release binary to a temp path next to the current executable.
-async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, String> {
+async fn download_app_update_binary(
+    tag: String,
+    url: String,
+    expected_sha256: String,
+    expected_size: u64,
+) -> Result<std::path::PathBuf, String> {
+    use sha2::{Digest, Sha256};
     use tokio::io::AsyncWriteExt;
+    const MAX_UPDATE_BYTES: u64 = 128 * 1024 * 1024;
+    if expected_size == 0 || expected_size > MAX_UPDATE_BYTES {
+        return Err("Update asset has an invalid size".to_string());
+    }
+    let expected_hex = normalize_update_digest(&expected_sha256)?;
+    let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid update URL: {e}"))?;
+    if !is_official_update_asset_url(&parsed_url, &tag) {
+        return Err("Update URL is not an official sing-box-gui release asset".to_string());
+    }
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .redirect(reqwest::redirect::Policy::limited(10))
@@ -3535,12 +4310,8 @@ async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, S
         return Err(format!("Download failed with status: {}", res.status()));
     }
 
-    const MAX_UPDATE_BYTES: usize = 128 * 1024 * 1024;
-    if res
-        .content_length()
-        .is_some_and(|size| size > MAX_UPDATE_BYTES as u64)
-    {
-        return Err("Update package exceeds the 128 MiB safety limit".to_string());
+    if res.content_length() != Some(expected_size) {
+        return Err("Update asset size does not match release metadata".to_string());
     }
 
     let current = std::env::current_exe()
@@ -3549,63 +4320,88 @@ async fn download_app_update_binary(url: String) -> Result<std::path::PathBuf, S
         .parent()
         .ok_or_else(|| "Current executable has no parent directory".to_string())?;
 
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     #[cfg(target_os = "windows")]
-    let file_name = "sing-box-gui.update.exe";
+    let file_name = format!(".sing-box-gui.update-{}-{nonce}.exe", std::process::id());
     #[cfg(not(target_os = "windows"))]
-    let file_name = "sing-box-gui.update.bin";
-
-    // Prefer beside the running binary (portable installs); fall back to temp.
-    let beside = dir.join(file_name);
-    let (dest, mut file) = match tokio::fs::File::create(&beside).await {
+    let file_name = format!(".sing-box-gui.update-{}-{nonce}.bin", std::process::id());
+    let beside = dir.join(&file_name);
+    let (dest, mut file) = match tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&beside)
+        .await
+    {
         Ok(file) => (beside, file),
         Err(e_beside) => {
-            let fallback = std::env::temp_dir().join(file_name);
-            let file = tokio::fs::File::create(&fallback).await.map_err(|e| {
-                format!("Failed to create update file (beside exe: {e_beside}; temp: {e})")
-            })?;
+            let fallback = std::env::temp_dir().join(&file_name);
+            let file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&fallback)
+                .await
+                .map_err(|e| {
+                    format!("Failed to create update file (beside exe: {e_beside}; temp: {e})")
+                })?;
             (fallback, file)
         }
     };
 
-    let mut stream = res.bytes_stream();
-    let mut downloaded = 0usize;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Failed to read download body: {e}"))?;
-        downloaded = downloaded.saturating_add(chunk.len());
-        if downloaded > MAX_UPDATE_BYTES {
-            drop(file);
-            let _ = tokio::fs::remove_file(&dest).await;
-            return Err("Update package exceeds the 128 MiB safety limit".to_string());
+    let download_result: Result<(), String> = async {
+        let mut stream = res.bytes_stream();
+        let mut downloaded = 0u64;
+        let mut hasher = Sha256::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("Failed to read download body: {e}"))?;
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            if downloaded > MAX_UPDATE_BYTES || downloaded > expected_size {
+                return Err("Update asset exceeds its declared size limit".to_string());
+            }
+            hasher.update(&chunk);
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("Failed to write update file: {e}"))?;
         }
-        file.write_all(&chunk)
+        file.flush()
             .await
-            .map_err(|e| format!("Failed to write update file: {e}"))?;
-    }
-    file.flush()
-        .await
-        .map_err(|e| format!("Failed to flush update file: {e}"))?;
-    drop(file);
+            .map_err(|e| format!("Failed to flush update file: {e}"))?;
+        file.sync_all()
+            .await
+            .map_err(|e| format!("Failed to sync update file: {e}"))?;
+        drop(file);
+        if downloaded != expected_size {
+            return Err("Downloaded update size does not match release metadata".to_string());
+        }
+        if format!("{:x}", hasher.finalize()) != expected_hex {
+            return Err("Update SHA-256 verification failed".to_string());
+        }
+        if downloaded < 1024 {
+            return Err("Downloaded update is too small to be a binary".to_string());
+        }
+        crate::core::validate_binary_magic(&dest)?;
 
-    if downloaded < 1024 {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = tokio::fs::metadata(&dest)
+                .await
+                .map_err(|e| format!("Failed to stat update file: {}", e))?
+                .permissions();
+            perms.set_mode(0o755);
+            tokio::fs::set_permissions(&dest, perms)
+                .await
+                .map_err(|e| format!("Failed to chmod update file: {}", e))?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = download_result {
         let _ = tokio::fs::remove_file(&dest).await;
-        return Err(format!(
-            "Downloaded file too small ({downloaded} bytes) — likely not a binary"
-        ));
+        return Err(error);
     }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = tokio::fs::metadata(&dest)
-            .await
-            .map_err(|e| format!("Failed to stat update file: {}", e))?
-            .permissions();
-        perms.set_mode(0o755);
-        tokio::fs::set_permissions(&dest, perms)
-            .await
-            .map_err(|e| format!("Failed to chmod update file: {}", e))?;
-    }
-
     Ok(dest)
 }
 
@@ -3618,94 +4414,154 @@ fn apply_update_and_restart(new_binary: &std::path::Path) -> Result<(), String> 
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        let script_path = current.with_extension("update.cmd");
-        let current_s = current.to_string_lossy().replace('"', "");
-        let new_s = new_binary.to_string_lossy().replace('"', "");
+        let script_path =
+            current.with_file_name(format!(".sing-box-gui-update-{}.ps1", std::process::id()));
         let bak = current.with_extension("exe.bak");
-        let bak_s = bak.to_string_lossy().replace('"', "");
-
-        // Wait for this PID to exit, swap binaries, relaunch, clean up.
-        let script = format!(
-            r#"@echo off
-setlocal
-set "TARGET={current}"
-set "NEW={new}"
-set "BAK={bak}"
-set "PID={pid}"
-:wait
-tasklist /FI "PID eq %PID%" /NH /FO CSV 2>NUL | findstr /B /I "%PID%," >NUL
-if not errorlevel 1 (
-  timeout /t 1 /nobreak >NUL
-  goto wait
+        // PowerShell receives paths as arguments, so quotes and shell
+        // metacharacters in an installation directory are never interpolated
+        // into executable script text.
+        let script = r#"param(
+    [Parameter(Mandatory=$true)][string]$Target,
+    [Parameter(Mandatory=$true)][string]$New,
+    [Parameter(Mandatory=$true)][string]$Backup,
+    [Parameter(Mandatory=$true)][int]$ProcessId
 )
-if exist "%BAK%" del /F /Q "%BAK%" >NUL 2>&1
-move /Y "%TARGET%" "%BAK%" >NUL 2>&1
-move /Y "%NEW%" "%TARGET%"
-if errorlevel 1 (
-  if exist "%BAK%" move /Y "%BAK%" "%TARGET%" >NUL 2>&1
-  del /F /Q "%~f0" >NUL 2>&1
-  exit /b 1
-)
-start "" "%TARGET%"
-if exist "%BAK%" del /F /Q "%BAK%" >NUL 2>&1
-del /F /Q "%~f0" >NUL 2>&1
-"#,
-            current = current_s,
-            new = new_s,
-            bak = bak_s,
-            pid = pid,
-        );
-        std::fs::write(&script_path, script)
-            .map_err(|e| format!("Failed to write update script: {}", e))?;
+$ErrorActionPreference = 'Stop'
+$replaced = $false
+try {
+    while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+        Start-Sleep -Milliseconds 250
+    }
+    if (Test-Path -LiteralPath $Backup) { Remove-Item -LiteralPath $Backup -Force }
+    if (Test-Path -LiteralPath $Target) { Move-Item -LiteralPath $Target -Destination $Backup -Force }
+    Move-Item -LiteralPath $New -Destination $Target -Force
+    $replaced = $true
+    $started = Start-Process -FilePath $Target -PassThru
+    Start-Sleep -Milliseconds 5000
+    if ($started.HasExited) { throw "The updated application exited during startup" }
+    $replaced = $false
+    if (Test-Path -LiteralPath $Backup) {
+        Remove-Item -LiteralPath $Backup -Force -ErrorAction SilentlyContinue
+    }
+} catch {
+    try {
+        if ($replaced -and (Test-Path -LiteralPath $Target)) {
+            Remove-Item -LiteralPath $Target -Force
+        }
+        if (Test-Path -LiteralPath $Backup) {
+            Move-Item -LiteralPath $Backup -Destination $Target -Force
+        }
+    } catch { }
+    exit 1
+} finally {
+    Remove-Item -LiteralPath $New -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+}
+"#;
+        if let Err(error) = std::fs::write(&script_path, script) {
+            let _ = std::fs::remove_file(&script_path);
+            return Err(format!("Failed to write update script: {}", error));
+        }
 
-        std::process::Command::new("cmd")
-            .args(["/C", &script_path.to_string_lossy()])
+        let spawn_result = std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                &script_path.to_string_lossy(),
+                "-Target",
+                &current.to_string_lossy(),
+                "-New",
+                &new_binary.to_string_lossy(),
+                "-Backup",
+                &bak.to_string_lossy(),
+                "-ProcessId",
+                &pid.to_string(),
+            ])
             // DETACHED_PROCESS (0x8) | CREATE_NO_WINDOW (0x08000000)
             .creation_flags(0x08000008)
-            .spawn()
-            .map_err(|e| format!("Failed to spawn update script: {}", e))?;
+            .spawn();
+        if let Err(error) = spawn_result {
+            let _ = std::fs::remove_file(&script_path);
+            let _ = std::fs::remove_file(new_binary);
+            return Err(format!("Failed to spawn update script: {}", error));
+        }
         Ok(())
     }
 
     #[cfg(unix)]
     {
-        let script_path = current.with_extension("update.sh");
-        let current_s = current.to_string_lossy();
-        let new_s = new_binary.to_string_lossy();
+        let script_path =
+            current.with_file_name(format!(".sing-box-gui-update-{}.sh", std::process::id()));
+        fn shell_quote(value: &std::path::Path) -> String {
+            format!("'{}'", value.to_string_lossy().replace('\'', "'\\''"))
+        }
         let script = format!(
             r#"#!/bin/sh
-TARGET="{current}"
-NEW="{new}"
+TARGET={current}
+NEW={new}
+BACKUP="$TARGET.bak"
 PID={pid}
 cleanup() {{
-  rm -f -- "$0"
+  rm -f -- "$0" "$NEW"
 }}
 trap cleanup EXIT
-while kill -0 "$PID" 2>/dev/null; do sleep 1; done
-mv -f "$NEW" "$TARGET" || exit 1
-chmod +x "$TARGET"
-exec "$TARGET"
+while kill -0 "$PID" 2>/dev/null; do sleep 0.25; done
+rm -f -- "$BACKUP"
+if [ -e "$TARGET" ]; then mv -f -- "$TARGET" "$BACKUP" || exit 1; fi
+if ! mv -f -- "$NEW" "$TARGET"; then
+  [ -e "$BACKUP" ] && mv -f -- "$BACKUP" "$TARGET"
+  exit 1
+fi
+if ! chmod +x -- "$TARGET"; then
+  rm -f -- "$TARGET"
+  [ -e "$BACKUP" ] && mv -f -- "$BACKUP" "$TARGET"
+  exit 1
+fi
+"$TARGET" &
+NEW_PID=$!
+sleep 5
+if kill -0 "$NEW_PID" 2>/dev/null; then
+  rm -f -- "$BACKUP"
+  exit 0
+fi
+wait "$NEW_PID" 2>/dev/null || true
+if [ -e "$TARGET" ]; then
+  rm -f -- "$TARGET"
+fi
+[ -e "$BACKUP" ] && mv -f -- "$BACKUP" "$TARGET"
+exit 1
 "#,
-            current = current_s.replace('"', "\\\""),
-            new = new_s.replace('"', "\\\""),
+            current = shell_quote(&current),
+            new = shell_quote(new_binary),
             pid = pid,
         );
-        std::fs::write(&script_path, &script)
-            .map_err(|e| format!("Failed to write update script: {}", e))?;
+        if let Err(error) = std::fs::write(&script_path, &script) {
+            let _ = std::fs::remove_file(&script_path);
+            return Err(format!("Failed to write update script: {}", error));
+        }
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&script_path)
-            .map_err(|e| format!("Failed to stat update script: {}", e))?
-            .permissions();
+        let mut perms = match std::fs::metadata(&script_path) {
+            Ok(metadata) => metadata.permissions(),
+            Err(error) => {
+                let _ = std::fs::remove_file(&script_path);
+                return Err(format!("Failed to stat update script: {}", error));
+            }
+        };
         perms.set_mode(0o755);
-        std::fs::set_permissions(&script_path, perms)
-            .map_err(|e| format!("Failed to chmod update script: {}", e))?;
+        if let Err(error) = std::fs::set_permissions(&script_path, perms) {
+            let _ = std::fs::remove_file(&script_path);
+            return Err(format!("Failed to chmod update script: {}", error));
+        }
 
-        std::process::Command::new("sh")
-            .arg(&script_path)
-            .spawn()
-            .map_err(|e| format!("Failed to spawn update script: {}", e))?;
-        // Best-effort: remove script after a delay is handled by not needing self-delete on unix
-        // (script is overwritten next time).
+        let spawn_result = std::process::Command::new("sh").arg(&script_path).spawn();
+        if let Err(error) = spawn_result {
+            let _ = std::fs::remove_file(&script_path);
+            let _ = std::fs::remove_file(new_binary);
+            return Err(format!("Failed to spawn update script: {}", error));
+        }
         return Ok(());
     }
 
@@ -3749,13 +4605,19 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .run();
 
-    // CRITICAL EXIT CLEANUP
+    // CRITICAL EXIT CLEANUP. Proxy ownership is always cleaned up, even when
+    // the user chose to leave the core running on exit. The persisted config
+    // is only a fallback for abnormal window closure; normal exits already
+    // run the async state machine above.
     let config = config::load_gui_config();
     if config.close_core_on_exit {
         core::stop_core();
-        if sysproxy::is_system_proxy_owned() {
-            let _ = sysproxy::set_system_proxy(false, config.mixed_port);
-        }
+    }
+    if config.system_proxy_owned
+        || sysproxy::is_system_proxy_owned()
+        || sysproxy::has_persisted_backup()
+    {
+        let _ = sysproxy::set_system_proxy(false, config.mixed_port);
     }
 
     res

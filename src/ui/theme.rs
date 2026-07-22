@@ -78,16 +78,16 @@ pub fn mono_font() -> iced::Font {
 
 // ── Type scale (f32 for iced::Pixels) ────────────────────────────────────────
 pub const TYPE_TITLE: f32 = 22.0;
-pub const TYPE_SECTION: f32 = 13.0; // group labels — medium muted
-pub const TYPE_HEADING: f32 = 14.0; // content titles — semibold primary
-pub const TYPE_BODY: f32 = 14.0;
-pub const TYPE_CAPTION: f32 = 11.0;
-pub const TYPE_MICRO: f32 = 10.0; // badges only
-pub const TYPE_BTN_SM: f32 = 12.0;
-pub const TYPE_BTN_MD: f32 = 13.0;
-pub const TYPE_BTN_LG: f32 = 14.0;
+pub const TYPE_SECTION: f32 = 14.0; // group labels — medium muted
+pub const TYPE_HEADING: f32 = 15.0; // content titles — semibold primary
+pub const TYPE_BODY: f32 = 15.0;
+pub const TYPE_CAPTION: f32 = 12.0;
+pub const TYPE_MICRO: f32 = 11.0; // badges only
+pub const TYPE_BTN_SM: f32 = 13.0;
+pub const TYPE_BTN_MD: f32 = 14.0;
+pub const TYPE_BTN_LG: f32 = 15.0;
 pub const TYPE_METRIC: f32 = 22.0; // dashboard speed numbers
-pub const TYPE_MONO: f32 = 12.0; // latency, mono captions
+pub const TYPE_MONO: f32 = 13.0; // latency, mono captions
 
 // ── Spacing / padding presets ────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
@@ -101,8 +101,8 @@ pub const CARD_PAD: f32 = 20.0;
 pub const GRID_GAP: f32 = 16.0;
 
 pub const CARD_PAD_DENSE: f32 = 16.0;
-pub const BTN_PAD_SM: [u16; 2] = [6, 12];
-pub const BTN_PAD_MD: [u16; 2] = [8, 16];
+pub const BTN_PAD_SM: [u16; 2] = [9, 12];
+pub const BTN_PAD_MD: [u16; 2] = [9, 16];
 pub const BTN_PAD_LG: [u16; 2] = [12, 20];
 /// Shared width for page header search inputs.
 pub const SEARCH_WIDTH: f32 = 260.0;
@@ -1091,7 +1091,7 @@ mod tests {
         assert!(TYPE_BTN_SM >= TYPE_MONO);
         assert!(TYPE_MONO > TYPE_CAPTION);
         assert!(TYPE_CAPTION > TYPE_MICRO);
-        assert!(TYPE_MICRO >= 10.0);
+        assert!(TYPE_MICRO >= 11.0);
     }
 
     #[test]
@@ -1108,8 +1108,8 @@ mod tests {
         assert!(CARD_PAD_DENSE >= 12.0);
         assert!(GRID_GAP >= 12.0);
         assert!(SEARCH_WIDTH >= 200.0);
-        assert_eq!(BTN_PAD_SM, [6, 12]);
-        assert_eq!(BTN_PAD_MD, [8, 16]);
+        assert_eq!(BTN_PAD_SM, [9, 12]);
+        assert_eq!(BTN_PAD_MD, [9, 16]);
     }
 
     #[test]

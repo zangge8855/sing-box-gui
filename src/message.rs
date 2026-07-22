@@ -1,4 +1,4 @@
-use crate::state::{AppTheme, Language, LogFilter, RoutingMode, RuleField, Tab};
+use crate::state::{AppTheme, GuiConfig, Language, LogFilter, RoutingMode, RuleField, Tab};
 
 /// Latest GitHub release info for in-app updates.
 #[derive(Debug, Clone)]
@@ -6,6 +6,21 @@ pub struct AppUpdateInfo {
     pub tag_name: String,
     /// Direct download URL for the current platform binary, if present on the release.
     pub download_url: Option<String>,
+    /// GitHub-provided `sha256:<hex>` digest for the exact asset.
+    pub sha256: Option<String>,
+    /// Expected asset size from GitHub release metadata.
+    pub size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemProxyContext {
+    Manual,
+    CoreStart,
+    CoreStop,
+    UnexpectedCoreStop,
+    SettingsReapply,
+    Exit,
+    Update,
 }
 
 #[derive(Debug, Clone)]
@@ -36,7 +51,7 @@ pub enum Message {
     },
     ProxiesFetched(Result<std::collections::HashMap<String, crate::api::ProxyInfo>, String>),
     ToggleCore,
-    NewLogLine(String),
+    NewLogBatch(Vec<String>),
     TrafficUpdated {
         up: u64,
         down: u64,
@@ -63,6 +78,11 @@ pub enum Message {
     RequestDeleteProfile(String),
     ConfirmDeleteProfile,
     CancelDeleteProfile,
+    ProfileDeleteFinished {
+        id: String,
+        was_active: bool,
+        result: Result<(), String>,
+    },
     UpdateSubscription(String),
     AutoUpdateDue(Vec<String>),
     SelectNode(String),
@@ -76,7 +96,20 @@ pub enum Message {
         latency: Option<u64>,
     },
     Tick,
-    ConfigSaved(Result<(), String>),
+    ConfigSaved {
+        saved_config: GuiConfig,
+        result: Result<(), String>,
+    },
+    StartupSystemProxyChecked(Result<bool, String>),
+    SystemProxySetFinished {
+        target: bool,
+        context: SystemProxyContext,
+        result: Result<(), String>,
+    },
+    AutostartSetFinished {
+        target: bool,
+        result: Result<(), String>,
+    },
     SystemThemeDetected(bool),
     RoutingModeChanged(RoutingMode),
     ModeSet(Result<String, String>),
@@ -91,6 +124,7 @@ pub enum Message {
     TrayMenuClicked(String),
     WindowOpened(iced::window::Id),
     WindowCloseRequested(iced::window::Id),
+    KeyboardEvent(iced::keyboard::Event),
 
     ClearLogs,
     LogFilterChanged(LogFilter),
@@ -134,12 +168,16 @@ pub enum Message {
     DownloadAppUpdate {
         tag: String,
         url: String,
+        sha256: String,
+        size: u64,
     },
     /// Download finished (path to temp binary) or failed.
     AppUpdateDownloaded {
         tag: String,
         /// Original asset URL (kept so the user can retry after a failure).
         url: String,
+        sha256: String,
+        size: u64,
         result: Result<std::path::PathBuf, String>,
     },
     OpenUrl(String),

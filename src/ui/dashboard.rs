@@ -7,6 +7,10 @@ use iced::widget::{
     Space, button, column, container, pick_list, responsive, row, svg, text, tooltip,
 };
 use iced::{Alignment, Element, Length};
+use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
+
+static CHART_HANDLE_CACHE: OnceLock<Mutex<Option<(u64, bool, svg::Handle)>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoutingModeOption {
@@ -523,7 +527,27 @@ pub fn render<'a>(
             up_color_hex
         );
 
-        let chart_handle = svg::Handle::from_memory(svg_xml.into_bytes());
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        speed_history.hash(&mut hasher);
+        let chart_key = hasher.finish();
+        let dark_theme = theme::is_dark(theme);
+        let cache = CHART_HANDLE_CACHE.get_or_init(|| Mutex::new(None));
+        let chart_handle = {
+            let mut cached = cache.lock().unwrap_or_else(|error| error.into_inner());
+            if cached
+                .as_ref()
+                .is_some_and(|(key, dark, _)| *key == chart_key && *dark == dark_theme)
+            {
+                cached
+                    .as_ref()
+                    .map(|(_, _, handle)| handle.clone())
+                    .unwrap()
+            } else {
+                let handle = svg::Handle::from_memory(svg_xml.into_bytes());
+                *cached = Some((chart_key, dark_theme, handle.clone()));
+                handle
+            }
+        };
         let chart_svg = svg(chart_handle)
             .width(Length::Fill)
             .height(Length::Fill)

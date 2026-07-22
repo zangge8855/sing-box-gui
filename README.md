@@ -1,7 +1,7 @@
 # sing-box GUI
 
 [![Build](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml/badge.svg)](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml)
-![Version](https://img.shields.io/badge/version-2026.7.22-6d5ce7.svg)
+![Version](https://img.shields.io/badge/version-2026.7.23-6d5ce7.svg)
 
 <p align="center">
   <img src="assets/logo.jpg" alt="sing-box GUI" width="112" height="112" />
@@ -19,7 +19,7 @@ A native-style, cross-platform desktop client for [sing-box](https://github.com/
 - Subscription import/update, raw sharing links, Base64 link bundles, Clash YAML conversion, and native sing-box JSON passthrough.
 - Rule, Global, and Direct modes; DNS, TUN, remote rule sets, custom bypass/proxy domains, and Clash API integration.
 - Bounded log/traffic channels and throttled UI updates to prevent long-running sessions from accumulating unbounded work.
-- Atomic settings/profile writes, update confirmation, download size limits, and recoverable core startup errors.
+- Draft-based settings, atomic writes, SHA-256 verified official downloads, rollback installation, and recoverable startup/update errors.
 - Windows Registry integration, macOS LaunchAgent integration, and Linux XDG autostart/system-proxy support.
 
 ## Import and protocol matrix
@@ -49,7 +49,7 @@ Tor and other local-runtime outbounds that depend on an external executable rema
 
 ## Platform builds
 
-Every push and pull request is verified by GitHub Actions:
+Every `main` push and version tag builds all release targets. Pull requests run the shared verification suite plus a Windows compile check:
 
 | Platform | Architectures | Artifact |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ Every push and pull request is verified by GitHub Actions:
 | macOS | Intel + Apple Silicon | universal binary |
 | Linux | x86_64, ARM64 | native binary |
 
-The workflow runs unit tests before release builds. Windows additionally runs formatting and Clippy checks. Release assets are published only for `v*` tags.
+The workflow runs format, unit-test, Clippy, compile, and security checks before release builds. Every platform artifact includes a checksum; Release assets are published only for a matching `v*` tag.
 
 ## Development
 
@@ -66,7 +66,7 @@ Rust 1.85 or newer is required by the Rust 2024 edition used by this project.
 ```bash
 cargo test
 cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --quiet --locked
 cargo run
 ```
 
@@ -76,7 +76,11 @@ Important modules:
 - `src/core.rs` — sing-box download, startup validation, process lifecycle, bounded log forwarding.
 - `src/api.rs` — Clash API, selector changes, latency tests, connections, and traffic polling.
 - `src/ui/` — responsive desktop workspaces, localization, typography, and visual tokens.
-- `src/sysproxy.rs` / `src/autostart.rs` — platform integration.
+- `src/sysproxy.rs` / `src/platform.rs` — system proxy, elevation, and auto-start integration.
+
+### Accessibility note
+
+The Iced 0.14/wgpu backend currently exposes limited Windows UI Automation metadata compared with native WinUI controls. All primary flows remain keyboard-operable, including Tab navigation, Enter activation, Escape cancellation, and Ctrl+S settings save; screen-reader structure may still depend on future Iced/winit accessibility support.
 
 ## 中文说明
 
@@ -90,7 +94,7 @@ sing-box GUI 是使用 Rust 与 Iced 编写的跨平台桌面客户端，强调�
 - 支持订阅更新、分享链接、Base64 链接集合、Clash YAML 转换及原生 sing-box JSON 直通。
 - 支持 Rule / Global / Direct、DNS、TUN、远程规则集、自定义直连/代理域名和 Clash API。
 - 日志与流量采用有界通道，界面更新限频，长时间运行不会无限堆积消息或渲染任务。
-- 配置与订阅原子写入；应用更新需要确认；下载具有大小限制；内核启动失败会返回可操作的错误信息。
+- 设置采用草稿后统一应用；配置与订阅原子写入；官方内核与应用更新会校验 SHA-256、平台格式并支持失败回滚。
 - 支持 Windows 注册表、macOS LaunchAgent、Linux XDG 自启动和各平台系统代理集成。
 
 ### 协议兼容性
@@ -104,6 +108,10 @@ Tor 等依赖本机外部可执行文件的 outbound 继续通过原生 sing-box
 ### GitHub Actions
 
 每次推送都会在 GitHub 上执行 Windows x64/ARM64、macOS Universal、Linux x64/ARM64 的单元测试和 Release 构建。普通分支构建只上传 Actions Artifacts；仅版本标签会创建 GitHub Release。
+
+### 无障碍说明
+
+Iced 0.14/wgpu 在 Windows 上暴露的 UI Automation 信息仍少于原生 WinUI 控件。主要操作均保留键盘路径（Tab、Enter、Escape、Ctrl+S），但屏幕阅读器结构仍受 Iced/winit 后续无障碍支持限制。
 
 ## License
 

@@ -1,6 +1,6 @@
 [package]
 name = "sing-box-gui"
-version = "2026.7.22"
+version = "2026.7.23"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
@@ -16,6 +16,7 @@ flate2 = "1.0"
 tar = "0.4"
 url = "2.5"
 base64 = "0.22"
+sha2 = "0.10"
 chrono = "0.4"
 futures = "0.3"
 tempfile = "3.10"

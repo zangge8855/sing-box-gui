@@ -3,10 +3,10 @@ name: Rust CI & Release
 on:
   workflow_dispatch:
   push:
-    branches: [ "master", "main" ]
-    tags: [ "v*" ]
+    branches: ["master", "main"]
+    tags: ["v*"]
   pull_request:
-    branches: [ "master", "main" ]
+    branches: ["master", "main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,260 +24,188 @@ jobs:
     name: Test, Format & Lint
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Install Linux Dependencies
-      run: |
-        echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
-        for i in {1..5}; do
-          sudo apt-get update && \
-          sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev && \
-          break || sleep 15
-        done
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy, rustfmt
-    - uses: Swatinem/rust-cache@v2
-    - name: Security audit
-      uses: rustsec/audit-check@v2.0.0
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-    - name: Check formatting (informative)
-      run: cargo fmt --all -- --check
-      continue-on-error: true
-    - run: cargo test --quiet --locked
-    - name: Run clippy (informative)
-      run: cargo clippy --all-targets --quiet --locked
-      continue-on-error: true
-    - run: cargo check --locked
+      - uses: actions/checkout@v4
+      - name: Install Linux dependencies
+        run: |
+          echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get update && sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev; then exit 0; fi
+            sleep 15
+          done
+          exit 1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - run: cargo fmt --all -- --check
+      - run: cargo test --quiet --locked
+      - run: cargo clippy --all-targets --quiet --locked
+      - run: cargo check --locked
 
   check-windows:
     name: Check Windows x86_64
     runs-on: windows-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: x86_64-pc-windows-msvc
-    - uses: Swatinem/rust-cache@v2
-    - run: cargo check --locked --target x86_64-pc-windows-msvc
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --target x86_64-pc-windows-msvc
 
   build-windows:
     name: Build Windows Binaries
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: windows-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Set up Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-        targets: x86_64-pc-windows-msvc, aarch64-pc-windows-msvc
-        components: clippy, rustfmt
-
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-
-    - name: Run unit tests
-      run: cargo test --quiet --locked
-
-    - name: Build x86_64 Binary
-      run: cargo build --release --locked --target x86_64-pc-windows-msvc
-
-    - name: Build ARM64 Binary
-      run: cargo build --release --locked --target aarch64-pc-windows-msvc
-
-    - name: Prepare Artifacts
-      shell: bash
-      run: |
-        VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d'"' -f 2)
-        mkdir -p dist
-        cp target/x86_64-pc-windows-msvc/release/sing-box-gui.exe dist/sing-box-gui-v${VERSION}-windows-amd64.exe
-        cp target/aarch64-pc-windows-msvc/release/sing-box-gui.exe dist/sing-box-gui-v${VERSION}-windows-arm64.exe
-
-    - name: Upload Windows Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: sing-box-gui-windows
-        path: dist/*
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc, aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --quiet --locked
+      - run: cargo build --release --locked --target x86_64-pc-windows-msvc
+      - run: cargo build --release --locked --target aarch64-pc-windows-msvc
+      - name: Prepare Windows artifacts and checksums
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          mkdir -p dist
+          cp target/x86_64-pc-windows-msvc/release/sing-box-gui.exe "dist/sing-box-gui-v${VERSION}-windows-amd64.exe"
+          cp target/aarch64-pc-windows-msvc/release/sing-box-gui.exe "dist/sing-box-gui-v${VERSION}-windows-arm64.exe"
+          (cd dist && sha256sum *.exe > windows-SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-gui-windows
+          path: dist/*
 
   build-macos:
     name: Build macOS Universal Binary
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: macos-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Set up Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-        targets: x86_64-apple-darwin, aarch64-apple-darwin
-
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-
-    - name: Run unit tests
-      run: cargo test --quiet --locked
-
-    - name: Build Intel Binary
-      run: cargo build --release --locked --target x86_64-apple-darwin
-
-    - name: Build Apple Silicon Binary
-      run: cargo build --release --locked --target aarch64-apple-darwin
-
-    - name: Create Universal Binary
-      run: |
-        VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d'"' -f 2)
-        mkdir -p dist
-        lipo -create \
-          -output dist/sing-box-gui-v${VERSION}-macos-universal \
-          target/x86_64-apple-darwin/release/sing-box-gui \
-          target/aarch64-apple-darwin/release/sing-box-gui
-
-    - name: Upload macOS Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: sing-box-gui-macos
-        path: dist/*
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin, aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --quiet --locked
+      - run: cargo build --release --locked --target x86_64-apple-darwin
+      - run: cargo build --release --locked --target aarch64-apple-darwin
+      - name: Prepare macOS artifact and checksum
+        run: |
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          mkdir -p dist
+          lipo -create -output "dist/sing-box-gui-v${VERSION}-macos-universal" \
+            target/x86_64-apple-darwin/release/sing-box-gui \
+            target/aarch64-apple-darwin/release/sing-box-gui
+          chmod +x "dist/sing-box-gui-v${VERSION}-macos-universal"
+          (cd dist && shasum -a 256 "sing-box-gui-v${VERSION}-macos-universal" > macos-SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-gui-macos
+          path: dist/*
 
   build-linux-x64:
     name: Build Linux x86_64 Binary
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Install Linux Dependencies
-      run: |
-        echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
-        for i in {1..5}; do
-          sudo apt-get update && \
-          sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev && \
-          break || sleep 15
-        done
-
-    - name: Set up Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-
-    - name: Run unit tests
-      run: cargo test --quiet --locked
-
-    - name: Build in Release mode
-      run: cargo build --release --locked
-
-    - name: Prepare Artifact
-      run: |
-        VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d'"' -f 2)
-        mkdir -p dist
-        cp target/release/sing-box-gui dist/sing-box-gui-v${VERSION}-linux-amd64
-
-    - name: Upload Linux x64 Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: sing-box-gui-linux-x64
-        path: dist/*
+      - uses: actions/checkout@v4
+      - name: Install Linux dependencies
+        run: |
+          echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get update && sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev; then exit 0; fi
+            sleep 15
+          done
+          exit 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --quiet --locked
+      - run: cargo build --release --locked
+      - name: Prepare Linux x64 artifact and checksum
+        run: |
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          mkdir -p dist
+          cp target/release/sing-box-gui "dist/sing-box-gui-v${VERSION}-linux-amd64"
+          (cd dist && sha256sum "sing-box-gui-v${VERSION}-linux-amd64" > linux-x64-SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-gui-linux-x64
+          path: dist/*
 
   build-linux-arm64:
     name: Build Linux ARM64 Binary
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-24.04-arm
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Install Linux Dependencies
-      run: |
-        echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
-        for i in {1..5}; do
-          sudo apt-get update && \
-          sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev && \
-          break || sleep 15
-        done
-
-    - name: Set up Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-
-    - name: Run unit tests
-      run: cargo test --quiet --locked
-
-    - name: Build in Release mode
-      run: cargo build --release --locked
-
-    - name: Prepare Artifact
-      run: |
-        VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d'"' -f 2)
-        mkdir -p dist
-        cp target/release/sing-box-gui dist/sing-box-gui-v${VERSION}-linux-arm64
-
-    - name: Upload Linux ARM64 Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: sing-box-gui-linux-arm64
-        path: dist/*
+      - uses: actions/checkout@v4
+      - name: Install Linux dependencies
+        run: |
+          echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get update && sudo apt-get install -y libx11-dev libxft-dev libxext-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev libxdo-dev; then exit 0; fi
+            sleep 15
+          done
+          exit 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --quiet --locked
+      - run: cargo build --release --locked
+      - name: Prepare Linux ARM64 artifact and checksum
+        run: |
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          mkdir -p dist
+          cp target/release/sing-box-gui "dist/sing-box-gui-v${VERSION}-linux-arm64"
+          (cd dist && sha256sum "sing-box-gui-v${VERSION}-linux-arm64" > linux-arm64-SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-gui-linux-arm64
+          path: dist/*
 
   release:
     name: Create Release & Upload Assets
-    needs: [verify, check-windows, build-windows, build-macos, build-linux-x64, build-linux-arm64]
+    needs: [verify, build-windows, build-macos, build-linux-x64, build-linux-arm64]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Extract version from Cargo.toml
-      id: get_version
-      shell: bash
-      run: |
-        VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d'"' -f 2)
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-    - name: Download Windows artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: sing-box-gui-windows
-        path: dist/
-
-    - name: Download macOS artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: sing-box-gui-macos
-        path: dist/
-
-    - name: Download Linux x64 artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: sing-box-gui-linux-x64
-        path: dist/
-
-    - name: Download Linux ARM64 artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: sing-box-gui-linux-arm64
-        path: dist/
-
-    - name: Create Release and Upload Assets
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: v${{ steps.get_version.outputs.version }}
-        name: Release v${{ steps.get_version.outputs.version }}
-        draft: false
-        prerelease: false
-        files: dist/*
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v4
+      - name: Verify tag matches Cargo version
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          TAG="${GITHUB_REF_NAME#v}"
+          test "$TAG" = "$VERSION" || { echo "Tag $TAG does not match Cargo.toml $VERSION"; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sing-box-gui-*
+          path: dist
+          merge-multiple: true
+      - name: Build release checksum manifest
+        run: |
+          cd dist
+          find . -maxdepth 1 -type f \( -name '*.exe' -o -name 'sing-box-gui-v*-macos-universal' -o -name 'sing-box-gui-v*-linux-*' \) -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          test "$(grep -c '^' SHA256SUMS.txt)" -eq 5
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            dist/sing-box-gui-v*-windows-amd64.exe
+            dist/sing-box-gui-v*-windows-arm64.exe
+            dist/sing-box-gui-v*-macos-universal
+            dist/sing-box-gui-v*-linux-amd64
+            dist/sing-box-gui-v*-linux-arm64
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

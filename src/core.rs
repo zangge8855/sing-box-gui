@@ -4,11 +4,13 @@ use futures::StreamExt;
 use std::fs::{self, File};
 #[cfg(target_os = "windows")]
 use std::io;
-use std::io::{BufRead, BufReader, Read};
-use std::path::PathBuf;
+use std::io::{BufReader, Read};
+#[cfg(target_os = "windows")]
+use std::io::{Seek, SeekFrom};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
@@ -27,6 +29,7 @@ pub const CORE_VERSION: &str = "1.13.14";
 /// can poll without contending on `CURRENT_PROCESS` (which `start_core` holds
 /// for up to `STARTUP_GRACE_MS` while waiting for the child to survive).
 static CORE_RUNNING_CACHED: AtomicBool = AtomicBool::new(false);
+static CORE_DOWNLOAD_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 /// How long to wait after spawn before treating the core as "started".
 /// Catches immediate FATAL exits (bad config, rule-set init, port bind, …).
@@ -94,18 +97,15 @@ fn spawn_log_forwarder<R: Read + Send + 'static>(
 ) {
     thread::spawn(move || {
         let mut reader = BufReader::new(pipe);
-        let mut buf = Vec::new();
-        while let Ok(n) = reader.read_until(b'\n', &mut buf) {
-            if n == 0 {
-                break; // EOF
-            }
-            // Trim trailing newline characters (\r and \n)
-            while buf.ends_with(b"\n") || buf.ends_with(b"\r") {
+        const MAX_CORE_LOG_LINE_BYTES: usize = 64 * 1024;
+        let emit = |buf: &mut Vec<u8>, truncated: bool| {
+            while buf.ends_with(b"\r") {
                 buf.pop();
             }
-            let line_str = decode_log_line(&buf);
-            buf.clear();
-
+            let mut line_str = decode_log_line(buf);
+            if truncated {
+                line_str.push_str(" … [truncated]");
+            }
             if let Ok(mut buf_guard) = early_buf.lock() {
                 // Ring buffer capped at 500 lines. Once full we drop the
                 // oldest entries so the final lines on a FATAL early-exit
@@ -118,6 +118,42 @@ fn spawn_log_forwarder<R: Read + Send + 'static>(
                 buf_guard.push(line_str.clone());
             }
             let _ = sender.try_send(line_str);
+        };
+
+        let mut pending = Vec::with_capacity(4096);
+        let mut chunk = [0u8; 8192];
+        let mut truncated = false;
+        loop {
+            let n = match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            let mut start = 0usize;
+            for (index, byte) in chunk[..n].iter().enumerate() {
+                if *byte != b'\n' {
+                    continue;
+                }
+                if !truncated {
+                    let slice = &chunk[start..index];
+                    let available = MAX_CORE_LOG_LINE_BYTES.saturating_sub(pending.len());
+                    pending.extend_from_slice(&slice[..slice.len().min(available)]);
+                    truncated = slice.len() > available;
+                }
+                emit(&mut pending, truncated);
+                pending.clear();
+                truncated = false;
+                start = index + 1;
+            }
+            if start < n && !truncated {
+                let slice = &chunk[start..n];
+                let available = MAX_CORE_LOG_LINE_BYTES.saturating_sub(pending.len());
+                pending.extend_from_slice(&slice[..slice.len().min(available)]);
+                truncated = slice.len() > available;
+            }
+        }
+        if !pending.is_empty() || truncated {
+            emit(&mut pending, truncated);
         }
     });
 }
@@ -184,7 +220,23 @@ pub fn is_core_installed(gui_config: &GuiConfig) -> bool {
 const MAX_CORE_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_CORE_BINARY_BYTES: u64 = 128 * 1024 * 1024;
 
-fn staged_core_path(dest_path: &std::path::Path) -> PathBuf {
+fn unique_sibling_path(dest_path: &Path, label: &str) -> PathBuf {
+    let file_name = dest_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("sing-box");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    dest_path.with_file_name(format!(
+        ".{file_name}.{label}-{}-{nonce}",
+        std::process::id()
+    ))
+}
+
+#[cfg(test)]
+fn staged_core_path(dest_path: &Path) -> PathBuf {
     let file_name = dest_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -192,45 +244,138 @@ fn staged_core_path(dest_path: &std::path::Path) -> PathBuf {
     dest_path.with_file_name(format!("{file_name}.new"))
 }
 
-fn install_staged_core(
-    staged_path: &std::path::Path,
-    dest_path: &std::path::Path,
-) -> Result<(), String> {
+fn install_staged_core(staged_path: &Path, dest_path: &Path) -> Result<(), String> {
+    let backup_path = unique_sibling_path(dest_path, "backup");
+    if dest_path.exists() {
+        fs::rename(dest_path, &backup_path)
+            .map_err(|e| format!("Failed to stage the existing core for replacement: {e}"))?;
+    }
+    if let Err(error) = fs::rename(staged_path, dest_path) {
+        if backup_path.exists()
+            && let Err(restore_error) = fs::rename(&backup_path, dest_path)
+        {
+            return Err(format!(
+                "Failed to install the downloaded core: {error}; rollback also failed: {restore_error}"
+            ));
+        }
+        return Err(format!("Failed to install the downloaded core: {error}"));
+    }
+    let _ = fs::remove_file(backup_path);
+    Ok(())
+}
+
+fn normalize_sha256_digest(digest: &str) -> Result<String, String> {
+    let hex = digest
+        .strip_prefix("sha256:")
+        .ok_or_else(|| "Release asset is missing a SHA-256 digest".to_string())?;
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Release asset contains an invalid SHA-256 digest".to_string());
+    }
+    Ok(hex.to_ascii_lowercase())
+}
+
+fn is_official_core_asset_url(url: &str, version: &str, asset_name: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") {
+        return false;
+    }
+    let mut segments = match parsed.path_segments() {
+        Some(segments) => segments,
+        None => return false,
+    };
+    let expected_tag = format!("v{version}");
+    matches!(segments.next(), Some("SagerNet"))
+        && matches!(segments.next(), Some("sing-box"))
+        && matches!(segments.next(), Some("releases"))
+        && matches!(segments.next(), Some("download"))
+        && segments.next().is_some_and(|tag| tag == expected_tag)
+        && segments.next().is_some_and(|name| name == asset_name)
+        && segments.next().is_none()
+}
+
+fn is_safe_core_entry(path: &Path, expected_basename: &str) -> bool {
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return false;
+    }
+    path.file_name().and_then(|name| name.to_str()) == Some(expected_basename)
+}
+
+pub(crate) fn validate_binary_magic(path: &Path) -> Result<(), String> {
+    let mut file = File::open(path).map_err(|e| format!("Failed to inspect binary: {e}"))?;
+    let mut magic = [0u8; 4];
+    let read = file
+        .read(&mut magic)
+        .map_err(|e| format!("Failed to read binary header: {e}"))?;
+
     #[cfg(target_os = "windows")]
-    {
-        let file_name = dest_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("sing-box.exe");
-        let backup_path = dest_path.with_file_name(format!("{file_name}.bak"));
-        let _ = fs::remove_file(&backup_path);
-
-        if dest_path.exists() {
-            fs::rename(dest_path, &backup_path)
-                .map_err(|e| format!("Failed to stage the existing core for replacement: {e}"))?;
+    let valid = if read >= 2 && &magic[..2] == b"MZ" {
+        let mut offset_bytes = [0u8; 4];
+        file.seek(SeekFrom::Start(0x3c)).is_ok() && file.read_exact(&mut offset_bytes).is_ok() && {
+            let pe_offset = u32::from_le_bytes(offset_bytes) as u64;
+            let mut signature = [0u8; 4];
+            pe_offset <= 16 * 1024 * 1024
+                && file.seek(SeekFrom::Start(pe_offset)).is_ok()
+                && file.read_exact(&mut signature).is_ok()
+                && signature == *b"PE\0\0"
         }
+    } else {
+        false
+    };
+    #[cfg(target_os = "linux")]
+    let valid = read == 4 && magic == [0x7f, b'E', b'L', b'F'];
+    #[cfg(target_os = "macos")]
+    let valid = read == 4
+        && matches!(
+            magic,
+            [0xfe, 0xed, 0xfa, 0xce]
+                | [0xce, 0xfa, 0xed, 0xfe]
+                | [0xfe, 0xed, 0xfa, 0xcf]
+                | [0xcf, 0xfa, 0xed, 0xfe]
+                | [0xca, 0xfe, 0xba, 0xbe]
+                | [0xbe, 0xba, 0xfe, 0xca]
+                | [0xca, 0xfe, 0xba, 0xbf]
+                | [0xbf, 0xba, 0xfe, 0xca]
+        );
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    let valid = read >= 2;
 
-        if let Err(error) = fs::rename(staged_path, dest_path) {
-            if backup_path.exists() {
-                let _ = fs::rename(&backup_path, dest_path);
-            }
-            return Err(format!("Failed to install the downloaded core: {error}"));
-        }
+    valid
+        .then_some(())
+        .ok_or_else(|| "Downloaded file does not match this platform's binary format".to_string())
+}
 
-        let _ = fs::remove_file(backup_path);
-        Ok(())
-    }
+#[derive(serde::Deserialize)]
+struct CoreReleaseAsset {
+    name: String,
+    browser_download_url: String,
+    #[serde(default)]
+    digest: Option<String>,
+    size: u64,
+}
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        fs::rename(staged_path, dest_path)
-            .map_err(|e| format!("Failed to install the downloaded core: {e}"))
-    }
+#[derive(serde::Deserialize)]
+struct CoreRelease {
+    #[serde(default)]
+    assets: Vec<CoreReleaseAsset>,
 }
 
 /// Download official sing-box into the managed bin folder.
 /// When `force` is true, replace an existing binary (reinstall / upgrade pin).
 pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Result<(), String> {
+    let download_lock = CORE_DOWNLOAD_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
+    let _guard = download_lock
+        .try_lock()
+        .map_err(|_| "A core download is already in progress".to_string())?;
+    if is_core_running() {
+        return Err("Stop the core before reinstalling or replacing it".to_string());
+    }
+
     let app_dir = get_app_dir();
     let bin_dir = app_dir.join("bin");
     fs::create_dir_all(&bin_dir).map_err(|e| format!("Failed to create bin directory: {}", e))?;
@@ -245,52 +390,34 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
     let version = CORE_VERSION;
 
     #[cfg(target_os = "windows")]
-    let (url, archive_name) = {
+    let asset_name = {
         #[cfg(target_arch = "aarch64")]
         let arch = "windows-arm64";
         #[cfg(not(target_arch = "aarch64"))]
         let arch = "windows-amd64";
-        (
-            format!(
-                "https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.zip",
-                version, version, arch
-            ),
-            "temp_core.zip",
-        )
+        format!("sing-box-{version}-{arch}.zip")
     };
 
     #[cfg(target_os = "macos")]
-    let (url, archive_name) = {
+    let asset_name = {
         #[cfg(target_arch = "aarch64")]
         let arch = "darwin-arm64";
         #[cfg(not(target_arch = "aarch64"))]
         let arch = "darwin-amd64";
-        (
-            format!(
-                "https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.tar.gz",
-                version, version, arch
-            ),
-            "temp_core.tar.gz",
-        )
+        format!("sing-box-{version}-{arch}.tar.gz")
     };
 
     #[cfg(target_os = "linux")]
-    let (url, archive_name) = {
+    let asset_name = {
         #[cfg(target_arch = "aarch64")]
         let arch = "linux-arm64";
         #[cfg(not(target_arch = "aarch64"))]
         let arch = "linux-amd64";
-        (
-            format!(
-                "https://github.com/SagerNet/sing-box/releases/download/v{}/sing-box-{}-{}.tar.gz",
-                version, version, arch
-            ),
-            "temp_core.tar.gz",
-        )
+        format!("sing-box-{version}-{arch}.tar.gz")
     };
 
-    let temp_archive_path = app_dir.join(archive_name);
-    let staged_path = staged_core_path(&dest_path);
+    let temp_archive_path = unique_sibling_path(&dest_path, "archive");
+    let staged_path = unique_sibling_path(&dest_path, "staged");
 
     let res = async {
         let client = reqwest::Client::builder()
@@ -298,8 +425,44 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .map_err(|e| format!("Failed to build core download client: {e}"))?;
+        let metadata_response = client
+            .get(format!(
+                "https://api.github.com/repos/SagerNet/sing-box/releases/tags/v{version}"
+            ))
+            .header("User-Agent", "sing-box-gui")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch core release metadata: {e}"))?;
+        if !metadata_response.status().is_success() {
+            return Err(format!(
+                "Core release metadata returned status {}",
+                metadata_response.status()
+            ));
+        }
+        let release: CoreRelease = metadata_response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse core release metadata: {e}"))?;
+        let asset = release
+            .assets
+            .into_iter()
+            .find(|asset| asset.name == asset_name)
+            .ok_or_else(|| format!("Official core asset not found: {asset_name}"))?;
+        if !is_official_core_asset_url(&asset.browser_download_url, version, &asset_name) {
+            return Err("Core release asset URL is not an official sing-box download".to_string());
+        }
+        if asset.size == 0 || asset.size > MAX_CORE_ARCHIVE_BYTES as u64 {
+            return Err("Core release asset has an invalid size".to_string());
+        }
+        let expected_digest = normalize_sha256_digest(
+            asset
+                .digest
+                .as_deref()
+                .ok_or_else(|| "Core release asset has no SHA-256 digest".to_string())?,
+        )?;
         let response = client
-            .get(&url)
+            .get(&asset.browser_download_url)
+            .header("User-Agent", "sing-box-gui")
             .send()
             .await
             .map_err(|e| format!("Failed to download core: {}", e))?;
@@ -310,24 +473,30 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
 
         if response
             .content_length()
-            .is_some_and(|size| size > MAX_CORE_ARCHIVE_BYTES as u64)
+            .is_some_and(|size| size != asset.size)
         {
-            return Err("Downloaded core archive exceeds the 256 MiB safety limit".to_string());
+            return Err("Core download size does not match release metadata".to_string());
         }
 
+        use sha2::{Digest, Sha256};
         use tokio::io::AsyncWriteExt;
-        let mut file = tokio::fs::File::create(&temp_archive_path)
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_archive_path)
             .await
             .map_err(|e| format!("Failed to create temp archive file: {}", e))?;
 
         let mut stream = response.bytes_stream();
         let mut downloaded = 0usize;
+        let mut hasher = Sha256::new();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| format!("Failed to read chunk: {}", e))?;
             downloaded = downloaded.saturating_add(chunk.len());
             if downloaded > MAX_CORE_ARCHIVE_BYTES {
                 return Err("Downloaded core archive exceeds the 256 MiB safety limit".to_string());
             }
+            hasher.update(&chunk);
             file.write_all(&chunk)
                 .await
                 .map_err(|e| format!("Failed to write chunk: {}", e))?;
@@ -337,9 +506,19 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
             .map_err(|e| format!("Failed to flush core archive: {e}"))?;
         drop(file);
 
-        let _ = progress_sender.try_send("Extracting core...".to_string());
+        let _ = progress_sender.try_send("Verifying core...".to_string());
+        if downloaded as u64 != asset.size {
+            return Err(format!(
+                "Core download size mismatch: expected {}, received {}",
+                asset.size, downloaded
+            ));
+        }
+        let actual_digest = format!("{:x}", hasher.finalize());
+        if actual_digest != expected_digest {
+            return Err("Core archive SHA-256 verification failed".to_string());
+        }
 
-        let _ = fs::remove_file(&staged_path);
+        let _ = progress_sender.try_send("Extracting core...".to_string());
 
         #[cfg(target_os = "windows")]
         {
@@ -351,29 +530,49 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
                 let mut archive = zip::ZipArchive::new(zip_file)
                     .map_err(|e| format!("Invalid zip archive: {e}"))?;
 
+                let mut matches = 0usize;
                 for index in 0..archive.len() {
                     let mut entry = archive
                         .by_index(index)
                         .map_err(|e| format!("Failed to read zip entry: {e}"))?;
-                    if !entry.name().ends_with(get_core_filename()) {
+                    let Some(path) = entry.enclosed_name() else {
                         continue;
+                    };
+                    let is_symlink = entry
+                        .unix_mode()
+                        .is_some_and(|mode| mode & 0o170000 == 0o120000);
+                    if !entry.is_file()
+                        || is_symlink
+                        || !is_safe_core_entry(&path, get_core_filename())
+                    {
+                        continue;
+                    }
+                    matches += 1;
+                    if matches > 1 {
+                        return Err(
+                            "Core archive contains ambiguous duplicate binaries".to_string()
+                        );
                     }
                     if entry.size() == 0 || entry.size() > MAX_CORE_BINARY_BYTES {
                         return Err("Downloaded core binary has an invalid size".to_string());
                     }
-                    let mut output = File::create(&output_path)
+                    let mut output = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&output_path)
                         .map_err(|e| format!("Failed to create staged core: {e}"))?;
                     io::copy(&mut entry, &mut output)
                         .map_err(|e| format!("Failed to extract core: {e}"))?;
                     output
                         .sync_all()
                         .map_err(|e| format!("Failed to flush staged core: {e}"))?;
-                    return Ok(());
                 }
-                Err(format!(
-                    "Could not find {} inside downloaded zip package",
-                    get_core_filename()
-                ))
+                (matches == 1).then_some(()).ok_or_else(|| {
+                    format!(
+                        "Could not find {} inside downloaded zip package",
+                        get_core_filename()
+                    )
+                })
             })
             .await
             .map_err(|e| format!("Core extraction task failed: {e}"))??;
@@ -389,24 +588,34 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
                 let gz = flate2::read::GzDecoder::new(tar_gz);
                 let mut archive = tar::Archive::new(gz);
 
+                let mut matches = 0usize;
                 for entry in archive
                     .entries()
                     .map_err(|e| format!("Failed to inspect tar.gz: {e}"))?
                 {
                     let mut entry = entry.map_err(|e| format!("Failed to read tar entry: {e}"))?;
-                    let is_core = entry
+                    let path = entry
                         .path()
-                        .ok()
-                        .and_then(|path| path.file_name().map(|name| name == "sing-box"))
-                        .unwrap_or(false);
+                        .map_err(|e| format!("Invalid tar entry path: {e}"))?;
+                    let is_core = entry.header().entry_type().is_file()
+                        && is_safe_core_entry(&path, "sing-box");
                     if !is_core {
                         continue;
+                    }
+                    matches += 1;
+                    if matches > 1 {
+                        return Err(
+                            "Core archive contains ambiguous duplicate binaries".to_string()
+                        );
                     }
                     let size = entry.header().size().unwrap_or(0);
                     if size == 0 || size > MAX_CORE_BINARY_BYTES {
                         return Err("Downloaded core binary has an invalid size".to_string());
                     }
-                    let mut output = File::create(&output_path)
+                    let mut output = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&output_path)
                         .map_err(|e| format!("Failed to create staged core: {e}"))?;
                     std::io::copy(&mut entry, &mut output)
                         .map_err(|e| format!("Failed to extract core: {e}"))?;
@@ -420,9 +629,10 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
                         fs::set_permissions(&output_path, fs::Permissions::from_mode(0o755))
                             .map_err(|e| format!("Failed to mark staged core executable: {e}"))?;
                     }
-                    return Ok(());
                 }
-                Err("Could not find sing-box inside downloaded tar package".to_string())
+                (matches == 1).then_some(()).ok_or_else(|| {
+                    "Could not find sing-box inside downloaded tar package".to_string()
+                })
             })
             .await
             .map_err(|e| format!("Core extraction task failed: {e}"))??;
@@ -434,7 +644,9 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
         if staged_size == 0 || staged_size > MAX_CORE_BINARY_BYTES {
             return Err("Downloaded core binary has an invalid size".to_string());
         }
+        validate_binary_magic(&staged_path)?;
 
+        let _ = progress_sender.try_send("Installing core...".to_string());
         install_staged_core(&staged_path, &dest_path)?;
 
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -491,8 +703,7 @@ pub fn prepare_run_config(gui_config: &GuiConfig) -> Result<PathBuf, String> {
     let run_config_path = get_app_dir().join("run_config.json");
     let run_config_content = serde_json::to_string_pretty(&final_config)
         .map_err(|e| format!("Failed to serialize final config: {}", e))?;
-    fs::write(&run_config_path, &run_config_content)
-        .map_err(|e| format!("Failed to save final run_config: {}", e))?;
+    crate::config::atomic_write(&run_config_path, run_config_content.as_bytes())?;
     Ok(run_config_path)
 }
 
@@ -631,12 +842,35 @@ pub fn stop_core() {
     INTENTIONAL_STOP.store(true, Ordering::SeqCst);
     CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
     let mut lock = get_process_lock();
-    if let Some(mut child) = lock.take() {
+    if let Some(child) = lock.as_mut() {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                lock.take();
+                return;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                if let Ok(mut g) = LAST_UNEXPECTED_EXIT.lock() {
+                    *g = Some(format!("Failed to inspect core before stopping: {error}"));
+                }
+            }
+        }
         #[cfg(unix)]
         {
             let pid = child.id() as libc::pid_t;
             unsafe {
-                libc::kill(pid, libc::SIGTERM);
+                let result = libc::kill(pid, libc::SIGTERM);
+                if result != 0 {
+                    let error = std::io::Error::last_os_error();
+                    // ESRCH means the process exited between try_wait and
+                    // kill; it is a successful stop from the user's point of
+                    // view. Other errors are retained for diagnostics.
+                    if error.raw_os_error() != Some(libc::ESRCH) {
+                        if let Ok(mut g) = LAST_UNEXPECTED_EXIT.lock() {
+                            *g = Some(format!("Failed to terminate core: {error}"));
+                        }
+                    }
+                }
             }
             let start = Instant::now();
             let mut exited = false;
@@ -649,7 +883,10 @@ pub fn stop_core() {
                     Ok(None) => {
                         thread::sleep(Duration::from_millis(50));
                     }
-                    Err(_) => {
+                    Err(error) => {
+                        if let Ok(mut g) = LAST_UNEXPECTED_EXIT.lock() {
+                            *g = Some(format!("Failed while waiting for core: {error}"));
+                        }
                         break;
                     }
                 }
@@ -663,6 +900,7 @@ pub fn stop_core() {
             let _ = child.kill();
         }
         let _ = child.wait();
+        lock.take();
     }
 }
 
@@ -685,10 +923,14 @@ fn is_core_running_locked(lock: &mut Option<Child>) -> bool {
                 CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
                 false
             }
-            Err(_) => {
-                *lock = None;
-                CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
-                false
+            Err(error) => {
+                if let Ok(mut g) = LAST_UNEXPECTED_EXIT.lock() {
+                    *g = Some(format!("Failed to inspect core process: {error}"));
+                }
+                // Do not discard the child on an indeterminate status. A
+                // later authoritative check can still reap it safely.
+                CORE_RUNNING_CACHED.store(true, Ordering::SeqCst);
+                true
             }
         }
     } else {
@@ -768,6 +1010,70 @@ mod tests {
             dest.file_name().and_then(|name| name.to_str()).unwrap()
         ));
         assert!(!backup.exists());
+    }
+
+    #[test]
+    fn digest_parser_fails_closed() {
+        assert!(normalize_sha256_digest("sha256:abcd").is_err());
+        assert!(normalize_sha256_digest(&format!("sha256:{}", "a".repeat(64))).is_ok());
+        assert!(normalize_sha256_digest(&"a".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn core_asset_url_must_match_official_release_path() {
+        let name = "sing-box-1.13.14-windows-amd64.zip";
+        assert!(is_official_core_asset_url(
+            "https://github.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-windows-amd64.zip",
+            "1.13.14",
+            name
+        ));
+        assert!(!is_official_core_asset_url(
+            "https://example.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-windows-amd64.zip",
+            "1.13.14",
+            name
+        ));
+        assert!(!is_official_core_asset_url(
+            "https://github.com/SagerNet/sing-box/releases/download/v1.13.13/sing-box-1.13.14-windows-amd64.zip",
+            "1.13.14",
+            name
+        ));
+    }
+
+    #[test]
+    fn archive_entry_filter_rejects_traversal_and_accepts_exact_basename() {
+        assert!(is_safe_core_entry(
+            Path::new("sing-box-1.0/sing-box.exe"),
+            "sing-box.exe"
+        ));
+        assert!(!is_safe_core_entry(
+            Path::new("../sing-box.exe"),
+            "sing-box.exe"
+        ));
+        assert!(!is_safe_core_entry(
+            Path::new("sing-box.exe/other"),
+            "sing-box.exe"
+        ));
+    }
+
+    #[test]
+    fn binary_magic_rejects_plain_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("candidate");
+        fs::write(&path, b"not an executable").unwrap();
+        assert!(validate_binary_magic(&path).is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn binary_magic_accepts_pe_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("candidate.exe");
+        let mut bytes = vec![0u8; 0x84];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&(0x80u32).to_le_bytes());
+        bytes[0x80..0x84].copy_from_slice(b"PE\0\0");
+        fs::write(&path, bytes).unwrap();
+        assert!(validate_binary_magic(&path).is_ok());
     }
 
     #[test]
@@ -865,5 +1171,20 @@ mod tests {
             let decoded_gbk = decode_log_line(gbk_bytes);
             assert_eq!(decoded_gbk, "hello 国外");
         }
+    }
+
+    #[test]
+    fn log_forwarder_truncates_oversized_unterminated_lines_and_recovers() {
+        let mut input = vec![b'x'; 70 * 1024];
+        input.extend_from_slice(b"\nok\n");
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
+        let early = Arc::new(Mutex::new(Vec::new()));
+        spawn_log_forwarder(std::io::Cursor::new(input), tx, early);
+
+        let first = rx.blocking_recv().expect("truncated line");
+        let second = rx.blocking_recv().expect("following line");
+        assert!(first.ends_with("[truncated]"));
+        assert!(first.len() < 66 * 1024);
+        assert_eq!(second, "ok");
     }
 }
