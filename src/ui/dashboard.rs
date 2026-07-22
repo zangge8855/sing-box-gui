@@ -3,7 +3,9 @@ use crate::state::{Bandwidth, GuiConfig, RoutingMode};
 use crate::ui::page_header;
 use crate::ui::theme;
 use crate::ui::util::{format_size_precise as format_size, format_speed};
-use iced::widget::{Space, button, column, container, pick_list, responsive, row, svg, text};
+use iced::widget::{
+    Space, button, column, container, pick_list, responsive, row, svg, text, tooltip,
+};
 use iced::{Alignment, Element, Length};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -627,6 +629,19 @@ pub fn render<'a>(
         .on_press(Message::TabChanged(crate::state::Tab::Proxies))
         .width(Length::FillPortion(2));
 
+        let node_btn_wrapped: Element<'_, Message> = tooltip(
+            node_btn,
+            container(
+                text(node_label.to_string())
+                    .size(theme::TYPE_BTN_SM)
+                    .color(theme::text_primary(theme)),
+            )
+            .padding([6, 10])
+            .style(theme::card_bg),
+            tooltip::Position::Top,
+        )
+        .into();
+
         let conn_btn = button(
             column![
                 text(tr(lang, "dash_connections"))
@@ -646,7 +661,7 @@ pub fn render<'a>(
         .width(Length::FillPortion(1));
 
         let summary_card = container(
-            row![node_btn, conn_btn]
+            row![node_btn_wrapped, conn_btn]
                 .spacing(crate::ui::SP_20)
                 .align_y(Alignment::Center)
                 .width(Length::Fill),

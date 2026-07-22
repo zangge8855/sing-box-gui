@@ -667,7 +667,7 @@ fn render_proxy_card<'a>(
 ) -> Element<'a, Message> {
     use crate::ui::i18n::tr;
     use crate::ui::theme;
-    use iced::widget::{button, column, container, row, text};
+    use iced::widget::{button, column, container, row, text, tooltip};
     use iced::{Alignment, Length};
 
     let text_primary = if theme::is_dark(theme) {
@@ -792,7 +792,22 @@ fn render_proxy_card<'a>(
         card_btn = card_btn.on_press(Message::SelectNode(node_clone));
     }
 
-    card_btn.into()
+    if node_name.chars().count() > 28 {
+        tooltip(
+            card_btn,
+            container(
+                text(node_name.to_string())
+                    .size(theme::TYPE_BTN_SM)
+                    .color(theme::text_primary(theme)),
+            )
+            .padding([6, 10])
+            .style(theme::card_bg),
+            tooltip::Position::Top,
+        )
+        .into()
+    } else {
+        card_btn.into()
+    }
 }
 
 fn build_card_grid<'a>(
