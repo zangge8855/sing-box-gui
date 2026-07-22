@@ -4741,6 +4741,7 @@ dependencies = [
  "tray-icon",
  "url",
  "urlencoding",
+ "windows-sys 0.52.0",
  "winreg",
  "winres",
  "zip",

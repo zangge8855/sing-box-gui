@@ -88,7 +88,8 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
             )
             .map_err(|e| format!("Failed to open autostart registry key: {e}"))?;
         if enable {
-            let quoted = format!("\"{}\"", exe.to_string_lossy());
+            let escaped = exe.to_string_lossy().replace('"', "\\\"");
+            let quoted = format!("\"{escaped}\"");
             run_key
                 .set_value("sing-box-gui", &quoted)
                 .map_err(|e| format!("Failed to write autostart registry: {e}"))?;

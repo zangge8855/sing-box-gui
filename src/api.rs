@@ -14,6 +14,11 @@ fn get_client() -> &'static reqwest::Client {
     })
 }
 
+fn get_streaming_client() -> &'static reqwest::Client {
+    static STREAM_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    STREAM_CLIENT.get_or_init(|| reqwest::Client::builder().build().unwrap_or_default())
+}
+
 /// Look up `experimental.clash_api.secret` from the on-disk run configuration
 /// and attach `Authorization: Bearer <secret>` to the request when present.
 /// Native sing-box profiles often run with a non-empty secret; the generated
@@ -40,8 +45,9 @@ pub struct TrafficInfo {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ProxyInfo {
+    #[serde(default)]
     pub name: String,
-    #[serde(rename = "type")]
+    #[serde(default, rename = "type")]
     pub proxy_type: String,
     pub udp: Option<bool>,
     pub history: Option<Vec<serde_json::Value>>,
@@ -203,10 +209,14 @@ pub async fn test_node_latency(
         timeout_ms
     );
     let client = get_client();
-    let res = with_secret(client.get(&url))
-        .send()
-        .await
-        .map_err(|e| format!("Latency test request failed: {}", e))?;
+    let res = with_secret(
+        client
+            .get(&url)
+            .timeout(std::time::Duration::from_millis(timeout_ms as u64 + 1000)),
+    )
+    .send()
+    .await
+    .map_err(|e| format!("Latency test request failed: {}", e))?;
 
     if res.status().is_success() {
         let delay_res = res
@@ -341,7 +351,7 @@ pub fn spawn_traffic_monitor(
 ) {
     tokio::spawn(async move {
         let url = format!("http://127.0.0.1:{}/traffic", api_port);
-        let client = get_client();
+        let client = get_streaming_client();
 
         loop {
             tokio::select! {

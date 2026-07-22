@@ -91,10 +91,12 @@ pub enum Message {
         error: Option<String>,
     },
     StartLatencyTest,
+    #[allow(dead_code)]
     NodeLatencyTested {
         tag: String,
         latency: Option<u64>,
     },
+    NodeLatencyBatch(Vec<(String, Option<u64>)>),
     Tick,
     ConfigSaved {
         saved_config: GuiConfig,

@@ -9,7 +9,7 @@ use std::io::{BufReader, Read};
 use std::io::{Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -187,9 +187,57 @@ pub fn wait_core_startup_grace(
     }
 }
 
+fn get_last_unexpected_exit_lock() -> std::sync::MutexGuard<'static, Option<String>> {
+    LAST_UNEXPECTED_EXIT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Take and clear any unexpected-exit message recorded by `is_core_running`.
 pub fn take_unexpected_core_exit() -> Option<String> {
-    LAST_UNEXPECTED_EXIT.lock().ok().and_then(|mut g| g.take())
+    get_last_unexpected_exit_lock().take()
+}
+
+pub fn cleanup_stale_temp_binaries() {
+    let bin_dir = get_app_dir().join("bin");
+    if let Ok(entries) = std::fs::read_dir(&bin_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && (name.starts_with(".sing-box.") || name.starts_with(".sing-box-"))
+            {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn bind_child_to_job_object(child: &std::process::Child) -> Result<(), String> {
+    use windows_sys::Win32::System::JobObjects::*;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use std::os::windows::io::AsRawHandle;
+
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job == 0 {
+            return Err("Failed to create JobObject".to_string());
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let set_res = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if set_res == 0 {
+            return Err("Failed to set JobObject info".to_string());
+        }
+        let assign_res = AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE);
+        if assign_res == 0 {
+            return Err("Failed to assign process to JobObject".to_string());
+        }
+    }
+    Ok(())
 }
 
 pub fn get_core_filename() -> &'static str {
@@ -749,11 +797,13 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
     // Reset the intentional-stop flag up front so a failed restart does not
     // leave a stale flag lingering when no child is being tracked.
     INTENTIONAL_STOP.store(false, Ordering::SeqCst);
-    let mut lock = get_process_lock();
-    if lock.is_some() {
-        // Already tracking a child — only treat as running if it is still alive.
-        if is_core_running_locked(&mut lock) {
-            return Ok(());
+    {
+        let mut lock = get_process_lock();
+        if lock.is_some() {
+            // Already tracking a child — only treat as running if it is still alive.
+            if is_core_running_locked(&mut lock) {
+                return Ok(());
+            }
         }
     }
 
@@ -808,6 +858,9 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
         .spawn()
         .map_err(|e| format!("Failed to start process: {}", e))?;
 
+    #[cfg(target_os = "windows")]
+    let _ = bind_child_to_job_object(&child);
+
     let stdout = child
         .stdout
         .take()
@@ -830,10 +883,12 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
     }
 
     INTENTIONAL_STOP.store(false, Ordering::SeqCst);
-    if let Ok(mut g) = LAST_UNEXPECTED_EXIT.lock() {
+    {
+        let mut g = get_last_unexpected_exit_lock();
         *g = None;
     }
     CORE_RUNNING_CACHED.store(true, Ordering::SeqCst);
+    let mut lock = get_process_lock();
     *lock = Some(child);
     Ok(())
 }
@@ -850,9 +905,8 @@ pub fn stop_core() {
             }
             Ok(None) => {}
             Err(error) => {
-                if let Ok(mut g) = LAST_UNEXPECTED_EXIT.lock() {
-                    *g = Some(format!("Failed to inspect core before stopping: {error}"));
-                }
+                let mut g = get_last_unexpected_exit_lock();
+                *g = Some(format!("Failed to inspect core before stopping: {error}"));
             }
         }
         #[cfg(unix)]
@@ -866,9 +920,8 @@ pub fn stop_core() {
                     // kill; it is a successful stop from the user's point of
                     // view. Other errors are retained for diagnostics.
                     if error.raw_os_error() != Some(libc::ESRCH) {
-                        if let Ok(mut g) = LAST_UNEXPECTED_EXIT.lock() {
-                            *g = Some(format!("Failed to terminate core: {error}"));
-                        }
+                        let mut g = get_last_unexpected_exit_lock();
+                        *g = Some(format!("Failed to terminate core: {error}"));
                     }
                 }
             }
@@ -884,9 +937,8 @@ pub fn stop_core() {
                         thread::sleep(Duration::from_millis(50));
                     }
                     Err(error) => {
-                        if let Ok(mut g) = LAST_UNEXPECTED_EXIT.lock() {
-                            *g = Some(format!("Failed while waiting for core: {error}"));
-                        }
+                        let mut g = get_last_unexpected_exit_lock();
+                        *g = Some(format!("Failed while waiting for core: {error}"));
                         break;
                     }
                 }
@@ -904,33 +956,41 @@ pub fn stop_core() {
     }
 }
 
+static CONSECUTIVE_TRY_WAIT_ERRORS: AtomicUsize = AtomicUsize::new(0);
+
 fn is_core_running_locked(lock: &mut Option<Child>) -> bool {
     if let Some(ref mut child) = *lock {
         match child.try_wait() {
             Ok(None) => {
+                CONSECUTIVE_TRY_WAIT_ERRORS.store(0, Ordering::SeqCst);
                 CORE_RUNNING_CACHED.store(true, Ordering::SeqCst);
                 true
             }
             Ok(Some(status)) => {
+                CONSECUTIVE_TRY_WAIT_ERRORS.store(0, Ordering::SeqCst);
                 *lock = None;
                 let intentional = INTENTIONAL_STOP.swap(false, Ordering::SeqCst);
                 if !intentional {
                     let msg = format_unexpected_exit(status.code());
-                    if let Ok(mut g) = LAST_UNEXPECTED_EXIT.lock() {
-                        *g = Some(msg);
-                    }
+                    let mut g = get_last_unexpected_exit_lock();
+                    *g = Some(msg);
                 }
                 CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
                 false
             }
             Err(error) => {
-                if let Ok(mut g) = LAST_UNEXPECTED_EXIT.lock() {
-                    *g = Some(format!("Failed to inspect core process: {error}"));
+                let count = CONSECUTIVE_TRY_WAIT_ERRORS.fetch_add(1, Ordering::SeqCst) + 1;
+                let mut g = get_last_unexpected_exit_lock();
+                *g = Some(format!("Failed to inspect core process: {error}"));
+                if count >= 3 {
+                    *lock = None;
+                    CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
+                    CONSECUTIVE_TRY_WAIT_ERRORS.store(0, Ordering::SeqCst);
+                    false
+                } else {
+                    CORE_RUNNING_CACHED.store(true, Ordering::SeqCst);
+                    true
                 }
-                // Do not discard the child on an indeterminate status. A
-                // later authoritative check can still reap it safely.
-                CORE_RUNNING_CACHED.store(true, Ordering::SeqCst);
-                true
             }
         }
     } else {

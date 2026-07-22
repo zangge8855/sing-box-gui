@@ -2875,6 +2875,16 @@ pub fn rewrite_remote_rule_set_url(url: &str) -> String {
             break;
         }
     }
+    if let Some(rest) = current.strip_prefix("https://raw.githubusercontent.com/") {
+        let parts: Vec<&str> = rest.splitn(4, '/').collect();
+        if parts.len() == 4 {
+            current = format!(
+                "https://testingcf.jsdelivr.net/gh/{}@{}",
+                format_args!("{}/{}", parts[0], parts[1]),
+                format_args!("{}/{}", parts[2], parts[3])
+            );
+        }
+    }
     current
 }
 
@@ -3027,10 +3037,10 @@ pub fn merge_native_json_profile(
                     obj.insert("listen_port".to_string(), json!(gui_config.mixed_port));
                     mixed_found = true;
                 } else if t == "tun" {
-                    obj.insert("interface_name".to_string(), json!("singbox-tun"));
-                    obj.insert("auto_route".to_string(), json!(true));
-                    obj.insert("strict_route".to_string(), json!(true));
-                    obj.insert("stack".to_string(), json!("system"));
+                    obj.entry("interface_name".to_string()).or_insert(json!("singbox-tun"));
+                    obj.entry("auto_route".to_string()).or_insert(json!(true));
+                    obj.entry("strict_route".to_string()).or_insert(json!(true));
+                    obj.entry("stack".to_string()).or_insert(json!("system"));
                     tun_found = true;
                 }
             }

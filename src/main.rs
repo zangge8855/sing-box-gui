@@ -1782,28 +1782,34 @@ impl App {
                 let test_url = self.gui_config.latency_test_url.clone();
                 let timeout_ms = self.gui_config.latency_test_timeout_ms;
                 // Cap concurrent delay probes so Clash API / UI are not stampeded.
-                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
-
-                let tasks = self
+                let node_tags: Vec<String> = self
                     .active_profile_nodes
                     .iter()
                     .filter(|node| node.selectable)
-                    .map(|node| {
-                        let tag = node.name.clone();
+                    .map(|node| node.name.clone())
+                    .collect();
+
+                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+                let chunks = node_tags.chunks(20).map(|c| c.to_vec()).collect::<Vec<_>>();
+                let tasks = chunks
+                    .into_iter()
+                    .map(|chunk| {
                         let test_url = test_url.clone();
                         let sem = std::sync::Arc::clone(&sem);
                         Task::perform(
                             async move {
-                                let _permit = sem.acquire().await;
-                                let latency =
-                                    api::test_node_latency(api_port, &tag, &test_url, timeout_ms)
-                                        .await;
-                                (tag, latency)
+                                let mut results = Vec::with_capacity(chunk.len());
+                                for tag in chunk {
+                                    let _permit = sem.acquire().await;
+                                    let latency = api::test_node_latency(
+                                        api_port, &tag, &test_url, timeout_ms,
+                                    )
+                                    .await;
+                                    results.push((tag, latency.ok()));
+                                }
+                                results
                             },
-                            |(tag, res)| Message::NodeLatencyTested {
-                                tag,
-                                latency: res.ok(),
-                            },
+                            Message::NodeLatencyBatch,
                         )
                     })
                     .collect::<Vec<_>>();
@@ -1814,6 +1820,16 @@ impl App {
                 for node in &mut self.active_profile_nodes {
                     if node.name == tag {
                         node.latency = latency;
+                    }
+                }
+                Task::none()
+            }
+            Message::NodeLatencyBatch(batch) => {
+                for (tag, latency) in batch {
+                    for node in &mut self.active_profile_nodes {
+                        if node.name == tag {
+                            node.latency = latency;
+                        }
                     }
                 }
                 Task::none()
@@ -4578,6 +4594,20 @@ exit 1
 /// using dotted numeric comparison. Falls back to string inequality when
 /// neither side parses at all.
 fn main() -> iced::Result {
+    core::cleanup_stale_temp_binaries();
+
+    let default_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let config = config::load_gui_config();
+        if config.system_proxy_owned
+            || sysproxy::is_system_proxy_owned()
+            || sysproxy::has_persisted_backup()
+        {
+            let _ = sysproxy::set_system_proxy(false, config.mixed_port);
+        }
+        default_panic(info);
+    }));
+
     let icon_bytes = include_bytes!("../assets/app-icon.png");
     let icon = iced::window::icon::from_file_data(icon_bytes, None).ok();
 
@@ -4605,20 +4635,22 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .run();
 
-    // CRITICAL EXIT CLEANUP. Proxy ownership is always cleaned up, even when
-    // the user chose to leave the core running on exit. The persisted config
-    // is only a fallback for abnormal window closure; normal exits already
-    // run the async state machine above.
-    let config = config::load_gui_config();
-    if config.close_core_on_exit {
-        core::stop_core();
-    }
-    if config.system_proxy_owned
-        || sysproxy::is_system_proxy_owned()
-        || sysproxy::has_persisted_backup()
-    {
-        let _ = sysproxy::set_system_proxy(false, config.mixed_port);
-    }
+    // CRITICAL EXIT CLEANUP with timeout.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let config = config::load_gui_config();
+        if config.close_core_on_exit {
+            core::stop_core();
+        }
+        if config.system_proxy_owned
+            || sysproxy::is_system_proxy_owned()
+            || sysproxy::has_persisted_backup()
+        {
+            let _ = sysproxy::set_system_proxy(false, config.mixed_port);
+        }
+        let _ = tx.send(());
+    });
+    let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
 
     res
 }

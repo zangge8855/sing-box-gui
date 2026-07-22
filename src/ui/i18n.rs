@@ -859,15 +859,24 @@ mod tests {
                         continue;
                     }
                     let key: &'static str = Box::leak(key.to_string().into_boxed_str());
+                    let en_str = tr(Language::En, key);
+                    let zh_str = tr(Language::Zh, key);
                     assert_ne!(
-                        tr(Language::En, key),
+                        en_str,
                         key,
                         "missing English translation: {key}"
                     );
                     assert_ne!(
-                        tr(Language::Zh, key),
+                        zh_str,
                         key,
                         "missing Chinese translation: {key}"
+                    );
+
+                    let en_placeholders = en_str.matches("{}").count();
+                    let zh_placeholders = zh_str.matches("{}").count();
+                    assert_eq!(
+                        en_placeholders, zh_placeholders,
+                        "Placeholder count mismatch for key '{key}': EN has {en_placeholders}, ZH has {zh_placeholders}"
                     );
                 }
             }
