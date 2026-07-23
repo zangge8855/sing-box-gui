@@ -3037,7 +3037,8 @@ pub fn merge_native_json_profile(
                     obj.insert("listen_port".to_string(), json!(gui_config.mixed_port));
                     mixed_found = true;
                 } else if t == "tun" {
-                    obj.entry("interface_name".to_string()).or_insert(json!("singbox-tun"));
+                    obj.entry("interface_name".to_string())
+                        .or_insert(json!("singbox-tun"));
                     obj.entry("auto_route".to_string()).or_insert(json!(true));
                     obj.entry("strict_route".to_string()).or_insert(json!(true));
                     obj.entry("stack".to_string()).or_insert(json!("system"));

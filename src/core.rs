@@ -188,7 +188,9 @@ pub fn wait_core_startup_grace(
 }
 
 fn get_last_unexpected_exit_lock() -> std::sync::MutexGuard<'static, Option<String>> {
-    LAST_UNEXPECTED_EXIT.lock().unwrap_or_else(|e| e.into_inner())
+    LAST_UNEXPECTED_EXIT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 /// Take and clear any unexpected-exit message recorded by `is_core_running`.
@@ -212,9 +214,9 @@ pub fn cleanup_stale_temp_binaries() {
 
 #[cfg(target_os = "windows")]
 fn bind_child_to_job_object(child: &std::process::Child) -> Result<(), String> {
-    use windows_sys::Win32::System::JobObjects::*;
-    use windows_sys::Win32::Foundation::HANDLE;
     use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::JobObjects::*;
 
     unsafe {
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());

@@ -861,16 +861,8 @@ mod tests {
                     let key: &'static str = Box::leak(key.to_string().into_boxed_str());
                     let en_str = tr(Language::En, key);
                     let zh_str = tr(Language::Zh, key);
-                    assert_ne!(
-                        en_str,
-                        key,
-                        "missing English translation: {key}"
-                    );
-                    assert_ne!(
-                        zh_str,
-                        key,
-                        "missing Chinese translation: {key}"
-                    );
+                    assert_ne!(en_str, key, "missing English translation: {key}");
+                    assert_ne!(zh_str, key, "missing Chinese translation: {key}");
 
                     let en_placeholders = en_str.matches("{}").count();
                     let zh_placeholders = zh_str.matches("{}").count();

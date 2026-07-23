@@ -53,7 +53,11 @@ pub fn is_remote_version_newer(local_pkg_version: &str, remote_tag: &str) -> boo
 
     // Compare pre-release tag (5th item if present, where absent/release = u64::MAX)
     let l_pre = if local.len() > 4 { local[4] } else { u64::MAX };
-    let r_pre = if remote.len() > 4 { remote[4] } else { u64::MAX };
+    let r_pre = if remote.len() > 4 {
+        remote[4]
+    } else {
+        u64::MAX
+    };
     r_pre > l_pre
 }
 
