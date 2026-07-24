@@ -1,7 +1,7 @@
 # sing-box GUI
 
 [![Build](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml/badge.svg)](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml)
-![Version](https://img.shields.io/badge/version-2026.7.23-6d5ce7.svg)
+![Version](https://img.shields.io/badge/version-2026.7.24-6d5ce7.svg)
 
 <p align="center">
   <img src="assets/logo.jpg" alt="sing-box GUI" width="112" height="112" />

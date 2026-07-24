@@ -3969,7 +3969,7 @@ mod tests {
 
     #[test]
     fn update_asset_url_and_digest_validation_fail_closed() {
-        let tag = "v2026.7.23";
+        let tag = "v2026.7.24";
         let name = expected_update_asset_name(tag);
         let official = url::Url::parse(&format!(
             "https://github.com/zangge8855/sing-box-gui/releases/download/{tag}/{name}"
