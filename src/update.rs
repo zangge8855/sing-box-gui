@@ -144,7 +144,10 @@ mod tests {
         assert!(!is_remote_version_newer("v", "1.0.0"));
         assert!(!is_remote_version_newer("1.0.0", "v"));
         assert!(!is_remote_version_newer("1.0.0.0.0", "1.0.0.0.0"));
-        assert!(!is_remote_version_newer("invalid.version", "another.invalid"));
+        assert!(!is_remote_version_newer(
+            "invalid.version",
+            "another.invalid"
+        ));
         assert!(!is_remote_version_newer("", "2026.7.24"));
         assert!(!is_remote_version_newer("2026.7.24", ""));
 
