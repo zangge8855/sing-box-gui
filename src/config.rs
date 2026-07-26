@@ -1441,6 +1441,12 @@ pub fn get_profile_path(profile_id: &str) -> PathBuf {
         .join(format!("{}.json", sanitized))
 }
 
+/// Outbound tags emitted by `convert_clash_to_singbox` itself. Node names must
+/// never collide with these or the generated config fails sing-box's duplicate
+/// tag check; both the converter and the UI node parser dedup against them so
+/// displayed names stay in sync with generated tags.
+const RESERVED_OUTBOUND_TAGS: &[&str] = &["Proxy", "Auto", "direct", "block"];
+
 pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
     let key_name = serde_yaml::Value::String("name".into());
     let key_port = serde_yaml::Value::String("port".into());
@@ -1456,7 +1462,11 @@ pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
         .ok_or_else(|| "No 'proxies' key found in config file".to_string())?;
 
     let mut nodes = Vec::new();
-    let mut used_names = BTreeSet::new();
+    // Mirror the converter's reserved-tag dedup so UI names match run tags.
+    let mut used_names: BTreeSet<String> = RESERVED_OUTBOUND_TAGS
+        .iter()
+        .map(|tag| tag.to_string())
+        .collect();
     for item in proxies {
         if let Some(map) = item.as_mapping() {
             let name = map
@@ -1934,7 +1944,14 @@ pub fn convert_clash_to_singbox(
 
     let mut outbounds = Vec::new();
     let mut node_tags = Vec::new();
-    let mut used_tags = BTreeSet::new();
+    // Reserve the tags this generator emits itself ("Proxy" selector, "Auto"
+    // urltest, standard direct/block) so a node with one of these names gets
+    // a " (2)" suffix instead of producing a duplicate outbound tag that
+    // sing-box rejects at startup.
+    let mut used_tags: BTreeSet<String> = RESERVED_OUTBOUND_TAGS
+        .iter()
+        .map(|tag| tag.to_string())
+        .collect();
     let mut unsupported_types = BTreeSet::new();
 
     for item in proxies_arr {
@@ -2877,12 +2894,33 @@ pub fn rewrite_remote_rule_set_url(url: &str) -> String {
     }
     if let Some(rest) = current.strip_prefix("https://raw.githubusercontent.com/") {
         let parts: Vec<&str> = rest.splitn(4, '/').collect();
-        if parts.len() == 4 {
-            current = format!(
-                "https://testingcf.jsdelivr.net/gh/{}@{}",
-                format_args!("{}/{}", parts[0], parts[1]),
-                format_args!("{}/{}", parts[2], parts[3])
-            );
+        let rewritten = if parts.len() == 4 {
+            if parts[2] == "refs" {
+                // GitHub's UI emits fully-qualified refs (`refs/heads/<branch>`
+                // / `refs/tags/<tag>`); jsDelivr only accepts the bare ref
+                // name, so peel the prefix. Unknown refs forms stay untouched
+                // rather than being rewritten into a guaranteed 404.
+                parts[3]
+                    .strip_prefix("heads/")
+                    .or_else(|| parts[3].strip_prefix("tags/"))
+                    .and_then(|ref_and_path| ref_and_path.split_once('/'))
+                    .map(|(version, path)| {
+                        format!(
+                            "https://testingcf.jsdelivr.net/gh/{}/{}@{}/{}",
+                            parts[0], parts[1], version, path
+                        )
+                    })
+            } else {
+                Some(format!(
+                    "https://testingcf.jsdelivr.net/gh/{}/{}@{}/{}",
+                    parts[0], parts[1], parts[2], parts[3]
+                ))
+            }
+        } else {
+            None
+        };
+        if let Some(new_url) = rewritten {
+            current = new_url;
         }
     }
     current
@@ -3130,6 +3168,15 @@ pub fn merge_native_json_profile(
                     json!(format!("127.0.0.1:{}", gui_config.api_port)),
                 );
                 clash_api_obj.insert("default_mode".to_string(), json!(default_mode));
+            } else {
+                // `"clash_api": null` (or any non-object) would otherwise be
+                // kept verbatim, leaving the core without an API endpoint
+                // while the GUI polls it forever.
+                *clash_api_val = json!({
+                    "external_controller": format!("127.0.0.1:{}", gui_config.api_port),
+                    "secret": "",
+                    "default_mode": default_mode
+                });
             }
         } else {
             exp_obj.insert(
@@ -3325,6 +3372,71 @@ mod tests {
         assert_eq!(
             rewrite_remote_rule_set_url("https://cdn.jsdelivr.net/gh/x@y/z.srs"),
             "https://cdn.jsdelivr.net/gh/x@y/z.srs"
+        );
+    }
+
+    #[test]
+    fn rewrite_raw_github_refs_urls_use_bare_ref_for_jsdelivr() {
+        // Plain branch form.
+        assert_eq!(
+            rewrite_remote_rule_set_url("https://raw.githubusercontent.com/o/r/main/f.srs"),
+            "https://testingcf.jsdelivr.net/gh/o/r@main/f.srs"
+        );
+        // Fully-qualified refs/heads form emitted by GitHub's UI.
+        assert_eq!(
+            rewrite_remote_rule_set_url(
+                "https://raw.githubusercontent.com/SagerNet/sing-geosite/refs/heads/rule-set/geosite-cn.srs"
+            ),
+            "https://testingcf.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/geosite-cn.srs"
+        );
+        assert_eq!(
+            rewrite_remote_rule_set_url(
+                "https://raw.githubusercontent.com/o/r/refs/tags/v1.0/f.srs"
+            ),
+            "https://testingcf.jsdelivr.net/gh/o/r@v1.0/f.srs"
+        );
+        // Unknown refs forms must not be rewritten into a guaranteed 404.
+        assert_eq!(
+            rewrite_remote_rule_set_url("https://raw.githubusercontent.com/o/r/refs/weird"),
+            "https://raw.githubusercontent.com/o/r/refs/weird"
+        );
+    }
+
+    #[test]
+    fn node_names_matching_reserved_tags_get_suffixed() {
+        let yaml = r#"
+proxies:
+  - {name: direct, type: ss, server: a.com, port: 443, cipher: aes-128-gcm, password: x}
+  - {name: Auto, type: trojan, server: b.com, port: 443, password: y}
+"#;
+        let config = convert_clash_to_singbox(yaml, &GuiConfig::default()).unwrap();
+        let tags = collect_outbound_tags(&config);
+        let unique: BTreeSet<&String> = tags.iter().collect();
+        assert_eq!(
+            tags.len(),
+            unique.len(),
+            "duplicate outbound tags: {tags:?}"
+        );
+        assert!(tags.iter().any(|tag| tag == "direct (2)"), "tags: {tags:?}");
+        assert!(tags.iter().any(|tag| tag == "Auto (2)"), "tags: {tags:?}");
+
+        // The UI node parser must produce the same display names.
+        let nodes = parse_clash_yaml_nodes(yaml).unwrap();
+        let names: Vec<&str> = nodes.iter().map(|node| node.name.as_str()).collect();
+        assert_eq!(names, ["direct (2)", "Auto (2)"]);
+    }
+
+    #[test]
+    fn merge_native_json_profile_replaces_non_object_clash_api() {
+        let profile = r#"{
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+            "experimental": {"clash_api": null}
+        }"#;
+        let gui_config = GuiConfig::default();
+        let merged = merge_native_json_profile(profile, &gui_config).unwrap();
+        assert_eq!(
+            merged["experimental"]["clash_api"]["external_controller"].as_str(),
+            Some(format!("127.0.0.1:{}", gui_config.api_port).as_str())
         );
     }
 

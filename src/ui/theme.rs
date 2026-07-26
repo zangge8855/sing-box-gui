@@ -280,7 +280,9 @@ pub fn sidebar_bg(theme: &iced::Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(sidebar_surface(theme))),
         border: Border {
-            // Right-edge separator into main content
+            // iced borders are uniform, so this hairline wraps all four edges;
+            // visually it reads as the separator into main content while the
+            // window-edge sides stay near-invisible at this alpha.
             color: if dark {
                 Color::from_rgba(1.0, 1.0, 1.0, 0.08)
             } else {
@@ -500,7 +502,8 @@ pub fn button_secondary(theme: &iced::Theme, status: button::Status) -> button::
             button::Status::Active => CARD_DARK,
         };
         let border = if disabled {
-            with_alpha(BORDER_STRONG_DARK, 0.45)
+            // Fade the enabled border; `with_alpha` sets (not multiplies) alpha.
+            with_alpha(BORDER_STRONG_DARK, BORDER_STRONG_DARK.a * 0.45)
         } else {
             BORDER_STRONG_DARK
         };
@@ -518,7 +521,7 @@ pub fn button_secondary(theme: &iced::Theme, status: button::Status) -> button::
             button::Status::Active => CARD_LIGHT_BG,
         };
         let border = if disabled {
-            with_alpha(BORDER_STRONG_LIGHT, 0.45)
+            with_alpha(BORDER_STRONG_LIGHT, BORDER_STRONG_LIGHT.a * 0.45)
         } else {
             BORDER_STRONG_LIGHT
         };
@@ -591,6 +594,14 @@ pub fn button_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
                         Color::from_rgba(1.0, 1.0, 1.0, 0.055)
                     } else {
                         Color::from_rgba(0.0, 0.0, 0.0, 0.045)
+                    }
+                }
+                // Deepen (not drop) the tint while held, like button_header.
+                button::Status::Pressed => {
+                    if dark {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.07)
                     }
                 }
                 _ => Color::TRANSPARENT,

@@ -843,6 +843,7 @@ mod tests {
             include_str!("rules.rs"),
             include_str!("settings.rs"),
             include_str!("mod.rs"),
+            include_str!("util.rs"),
         ];
         let needles = ["tr(lang, \"", "self.tr(\""];
         let mut checked = std::collections::BTreeSet::new();

@@ -155,11 +155,41 @@ fn xml_escape(value: &str) -> String {
 
 #[cfg(target_os = "linux")]
 fn desktop_escape(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    // The Exec value is unescaped twice: the Desktop Entry string escape runs
+    // before quoted-argument parsing, `%` is a field-code prefix, and `` ` ``
+    // and `$` are reserved inside quoted arguments. A literal backslash must
+    // survive both levels, hence four backslashes.
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '$' => escaped.push_str("\\$"),
+            '`' => escaped.push_str("\\`"),
+            '%' => escaped.push_str("%%"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn desktop_escape_covers_exec_reserved_characters() {
+        assert_eq!(
+            super::desktop_escape("/usr/local/bin/sing-box-gui"),
+            "/usr/local/bin/sing-box-gui"
+        );
+        assert_eq!(
+            super::desktop_escape("/home/u/100%backup/app"),
+            "/home/u/100%%backup/app"
+        );
+        assert_eq!(super::desktop_escape("a$b`c\"d"), "a\\$b\\`c\\\"d");
+        assert_eq!(super::desktop_escape("a\\b"), "a\\\\\\\\b");
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn detects_linux_net_admin_capability() {
