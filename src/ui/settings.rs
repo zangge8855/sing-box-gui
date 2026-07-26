@@ -139,16 +139,25 @@ pub fn render<'a>(
                 "help_disable_proxy_on_stop",
             ),
         ] {
-            sys_items.push(
-                column![
-                    make_toggle_row(key, on, msg),
-                    text(tr(lang, help))
-                        .color(text_muted)
+            let mut item_col = column![
+                make_toggle_row(key, on, msg),
+                text(tr(lang, help))
+                    .color(text_muted)
+                    .size(theme::TYPE_CAPTION)
+            ]
+            .spacing(4);
+            // Surface the autostart apply failure inline like other field
+            // errors — the toast alone disappears after a few seconds.
+            if key == "autostart_label"
+                && let Some(error_key) = errors.get("autostart")
+            {
+                item_col = item_col.push(
+                    text(tr(lang, error_key))
                         .size(theme::TYPE_CAPTION)
-                ]
-                .spacing(4)
-                .into(),
-            );
+                        .color(theme::DANGER),
+                );
+            }
+            sys_items.push(item_col.into());
         }
         let mut sys_col = column![].spacing(12);
         for item in sys_items {

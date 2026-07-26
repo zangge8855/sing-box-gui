@@ -79,6 +79,9 @@ struct App {
     selected_node_tag: Option<String>,
     latency_testing: bool,
     downloading: bool,
+    /// Which subscription id an in-flight update belongs to (None for a new
+    /// import) — lets the Profiles page mark only that card as downloading.
+    updating_profile_id: Option<String>,
     url_input: String,
     core_installed: bool,
     core_install_state: state::CoreInstallState,
@@ -320,6 +323,7 @@ impl App {
             selected_node_tag,
             latency_testing: false,
             downloading: false,
+            updating_profile_id: None,
             url_input: String::new(),
             core_installed,
             core_install_state: state::CoreInstallState::Idle,
@@ -532,20 +536,43 @@ impl App {
         self.core_install_busy() || self.app_update_busy()
     }
 
+    /// Restore and focus the main window (it may be hidden in the tray).
+    fn show_main_window(&self) -> Task<Message> {
+        if let Some(id) = self.window_id {
+            Task::batch(vec![
+                iced::window::set_mode(id, iced::window::Mode::Windowed),
+                iced::window::gain_focus(id),
+            ])
+        } else {
+            Task::none()
+        }
+    }
+
     fn request_exit(&mut self) -> Task<Message> {
         if self.pending_exit {
             return Task::none();
         }
         if self.maintenance_busy() {
             self.toast_info(self.tr("operation_in_progress"));
-            return Task::none();
+            // Toasts render inside the window; tray Exit with a hidden window
+            // would otherwise appear to do nothing at all.
+            return self.show_main_window();
         }
         self.pending_exit = true;
         let settings_task = match self.commit_runtime_settings(true) {
             Ok(task) => task,
             Err(()) => {
-                self.pending_exit = false;
-                return Task::none();
+                // Exiting abandons an invalid settings draft instead of
+                // silently refusing to quit behind a hidden validation toast.
+                self.settings_draft = RuntimeSettingsDraft::from_config(&self.gui_config);
+                self.settings_errors.clear();
+                match self.commit_runtime_settings(true) {
+                    Ok(task) => task,
+                    Err(()) => {
+                        self.pending_exit = false;
+                        return Task::none();
+                    }
+                }
             }
         };
         Task::batch(vec![settings_task, self.continue_exit()])
@@ -876,6 +903,15 @@ impl App {
         }
     }
 
+    /// Drop API-derived snapshots that only make sense while the core runs.
+    /// Leaving them in place shows live-looking rows (connections, group node
+    /// cards) whose actions silently no-op against a stopped core.
+    fn clear_api_snapshots(&mut self) {
+        self.active_connections.clear();
+        self.proxy_groups.clear();
+        // Keep `selected_group` so the previous group restores on restart.
+    }
+
     /// Tear down traffic monitor and optionally disable system proxy after stop.
     fn on_core_stopped_cleanup(&mut self) {
         self.core_running = false;
@@ -885,6 +921,7 @@ impl App {
         self.current_speed = Bandwidth::default();
         self.total_uploaded = 0;
         self.total_downloaded = 0;
+        self.clear_api_snapshots();
         self.log_lines
             .push_back("[GUI] sing-box core stopped.".to_string());
     }
@@ -953,27 +990,9 @@ impl App {
 
     fn handle_update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::TrayIconClicked => {
-                if let Some(id) = self.window_id {
-                    Task::batch(vec![
-                        iced::window::set_mode(id, iced::window::Mode::Windowed),
-                        iced::window::gain_focus(id),
-                    ])
-                } else {
-                    Task::none()
-                }
-            }
+            Message::TrayIconClicked => self.show_main_window(),
             Message::TrayMenuClicked(id_str) => match id_str.as_str() {
-                "show_window" => {
-                    if let Some(id) = self.window_id {
-                        Task::batch(vec![
-                            iced::window::set_mode(id, iced::window::Mode::Windowed),
-                            iced::window::gain_focus(id),
-                        ])
-                    } else {
-                        Task::none()
-                    }
-                }
+                "show_window" => self.show_main_window(),
                 "toggle_core" => Task::done(Message::ToggleCore),
                 "toggle_system_proxy" => Task::done(Message::ToggleSystemProxy),
                 "mode_rule" => Task::done(Message::RoutingModeChanged(state::RoutingMode::Rule)),
@@ -1017,11 +1036,14 @@ impl App {
                     iced::keyboard::Key::Character(character)
                         if modifiers.command() && character.eq_ignore_ascii_case("s") =>
                     {
-                        return if self.editing_profile_id.is_some() {
-                            Task::done(Message::SaveProfileEdit)
-                        } else {
-                            Task::done(Message::SaveSettings)
-                        };
+                        if self.editing_profile_id.is_some() {
+                            return Task::done(Message::SaveProfileEdit);
+                        }
+                        // Only save settings from the Settings tab — firing a
+                        // "Settings saved" toast from Logs/Dashboard is noise.
+                        if self.current_tab == state::Tab::Settings {
+                            return Task::done(Message::SaveSettings);
+                        }
                     }
                     _ => {}
                 }
@@ -1097,10 +1119,12 @@ impl App {
             }
             Message::GroupNodeSelected { group, node, error } => {
                 if let Some(err) = error {
+                    let detail = redact_log_line(&err);
                     self.log_lines.push_back(format!(
                         "[GUI] Failed to select node {} for group {}: {}",
-                        node, group, err
+                        node, group, detail
                     ));
+                    self.toast_error(format!("{}: {detail}", self.tr("node_select_failed")));
                 } else {
                     if let Some(g_info) = self.proxy_groups.get_mut(&group) {
                         g_info.now = Some(node.clone());
@@ -1320,6 +1344,16 @@ impl App {
                 self.log_search = q;
                 Task::none()
             }
+            Message::ToggleLogsFollow => {
+                self.logs_follow = !self.logs_follow;
+                if self.logs_follow && !self.log_lines.is_empty() {
+                    return iced::widget::operation::snap_to(
+                        ui::logs::get_logs_scrollable_id().clone(),
+                        iced::widget::scrollable::RelativeOffset::END,
+                    );
+                }
+                Task::none()
+            }
             Message::ExportLogs => {
                 let lines = self.log_lines.clone();
                 Task::perform(
@@ -1378,7 +1412,7 @@ impl App {
                 Task::done(Message::DownloadSubscription)
             }
             Message::ClipboardContent(None) => {
-                self.toast_info(self.tr("clipboard_read_failed"));
+                self.toast_error(self.tr("clipboard_read_failed"));
                 Task::none()
             }
             Message::ImportLocalFile => Task::perform(
@@ -1511,6 +1545,13 @@ impl App {
                 if self.url_input.trim().is_empty() {
                     return Task::none();
                 }
+                // The Download button disables while downloading, but Enter in
+                // the URL field and the clipboard/file import paths land here
+                // too — guard them all against concurrent fetches.
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 self.downloading = true;
                 self.profile_error = None;
                 let url = self.url_input.clone();
@@ -1549,6 +1590,7 @@ impl App {
                 source_url,
             } => {
                 self.downloading = false;
+                self.updating_profile_id = None;
                 let mut load_nodes = false;
                 if let Some(err) = error {
                     let detail = redact_log_line(&err);
@@ -1630,11 +1672,18 @@ impl App {
                 }
             }
             Message::SelectProfile(id) => {
+                if self.downloading {
+                    // Switching mid-download would restart the core against a
+                    // profile file the in-flight update is about to replace.
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 self.confirm_delete_profile_id = None;
                 self.gui_config.active_profile_id = Some(id);
                 self.active_profile_nodes.clear();
                 self.proxy_groups.clear();
                 self.selected_group.clear();
+                self.node_search.clear();
                 self.config_dirty = true;
                 self.log_lines
                     .push_back("[GUI] Active profile updated.".to_string());
@@ -1756,8 +1805,10 @@ impl App {
             }
             Message::NodeSelected { tag, error } => {
                 if let Some(err) = error {
+                    let detail = redact_log_line(&err);
                     self.log_lines
-                        .push_back(format!("[GUI] Failed to select node: {}", err));
+                        .push_back(format!("[GUI] Failed to select node: {}", detail));
+                    self.toast_error(format!("{}: {detail}", self.tr("node_select_failed")));
                 } else {
                     self.selected_node_tag = Some(tag.clone());
                     self.gui_config.selected_node_tag = Some(tag.clone());
@@ -1816,14 +1867,6 @@ impl App {
 
                 Task::batch(tasks).chain(Task::done(Message::LatencyTestComplete))
             }
-            Message::NodeLatencyTested { tag, latency } => {
-                for node in &mut self.active_profile_nodes {
-                    if node.name == tag {
-                        node.latency = latency;
-                    }
-                }
-                Task::none()
-            }
             Message::NodeLatencyBatch(batch) => {
                 for (tag, latency) in batch {
                     for node in &mut self.active_profile_nodes {
@@ -1850,6 +1893,7 @@ impl App {
                     let url = profile.url.clone();
                     let id_clone = id.clone();
                     self.downloading = true;
+                    self.updating_profile_id = Some(id.clone());
                     self.profile_error = None;
                     self.log_lines.push_back(format!(
                         "[GUI] Updating subscription: {}",
@@ -2209,6 +2253,7 @@ impl App {
                         let _ = cancel_tx.send(());
                     }
                     self.current_speed = Bandwidth::default();
+                    self.clear_api_snapshots();
                 }
                 Task::none()
             }
@@ -2522,6 +2567,12 @@ impl App {
                 Task::none()
             }
             Message::SaveSettings => {
+                if self.autostart_busy {
+                    // A second commit while set_autostart runs would race the
+                    // first writer and can leave the OS state opposite the UI.
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 self.pending_settings_save_feedback = true;
                 match self.commit_runtime_settings(false) {
                     Ok(task) => {
@@ -2578,6 +2629,7 @@ impl App {
                     return Task::none();
                 }
                 self.update_status = state::UpdateStatus::Downloading { tag: tag.clone() };
+                self.toast_info(self.tr("toast_update_downloading"));
                 let url_for_msg = url.clone();
                 let digest_for_msg = sha256.clone();
                 Task::perform(
@@ -2695,7 +2747,10 @@ impl App {
         let active_connections_count = self.active_connections.len();
         let selected_node_for_dash = self.selected_node_tag.as_deref();
         let profile_more_id_ref = self.profile_more_id.as_deref();
+        let updating_profile_id_ref = self.updating_profile_id.as_deref();
         let config_preview_expanded = self.config_preview_expanded;
+        let logs_follow = self.logs_follow;
+        let system_proxy_busy = self.system_proxy_busy;
 
         let main_content = responsive(move |size| {
             let theme = theme_ref;
@@ -2711,6 +2766,7 @@ impl App {
                     core_stopping,
                     core_installed,
                     sys_proxy_enabled,
+                    system_proxy_busy,
                     current_speed_ref,
                     speed_history_ref,
                     total_uploaded,
@@ -2741,6 +2797,7 @@ impl App {
                     editing_profile_name_ref,
                     editing_profile_url_ref,
                     profile_more_id_ref,
+                    updating_profile_id_ref,
                     theme,
                 ),
                 Tab::Rules => ui::rules::render(
@@ -2765,6 +2822,8 @@ impl App {
                     log_lines_ref,
                     log_filter,
                     log_search_ref,
+                    logs_follow,
+                    core_running,
                     theme,
                 ),
                 Tab::Settings => ui::settings::render(
@@ -4595,15 +4654,22 @@ exit 1
 /// neither side parses at all.
 fn main() -> iced::Result {
     core::cleanup_stale_temp_binaries();
+    config::cleanup_stale_temp_files();
 
     let default_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let config = config::load_gui_config();
-        if config.system_proxy_owned
-            || sysproxy::is_system_proxy_owned()
-            || sysproxy::has_persisted_backup()
-        {
-            let _ = sysproxy::set_system_proxy(false, config.mixed_port);
+        // Only a main-thread panic tears the app down; tokio catches worker
+        // panics and the app keeps running, so cleaning up there would
+        // silently desync the OS proxy from the still-alive UI.
+        if std::thread::current().name() == Some("main") {
+            core::stop_core();
+            let config = config::load_gui_config();
+            if config.system_proxy_owned
+                || sysproxy::is_system_proxy_owned()
+                || sysproxy::has_persisted_backup()
+            {
+                let _ = sysproxy::set_system_proxy(false, config.mixed_port);
+            }
         }
         default_panic(info);
     }));
@@ -4635,22 +4701,24 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .run();
 
-    // CRITICAL EXIT CLEANUP with timeout.
+    // CRITICAL EXIT CLEANUP with timeout. Disable the proxy before stopping
+    // the core: stop_core alone can take ~2 s on unix (SIGTERM grace) and a
+    // timeout must never strand the OS behind a dead proxy endpoint.
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let config = config::load_gui_config();
-        if config.close_core_on_exit {
-            core::stop_core();
-        }
         if config.system_proxy_owned
             || sysproxy::is_system_proxy_owned()
             || sysproxy::has_persisted_backup()
         {
             let _ = sysproxy::set_system_proxy(false, config.mixed_port);
         }
+        if config.close_core_on_exit {
+            core::stop_core();
+        }
         let _ = tx.send(());
     });
-    let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
+    let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
 
     res
 }

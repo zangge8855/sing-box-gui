@@ -861,7 +861,12 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
         .map_err(|e| format!("Failed to start process: {}", e))?;
 
     #[cfg(target_os = "windows")]
-    let _ = bind_child_to_job_object(&child);
+    if let Err(error) = bind_child_to_job_object(&child) {
+        // Without the job object the core can outlive a crashed GUI.
+        let _ = log_sender.try_send(format!(
+            "[GUI] Warning: failed to bind core to job object: {error}"
+        ));
+    }
 
     let stdout = child
         .stdout

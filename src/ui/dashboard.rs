@@ -37,6 +37,7 @@ pub fn render<'a>(
     core_stopping: bool,
     core_installed: bool,
     sys_proxy_enabled: bool,
+    system_proxy_busy: bool,
     current_speed: &Bandwidth,
     speed_history: &[(u64, u64)],
     total_uploaded: u64,
@@ -220,30 +221,45 @@ pub fn render<'a>(
             theme::TYPE_BODY,
         );
 
-        let sys_proxy_btn = button(
-            row![
-                icon(if sys_proxy_enabled {
-                    crate::ui::icons::ICON_STOP
-                } else {
-                    crate::ui::icons::ICON_START
-                }),
-                text(if sys_proxy_enabled {
-                    tr(lang, "btn_disable_proxy")
-                } else {
-                    tr(lang, "btn_enable_proxy")
-                })
-                .size(theme::TYPE_BTN_SM)
-            ]
-            .spacing(crate::ui::SP_8)
-            .align_y(Alignment::Center),
-        )
-        .padding(theme::BTN_PAD_SM)
-        .style(if sys_proxy_enabled {
-            theme::button_danger
+        // Registry / networksetup writes run async; show the busy state and
+        // stop accepting clicks the handler would silently swallow anyway.
+        let sys_proxy_btn = if system_proxy_busy {
+            button(
+                row![
+                    icon(crate::ui::icons::ICON_UPDATE),
+                    text(tr(lang, "proxy_applying")).size(theme::TYPE_BTN_SM)
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
+            )
+            .padding(theme::BTN_PAD_SM)
+            .style(theme::button_secondary)
         } else {
-            theme::button_primary
-        })
-        .on_press(Message::ToggleSystemProxy);
+            button(
+                row![
+                    icon(if sys_proxy_enabled {
+                        crate::ui::icons::ICON_STOP
+                    } else {
+                        crate::ui::icons::ICON_START
+                    }),
+                    text(if sys_proxy_enabled {
+                        tr(lang, "btn_disable_proxy")
+                    } else {
+                        tr(lang, "btn_enable_proxy")
+                    })
+                    .size(theme::TYPE_BTN_SM)
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
+            )
+            .padding(theme::BTN_PAD_SM)
+            .style(if sys_proxy_enabled {
+                theme::button_danger
+            } else {
+                theme::button_primary
+            })
+            .on_press(Message::ToggleSystemProxy)
+        };
 
         let proxy_status_card = container(
             column![

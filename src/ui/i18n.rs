@@ -24,7 +24,6 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "chart_waiting_traffic",
     "btn_start_core_short",
     "btn_clear_search",
-    "btn_goto_proxies",
     "btn_goto_settings",
     "btn_reinstall_core",
     "latency_test_url_label",
@@ -140,7 +139,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "total_label" => "Total:",
             "direct_chain" => "Direct",
             "placeholder_connections_search" => "Search host, IP, rule, proxy chain...",
-            "confirm_delete_profile" => "Are you sure you want to delete this profile?",
             "btn_confirm_delete" => "Confirm Delete",
             "close_all_conn" => "Close All",
             "core_path_label" => "Custom Core Path",
@@ -243,7 +241,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "invalid_dns_server" => "Enter a valid DNS server address, hostname, or DNS URL.",
             "port_empty_error" => "Port numbers cannot be empty.",
             "port_invalid_error" => "Ports must be valid numbers between 1 and 65535.",
-            "invalid_port" => "Enter a valid port number.",
             "appearance_settings" => "Appearance",
             "port_reserved_error" => "Ports below 1024 are reserved; choose higher ports.",
             "port_conflict_error" => "Mixed proxy and Clash API ports must be different.",
@@ -305,6 +302,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "profile_download_failed" => "Could not download or import profile",
             "core_unexpected_exit" => "Core stopped unexpectedly",
             "connection_close_failed" => "Could not close connection",
+            "node_select_failed" => "Failed to switch node",
+            "logs_follow" => "Follow",
+            "proxy_applying" => "Applying…",
             "connections_close_failed" => "Could not close all connections",
 
             // Profiles
@@ -328,7 +328,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "rules_desc" => "Enter domains or IPs and press + to add.",
             "btn_add_rule" => "Add",
             "no_custom_rules" => "No custom rules yet",
-            "no_groups" => "No active proxy groups. Start the core to enable group routing.",
 
             // Logs
             "console_logs" => "Console Logs",
@@ -409,7 +408,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "chart_waiting_traffic" => "Waiting for traffic…",
             "btn_start_core_short" => "Start Core",
             "btn_clear_search" => "Clear search",
-            "btn_goto_proxies" => "Open Proxies",
             "btn_reinstall_core" => "Reinstall Core",
             "help_reinstall_core" => {
                 "Force re-download the managed sing-box binary (replaces existing)."
@@ -489,7 +487,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "total_label" => "累计总量:",
             "direct_chain" => "直连",
             "placeholder_connections_search" => "搜索域名、IP、分流规则或代理链...",
-            "confirm_delete_profile" => "确定要删除此配置文件吗？",
             "btn_confirm_delete" => "确认删除",
             "close_all_conn" => "关闭全部",
             "core_path_label" => "自定义内核路径",
@@ -581,7 +578,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "invalid_dns_server" => "请输入有效的 DNS 服务器 IP、主机名或 DNS URL。",
             "port_empty_error" => "端口号不能为空。",
             "port_invalid_error" => "端口必须是 1 到 65535 之间的有效数字。",
-            "invalid_port" => "请输入有效的端口号。",
             "appearance_settings" => "外观与语言",
             "port_reserved_error" => "1024 以下为系统保留端口，请选择更高的端口。",
             "port_conflict_error" => "混合代理端口和 Clash API 端口不能相同。",
@@ -637,6 +633,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "profile_download_failed" => "订阅下载或导入失败",
             "core_unexpected_exit" => "内核意外停止",
             "connection_close_failed" => "连接关闭失败",
+            "node_select_failed" => "切换节点失败",
+            "logs_follow" => "跟随",
+            "proxy_applying" => "应用中…",
             "connections_close_failed" => "全部连接未能完全关闭",
 
             // Profiles
@@ -660,7 +659,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "rules_desc" => "输入域名或 IP 并按 + 添加。",
             "btn_add_rule" => "添加",
             "no_custom_rules" => "暂无自定义规则",
-            "no_groups" => "没有活动代理组。启动内核以启用分组路由。",
 
             // Logs
             "console_logs" => "控制台日志",
@@ -741,7 +739,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "chart_waiting_traffic" => "等待流量数据…",
             "btn_start_core_short" => "启动内核",
             "btn_clear_search" => "清除搜索",
-            "btn_goto_proxies" => "打开节点",
             "btn_reinstall_core" => "重新安装内核",
             "help_reinstall_core" => "强制重新下载托管的 sing-box 内核（覆盖现有文件）。",
             "latency_test_url_label" => "测速 URL",

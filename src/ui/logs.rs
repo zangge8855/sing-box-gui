@@ -18,6 +18,8 @@ pub fn render<'a>(
     log_lines: &'a std::collections::VecDeque<String>,
     log_filter: LogFilter,
     log_search: &'a str,
+    logs_follow: bool,
+    core_running: bool,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -90,6 +92,17 @@ pub fn render<'a>(
             })
             .style(theme::input_field);
 
+        // Pause/resume tailing: without this, the per-second snap-to-end makes
+        // scrolling back through history impossible.
+        let follow_btn = button(text(tr(lang, "logs_follow")).size(theme::TYPE_BTN_MD))
+            .padding(theme::BTN_PAD_MD)
+            .style(if logs_follow {
+                theme::button_primary
+            } else {
+                theme::button_secondary
+            })
+            .on_press(Message::ToggleLogsFollow);
+
         let clear_logs_btn = button(text(tr(lang, "clear_logs")).size(theme::TYPE_BTN_MD))
             .padding(theme::BTN_PAD_MD)
             .style(theme::button_secondary)
@@ -112,16 +125,22 @@ pub fn render<'a>(
             column![
                 search_input,
                 filters,
-                row![clear_logs_btn, export_btn].spacing(8)
+                row![follow_btn, clear_logs_btn, export_btn].spacing(8)
             ]
             .spacing(8)
             .width(Length::Fill)
             .into()
         } else {
-            row![search_input, filters, clear_logs_btn, export_btn]
-                .spacing(theme::SP_12)
-                .align_y(Alignment::Center)
-                .into()
+            row![
+                search_input,
+                filters,
+                follow_btn,
+                clear_logs_btn,
+                export_btn
+            ]
+            .spacing(theme::SP_12)
+            .align_y(Alignment::Center)
+            .into()
         };
 
         let mut logs_col = Column::new().spacing(4);
@@ -146,14 +165,23 @@ pub fn render<'a>(
         }
 
         let log_terminal = if total_lines == 0 {
-            let cta = button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
-                .padding(theme::BTN_PAD_MD)
-                .style(theme::button_primary)
-                .on_press(Message::ToggleCore);
+            // ToggleCore *stops* a running core — only offer "Start Core"
+            // when it is actually stopped (e.g. right after Clear it isn't).
+            let cta: Option<Element<'_, Message>> = if core_running {
+                None
+            } else {
+                Some(
+                    button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
+                        .padding(theme::BTN_PAD_MD)
+                        .style(theme::button_primary)
+                        .on_press(Message::ToggleCore)
+                        .into(),
+                )
+            };
             container(crate::ui::empty_state(
                 tr(lang, "no_logs"),
                 Some(tr(lang, "empty_logs_start_hint")),
-                Some(cta.into()),
+                cta,
                 theme,
             ))
             .width(Length::Fill)

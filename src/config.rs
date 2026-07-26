@@ -86,12 +86,20 @@ pub fn load_gui_config() -> GuiConfig {
                 }
                 Err(e) => {
                     eprintln!(
-                        "Failed to parse gui_config.json: {}. Backing up and resetting to default.",
+                        "Failed to parse gui_config.json: {}. Backing up and restoring last good copy.",
                         e
                     );
-                    let backup_path = get_app_dir().join("gui_config.json.bak");
-                    let _ = fs::write(&backup_path, content);
-                    GuiConfig::default()
+                    // Keep the corrupt bytes under a name the routine save
+                    // backup (`gui_config.json.bak`, rewritten by every
+                    // atomic_write) can never overwrite.
+                    let corrupt_path = get_app_dir().join("gui_config.json.corrupt.bak");
+                    let _ = fs::write(&corrupt_path, &content);
+                    // atomic_write maintains `.bak` as the last good copy —
+                    // prefer restoring it over resetting the user to defaults.
+                    fs::read_to_string(get_app_dir().join("gui_config.json.bak"))
+                        .ok()
+                        .and_then(|backup| serde_json::from_str::<GuiConfig>(&backup).ok())
+                        .unwrap_or_default()
                 }
             }
         } else {
@@ -134,6 +142,41 @@ pub fn save_gui_config(config: &GuiConfig) -> Result<(), String> {
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     atomic_write(&path, content.as_bytes())?;
     Ok(())
+}
+
+/// Remove `.{name}.tmp-{pid}-…` litter left behind when a crash or power loss
+/// hits between `atomic_write`'s temp-file creation and its commit rename.
+/// Only entries from other process ids that have not been touched recently are
+/// removed, so a concurrent instance's in-flight write is never deleted.
+pub fn cleanup_stale_temp_files() {
+    let own_pid = std::process::id().to_string();
+    for dir in [get_app_dir(), get_app_dir().join("profiles")] {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if !name.starts_with('.') {
+                continue;
+            }
+            let Some((_, marker)) = name.split_once(".tmp-") else {
+                continue;
+            };
+            if marker.split('-').next() == Some(own_pid.as_str()) {
+                continue;
+            }
+            let recently_touched = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age < std::time::Duration::from_secs(300));
+            if !recently_touched {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
 }
 
 /// Replace a persisted file without exposing a partially-written destination.

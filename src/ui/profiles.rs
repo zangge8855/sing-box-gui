@@ -19,6 +19,7 @@ pub fn render<'a>(
     editing_profile_name: &'a str,
     editing_profile_url: &'a str,
     profile_more_id: Option<&'a str>,
+    updating_profile_id: Option<&'a str>,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -29,6 +30,7 @@ pub fn render<'a>(
     let editing_name = editing_profile_name.to_string();
     let editing_url = editing_profile_url.to_string();
     let more_id = profile_more_id.map(|s| s.to_string());
+    let updating_id = updating_profile_id.map(|s| s.to_string());
 
     let main_content = responsive(move |size| {
         let theme = &theme_cloned;
@@ -166,10 +168,23 @@ pub fn render<'a>(
             for profile in &gui_config.subscriptions {
                 let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
 
+                // Only the card whose update is in flight reads "Downloading…";
+                // the rest stay labeled but disabled while a download runs.
+                let is_updating = updating_id.as_deref() == Some(profile.id.as_str());
                 let update_btn = if downloading {
-                    button(text(tr(lang, "btn_downloading")).size(theme::TYPE_BTN_SM))
-                        .padding(theme::BTN_PAD_SM)
-                        .style(theme::button_secondary)
+                    button(
+                        text(tr(
+                            lang,
+                            if is_updating {
+                                "btn_downloading"
+                            } else {
+                                "btn_update"
+                            },
+                        ))
+                        .size(theme::TYPE_BTN_SM),
+                    )
+                    .padding(theme::BTN_PAD_SM)
+                    .style(theme::button_secondary)
                 } else {
                     button(text(tr(lang, "btn_update")).size(theme::TYPE_BTN_SM))
                         .padding(theme::BTN_PAD_SM)

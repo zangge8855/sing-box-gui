@@ -42,12 +42,20 @@ pub fn render<'a>(
         .map(|node| node.node_type.to_ascii_lowercase())
         .collect::<std::collections::BTreeSet<_>>()
         .len();
-    let mut node_meta_index: std::collections::HashMap<String, (String, Option<u64>, bool)> = nodes
+    // name → (type, latency, selectable, server). Server comes only from the
+    // parsed profile; API-known groups without a profile node carry None.
+    type NodeMeta = (String, Option<u64>, bool, Option<String>);
+    let mut node_meta_index: std::collections::HashMap<String, NodeMeta> = nodes
         .iter()
         .map(|node| {
             (
                 node.name.clone(),
-                (node.node_type.clone(), node.latency, node.selectable),
+                (
+                    node.node_type.clone(),
+                    node.latency,
+                    node.selectable,
+                    Some(node.server.clone()),
+                ),
             )
         })
         .collect();
@@ -61,7 +69,7 @@ pub fn render<'a>(
             .filter(|delay| *delay < 9999);
         let entry = node_meta_index
             .entry(name.clone())
-            .or_insert_with(|| (info.proxy_type.clone(), None, true));
+            .or_insert_with(|| (info.proxy_type.clone(), None, true, None));
         entry.0 = info.proxy_type.clone();
         if api_latency.is_some() {
             entry.1 = api_latency;
@@ -314,7 +322,15 @@ pub fn render<'a>(
                     let q = search_query_moved.to_lowercase();
                     sub_nodes
                         .iter()
-                        .filter(|n| n.to_lowercase().contains(&q))
+                        .filter(|n| {
+                            // Match server too — the placeholder promises
+                            // "by name or server", like the flat list below.
+                            n.to_lowercase().contains(&q)
+                                || node_meta_index_moved
+                                    .get(n.as_str())
+                                    .and_then(|meta| meta.3.as_deref())
+                                    .is_some_and(|server| server.to_lowercase().contains(&q))
+                        })
                         .collect()
                 };
 
@@ -366,10 +382,10 @@ pub fn render<'a>(
                     for &node_name in display_nodes {
                         let active = Some(node_name.as_str()) == group_info_moved.now.as_deref();
 
-                        let (node_type, latency, selectable) = node_meta_index_moved
+                        let (node_type, latency, selectable, _server) = node_meta_index_moved
                             .get(node_name)
                             .cloned()
-                            .unwrap_or_else(|| ("unknown".to_string(), None, true));
+                            .unwrap_or_else(|| ("unknown".to_string(), None, true, None));
 
                         let card = render_proxy_card(
                             node_name,

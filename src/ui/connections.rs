@@ -71,9 +71,10 @@ pub fn render<'a>(
             let chains_key = chains_label.to_lowercase();
             let rule_key = connection.rule.to_lowercase();
             let search_key = format!(
-                "{} {} {} {} {} {}",
+                "{} {} {} {} {} {} {}",
                 host_key,
                 connection.metadata.destination_ip.to_lowercase(),
+                connection.metadata.destination_port,
                 process_key,
                 chains_key,
                 rule_key,
@@ -167,6 +168,10 @@ pub fn render<'a>(
                 label: tr(lang, "sort_network").to_string(),
             },
             ConnectionSortOption {
+                sort: crate::state::ConnectionSort::Chains,
+                label: tr(lang, "chains").to_string(),
+            },
+            ConnectionSortOption {
                 sort: crate::state::ConnectionSort::Rule,
                 label: tr(lang, "sort_rule").to_string(),
             },
@@ -193,11 +198,14 @@ pub fn render<'a>(
             .padding(8)
             .style(theme::pick_list);
 
-        let direction_btn =
+        let mut direction_btn =
             button(text(if connections_sort_desc { "▼" } else { "▲" }).size(theme::TYPE_BTN_MD))
                 .padding([8, 12])
-                .style(theme::button_secondary)
-                .on_press(Message::SortConnections(connections_sort));
+                .style(theme::button_secondary);
+        // Reversing "original order" is a no-op — keep the button inert there.
+        if connections_sort != crate::state::ConnectionSort::None {
+            direction_btn = direction_btn.on_press(Message::SortConnections(connections_sort));
+        }
 
         let header_actions: Element<'_, Message> = if is_compact {
             column![
@@ -218,10 +226,18 @@ pub fn render<'a>(
             .width(Length::Fill)
             .into()
         } else {
-            row![search_input, close_all_btn]
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .into()
+            // The desktop column headers cover only a subset of sorts (the
+            // mid-width table has no Upload column, and no header returns to
+            // original order) — keep the full picker reachable here too.
+            row![
+                search_input,
+                sort_picker.width(Length::Fixed(140.0)),
+                direction_btn,
+                close_all_btn
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into()
         };
 
         let page_title = page_header(

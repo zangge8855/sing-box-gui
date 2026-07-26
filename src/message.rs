@@ -91,11 +91,6 @@ pub enum Message {
         error: Option<String>,
     },
     StartLatencyTest,
-    #[allow(dead_code)]
-    NodeLatencyTested {
-        tag: String,
-        latency: Option<u64>,
-    },
     NodeLatencyBatch(Vec<(String, Option<u64>)>),
     Tick,
     ConfigSaved {
@@ -131,6 +126,8 @@ pub enum Message {
     ClearLogs,
     LogFilterChanged(LogFilter),
     LogSearchChanged(String),
+    /// Pause/resume tailing the log view (auto-scroll to newest lines).
+    ToggleLogsFollow,
     ExportLogs,
     LogsExported(Result<String, String>),
     TriggerCoreDownload,
