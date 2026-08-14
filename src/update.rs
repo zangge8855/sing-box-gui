@@ -45,8 +45,17 @@ pub fn is_remote_version_newer(local_pkg_version: &str, remote_tag: &str) -> boo
         return false;
     }
 
-    // Compare core + revision components (first 4 items)
-    for i in 0..4 {
+    let local_has_pre = local.len() > 4;
+    let remote_has_pre = remote.len() > 4;
+    let max_len = local.len().max(remote.len());
+    let compare_len = if local_has_pre || remote_has_pre {
+        4.min(max_len)
+    } else {
+        max_len
+    };
+
+    // Compare core + revision components
+    for i in 0..compare_len {
         let l = local.get(i).copied().unwrap_or(0);
         let r = remote.get(i).copied().unwrap_or(0);
         match r.cmp(&l) {
@@ -56,10 +65,14 @@ pub fn is_remote_version_newer(local_pkg_version: &str, remote_tag: &str) -> boo
         }
     }
 
-    // Compare pre-release tag (5th item if present, where absent/release = u64::MAX)
-    let l_pre = if local.len() > 4 { local[4] } else { u64::MAX };
-    let r_pre = if remote.len() > 4 {
-        remote[4]
+    // Compare pre-release tag (where absent/release = u64::MAX)
+    let l_pre = if local_has_pre {
+        *local.last().unwrap_or(&u64::MAX)
+    } else {
+        u64::MAX
+    };
+    let r_pre = if remote_has_pre {
+        *remote.last().unwrap_or(&u64::MAX)
     } else {
         u64::MAX
     };

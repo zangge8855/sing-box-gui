@@ -990,6 +990,7 @@ impl App {
 
     fn handle_update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::NoOp => Task::none(),
             Message::TrayIconClicked => self.show_main_window(),
             Message::TrayMenuClicked(id_str) => match id_str.as_str() {
                 "show_window" => self.show_main_window(),
@@ -1654,9 +1655,13 @@ impl App {
                         self.config_dirty = true;
                     }
 
+                    let is_active =
+                        self.gui_config.active_profile_id.as_deref() == Some(id.as_str());
                     if self.gui_config.active_profile_id.is_none() && !id.is_empty() {
                         self.gui_config.active_profile_id = Some(id.clone());
                         self.config_dirty = true;
+                        load_nodes = true;
+                    } else if is_active {
                         load_nodes = true;
                     }
                     self.log_lines
@@ -1665,11 +1670,15 @@ impl App {
                 }
                 let next_update = self.kick_pending_auto_update();
                 let save_task = self.start_config_save();
+                let is_active = self.gui_config.active_profile_id.as_deref() == Some(id.as_str());
+                let mut tasks = vec![next_update, save_task];
                 if load_nodes {
-                    Task::batch(vec![self.load_active_nodes_task(), next_update, save_task])
-                } else {
-                    Task::batch(vec![next_update, save_task])
+                    tasks.push(self.load_active_nodes_task());
+                    if is_active && self.core_running {
+                        tasks.push(self.restart_core());
+                    }
                 }
+                Task::batch(tasks)
             }
             Message::SelectProfile(id) => {
                 if self.downloading {
@@ -1680,6 +1689,7 @@ impl App {
                 }
                 self.confirm_delete_profile_id = None;
                 self.gui_config.active_profile_id = Some(id);
+                self.gui_config.selected_node_tag = None;
                 self.active_profile_nodes.clear();
                 self.proxy_groups.clear();
                 self.selected_group.clear();
@@ -1699,21 +1709,10 @@ impl App {
                 if self.gui_config.active_profile_id.as_deref() != Some(profile_id.as_str()) {
                     return Task::none();
                 }
-                match result {
-                    Ok(nodes) => self.active_profile_nodes = nodes,
-                    Err(error) => {
-                        self.active_profile_nodes.clear();
-                        self.log_lines
-                            .push_back(format!("[GUI] Failed to load active nodes: {error}"));
-                    }
-                }
+                self.active_profile_nodes = result.unwrap_or_default();
                 Task::none()
             }
             Message::RequestDeleteProfile(id) => {
-                if self.downloading {
-                    self.toast_info(self.tr("operation_in_progress"));
-                    return Task::none();
-                }
                 self.confirm_delete_profile_id = Some(id);
                 Task::none()
             }
@@ -1722,14 +1721,10 @@ impl App {
                 Task::none()
             }
             Message::ConfirmDeleteProfile => {
-                if self.downloading {
-                    self.toast_info(self.tr("operation_in_progress"));
-                    self.confirm_delete_profile_id = None;
-                    return Task::none();
-                }
-                if let Some(id) = self.confirm_delete_profile_id.take() {
+                let id = self.confirm_delete_profile_id.take();
+                if let Some(id) = id {
                     let path = config::get_profile_path(&id);
-                    let was_active = self.gui_config.active_profile_id.as_ref() == Some(&id);
+                    let was_active = self.gui_config.active_profile_id.as_deref() == Some(&id);
                     return Task::perform(
                         async move {
                             tokio::task::spawn_blocking(move || remove_profile_file(&path))
@@ -1758,6 +1753,7 @@ impl App {
                 self.gui_config.subscriptions.retain(|p| p.id != id);
                 if was_active {
                     self.gui_config.active_profile_id = None;
+                    self.gui_config.selected_node_tag = None;
                     self.active_profile_nodes.clear();
                 }
                 self.config_dirty = true;
@@ -1820,6 +1816,9 @@ impl App {
                 Task::none()
             }
             Message::StartLatencyTest => {
+                if self.latency_testing {
+                    return Task::none();
+                }
                 if !self.core_running {
                     self.toast_info(self.tr("toast_start_core_first"));
                     return Task::none();
@@ -2233,13 +2232,18 @@ impl App {
             Message::CoreLivenessChecked(running) => {
                 let was_running = self.core_running;
                 self.core_running = running;
-                if was_running
-                    && !self.core_running
-                    && let Some(msg) = core::take_unexpected_core_exit()
-                {
-                    let detail = redact_log_line(&msg);
-                    self.log_lines.push_back(format!("[GUI] {detail}"));
-                    self.toast_error(format!("{}: {detail}", self.tr("core_unexpected_exit")));
+                if was_running && !self.core_running {
+                    if let Some(msg) = core::take_unexpected_core_exit() {
+                        let detail = redact_log_line(&msg);
+                        self.log_lines.push_back(format!("[GUI] {detail}"));
+                        self.toast_error(format!("{}: {detail}", self.tr("core_unexpected_exit")));
+                    }
+                    if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
+                        let _ = cancel_tx.send(());
+                    }
+                    self.current_speed = Bandwidth::default();
+                    self.clear_api_snapshots();
+
                     if self.gui_config.disable_proxy_on_core_stop
                         && self.sys_proxy_enabled
                         && (self.gui_config.system_proxy_owned || sysproxy::is_system_proxy_owned())
@@ -2249,11 +2253,6 @@ impl App {
                             message::SystemProxyContext::UnexpectedCoreStop,
                         );
                     }
-                    if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
-                        let _ = cancel_tx.send(());
-                    }
-                    self.current_speed = Bandwidth::default();
-                    self.clear_api_snapshots();
                 }
                 Task::none()
             }
@@ -2693,7 +2692,7 @@ impl App {
                     async move {
                         let _ = tokio::task::spawn_blocking(move || open::that(&url)).await;
                     },
-                    |_| Message::Tick,
+                    |_| Message::NoOp,
                 )
             }
         }
@@ -3251,27 +3250,26 @@ fn tray_subscription() -> impl iced::futures::Stream<Item = Message> {
             let tx_clone = tx.clone();
             std::thread::spawn(move || {
                 let menu_channel = tray_icon::menu::MenuEvent::receiver();
-                while !stop_menu.load(std::sync::atomic::Ordering::SeqCst) {
-                    // Non-blocking poll with a short sleep so the stop flag is honored.
-                    while let Ok(event) = menu_channel.try_recv() {
-                        // Drop on closed channel = iced subscription ended — stop polling.
-                        if tx_clone
+                while !stop_menu.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok(event) =
+                        menu_channel.recv_timeout(std::time::Duration::from_millis(500))
+                        && tx_clone
                             .blocking_send(Message::TrayMenuClicked(event.id.0))
                             .is_err()
-                        {
-                            stop_menu.store(true, std::sync::atomic::Ordering::SeqCst);
-                            return;
-                        }
+                    {
+                        stop_menu.store(true, std::sync::atomic::Ordering::Relaxed);
+                        return;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
                 }
             });
 
             let tx_clone2 = tx.clone();
             std::thread::spawn(move || {
                 let tray_channel = tray_icon::TrayIconEvent::receiver();
-                while !stop_tray.load(std::sync::atomic::Ordering::SeqCst) {
-                    while let Ok(event) = tray_channel.try_recv() {
+                while !stop_tray.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok(event) =
+                        tray_channel.recv_timeout(std::time::Duration::from_millis(500))
+                    {
                         let to_send = match event {
                             tray_icon::TrayIconEvent::Click {
                                 button: tray_icon::MouseButton::Left,
@@ -3286,11 +3284,10 @@ fn tray_subscription() -> impl iced::futures::Stream<Item = Message> {
                         if let Some(msg) = to_send
                             && tx_clone2.blocking_send(msg).is_err()
                         {
-                            stop_tray.store(true, std::sync::atomic::Ordering::SeqCst);
+                            stop_tray.store(true, std::sync::atomic::Ordering::Relaxed);
                             return;
                         }
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
                 }
             });
 
@@ -4208,7 +4205,7 @@ fn task_open_path(path: std::path::PathBuf) -> Task<Message> {
         async move {
             let _ = tokio::task::spawn_blocking(move || open::that(path)).await;
         },
-        |_| Message::Tick,
+        |_| Message::NoOp,
     )
 }
 
@@ -4662,7 +4659,6 @@ fn main() -> iced::Result {
         // panics and the app keeps running, so cleaning up there would
         // silently desync the OS proxy from the still-alive UI.
         if std::thread::current().name() == Some("main") {
-            core::stop_core();
             let config = config::load_gui_config();
             if config.system_proxy_owned
                 || sysproxy::is_system_proxy_owned()
@@ -4670,6 +4666,7 @@ fn main() -> iced::Result {
             {
                 let _ = sysproxy::set_system_proxy(false, config.mixed_port);
             }
+            core::stop_core();
         }
         default_panic(info);
     }));

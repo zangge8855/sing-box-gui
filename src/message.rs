@@ -25,6 +25,7 @@ pub enum SystemProxyContext {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    NoOp,
     TabChanged(Tab),
     NodeSearchChanged(String),
     ConnectionsSearchChanged(String),

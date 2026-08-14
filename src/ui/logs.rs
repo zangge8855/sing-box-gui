@@ -31,7 +31,7 @@ pub fn render<'a>(
     // Precompute case-folded text and severity once per view rebuild. The
     // responsive closure may be evaluated repeatedly while resizing, so it
     // should only assemble widgets, not re-scan every log line.
-    let q_lower = log_search.to_lowercase();
+    let q_upper = log_search.to_uppercase();
     const MAX_VISIBLE_LOG_LINES: usize = 400;
     let mut filtered_lines: Vec<(&str, u8)> = log_lines
         .iter()
@@ -40,7 +40,7 @@ pub fn render<'a>(
             if !log_filter.matches_upper(&uppercase) {
                 return None;
             }
-            if !q_lower.is_empty() && !line.to_lowercase().contains(&q_lower) {
+            if !q_upper.is_empty() && !uppercase.contains(&q_upper) {
                 return None;
             }
             let severity = if uppercase.contains("ERROR")

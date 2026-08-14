@@ -675,24 +675,27 @@ pub fn render<'a>(
             core_path_row
         };
 
-        let core_mgmt_card = container(
-            column![
-                text(tr(lang, "core_components"))
-                    .color(text_primary)
-                    .size(theme::TYPE_HEADING)
-                    .font(theme::ui_font(iced::font::Weight::Semibold)),
-                core_downloader,
-                core_path_row,
-                latency_block,
-                auto_update_block,
-                open_dir_btn,
-                install_status_row
-            ]
-            .spacing(crate::ui::SP_12),
-        )
-        .padding(theme::CARD_PAD)
-        .width(Length::Fill)
-        .style(theme::card_bg);
+        let mut core_mgmt_column = column![
+            text(tr(lang, "core_components"))
+                .color(text_primary)
+                .size(theme::TYPE_HEADING)
+                .font(theme::ui_font(iced::font::Weight::Semibold)),
+            core_downloader,
+            core_path_row,
+            latency_block,
+            auto_update_block,
+            open_dir_btn,
+        ]
+        .spacing(crate::ui::SP_12);
+
+        if !matches!(install_state, CoreInstallState::Idle) {
+            core_mgmt_column = core_mgmt_column.push(install_status_row);
+        }
+
+        let core_mgmt_card = container(core_mgmt_column)
+            .padding(theme::CARD_PAD)
+            .width(Length::Fill)
+            .style(theme::card_bg);
 
         let app_update_card = {
             let update_info: Element<'_, Message> = match update_status {
@@ -700,18 +703,14 @@ pub fn render<'a>(
                     let btn: Element<'_, Message> =
                         button(text(tr(lang, "btn_check_update")).size(theme::TYPE_BTN_SM))
                             .padding(theme::BTN_PAD_SM)
-                            .style(theme::button_primary)
+                            .style(theme::button_secondary)
                             .on_press(Message::CheckUpdate)
                             .into();
                     row![
-                        text(format!(
-                            "{}: v{}",
-                            tr(lang, "current_ver_label"),
-                            env!("CARGO_PKG_VERSION")
-                        ))
-                        .color(text_muted)
-                        .size(theme::TYPE_SECTION)
-                        .width(Length::Fill),
+                        text(tr(lang, "status_not_checked"))
+                            .color(text_muted)
+                            .size(theme::TYPE_SECTION)
+                            .width(Length::Fill),
                         btn
                     ]
                     .width(Length::Fill)
@@ -794,39 +793,30 @@ pub fn render<'a>(
                                 })
                                 .into()
                         } else {
-                            button(text(tr(lang, "btn_goto_github")).size(theme::TYPE_BTN_SM))
-                                .padding(theme::BTN_PAD_SM)
-                                .style(theme::button_primary)
-                                .on_press(Message::OpenUrl(
-                                    "https://github.com/zangge8855/sing-box-gui/releases/latest"
-                                        .to_string(),
-                                ))
-                                .into()
-                        };
-                    let github_btn: Element<'_, Message> =
-                        button(text(tr(lang, "btn_goto_github")).size(theme::TYPE_BTN_SM))
+                            button(
+                                text(tr(lang, "btn_view_release_on_github"))
+                                    .size(theme::TYPE_BTN_SM),
+                            )
                             .padding(theme::BTN_PAD_SM)
                             .style(theme::button_secondary)
-                            .on_press(Message::OpenUrl(
-                                "https://github.com/zangge8855/sing-box-gui/releases/latest"
-                                    .to_string(),
-                            ))
-                            .into();
-                    let actions: Element<'_, Message> =
-                        if download_url.is_some() && sha256.is_some() && size.is_some() {
-                            row![install_btn, github_btn]
-                                .spacing(8)
-                                .align_y(Alignment::Center)
-                                .into()
-                        } else {
-                            install_btn
+                            .on_press(Message::OpenUrl(format!(
+                                "https://github.com/zangge8855/sing-box-gui/releases/tag/{}",
+                                tag
+                            )))
+                            .into()
                         };
                     let status_row = row![
-                        text(format!("{} {}", tr(lang, "status_new_available"), tag))
-                            .color(theme::WARNING)
-                            .size(theme::TYPE_SECTION)
-                            .width(Length::Fill),
-                        actions
+                        column![
+                            text(format!("{}: {}", tr(lang, "status_new_version"), tag))
+                                .color(theme::WARNING)
+                                .size(theme::TYPE_SECTION),
+                            text(tr(lang, "help_new_version"))
+                                .color(text_muted)
+                                .size(theme::TYPE_CAPTION)
+                        ]
+                        .spacing(4)
+                        .width(Length::Fill),
+                        install_btn
                     ]
                     .width(Length::Fill)
                     .align_y(Alignment::Center);
@@ -895,13 +885,13 @@ pub fn render<'a>(
         };
 
         // Layout columns responsively
-        let left_col = column![settings_card,].spacing(20).width(if is_compact {
+        let left_col = column![settings_card].spacing(20).width(if is_compact {
             Length::Fill
         } else {
             Length::FillPortion(1)
         });
 
-        let mid_col = column![network_dns_card, app_prefs_card,]
+        let mid_col = column![network_dns_card, app_prefs_card]
             .spacing(20)
             .width(if is_compact {
                 Length::Fill
@@ -909,33 +899,41 @@ pub fn render<'a>(
                 Length::FillPortion(1)
             });
 
-        let app_and_core_col =
-            column![core_mgmt_card, app_update_card]
-                .spacing(20)
-                .width(if is_compact {
-                    Length::Fill
-                } else {
-                    Length::FillPortion(1)
-                });
-
         let main_row_layout: Element<'_, Message> = if size.width < crate::ui::SETTINGS_2COL_W {
-            column![left_col, mid_col, app_and_core_col]
-                .spacing(20)
-                .width(Length::Fill)
-                .into()
+            column![
+                left_col,
+                mid_col,
+                column![core_mgmt_card, app_update_card]
+                    .spacing(20)
+                    .width(Length::Fill)
+            ]
+            .spacing(20)
+            .width(Length::Fill)
+            .into()
         } else if size.width < crate::ui::SETTINGS_3COL_W {
             column![
                 row![left_col, mid_col].spacing(20).width(Length::Fill),
-                app_and_core_col
+                row![
+                    core_mgmt_card.width(Length::FillPortion(1)),
+                    app_update_card.width(Length::FillPortion(1))
+                ]
+                .spacing(20)
+                .width(Length::Fill)
             ]
             .spacing(20)
             .width(Length::Fill)
             .into()
         } else {
-            row![left_col, mid_col, app_and_core_col]
-                .spacing(20)
-                .width(Length::Fill)
-                .into()
+            row![
+                left_col,
+                mid_col,
+                column![core_mgmt_card, app_update_card]
+                    .spacing(20)
+                    .width(Length::FillPortion(1))
+            ]
+            .spacing(20)
+            .width(Length::Fill)
+            .into()
         };
 
         // Collapsible config preview — avoids nested scroll fight when collapsed

@@ -70,16 +70,20 @@ pub fn render<'a>(
             let network_key = connection.metadata.network.to_lowercase();
             let chains_key = chains_label.to_lowercase();
             let rule_key = connection.rule.to_lowercase();
-            let search_key = format!(
-                "{} {} {} {} {} {} {}",
-                host_key,
-                connection.metadata.destination_ip.to_lowercase(),
-                connection.metadata.destination_port,
-                process_key,
-                chains_key,
-                rule_key,
-                network_key
-            );
+            let search_key = if query_str.trim().is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "{} {} {} {} {} {} {}",
+                    host_key,
+                    connection.metadata.destination_ip.to_lowercase(),
+                    connection.metadata.destination_port,
+                    process_key,
+                    chains_key,
+                    rule_key,
+                    network_key
+                )
+            };
             PreparedConnection {
                 connection,
                 host_key,

@@ -109,6 +109,17 @@ pub fn load_gui_config() -> GuiConfig {
         GuiConfig::default()
     };
 
+    if config.mixed_port == 0 {
+        config.mixed_port = 2080;
+    }
+    if config.api_port == 0 || config.api_port == config.mixed_port {
+        config.api_port = if config.mixed_port == 9090 {
+            9091
+        } else {
+            9090
+        };
+    }
+
     if migrated_proxy_ownership {
         let _ = save_gui_config(&config);
     }
@@ -417,10 +428,10 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 .trim_start_matches("ss://")
                 .split('#')
                 .next()
-                .unwrap()
+                .unwrap_or_default()
                 .split('?')
                 .next()
-                .unwrap();
+                .unwrap_or_default();
             if !raw_body.contains('@') {
                 if let Some(decoded) = decode_base64_padded(raw_body) {
                     let decoded_link = format!("ss://{}", decoded);
@@ -455,6 +466,23 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                         );
                     }
                 }
+            } else if let Some(raw_password) = url.password() {
+                let cipher = urlencoding::decode(url.username())
+                    .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
+                    .into_owned();
+                let password = urlencoding::decode(raw_password)
+                    .unwrap_or(std::borrow::Cow::Borrowed(raw_password))
+                    .into_owned();
+                if !cipher.is_empty() && !password.is_empty() {
+                    map.insert(
+                        serde_yaml::Value::String("cipher".to_string()),
+                        serde_yaml::Value::String(cipher),
+                    );
+                    map.insert(
+                        serde_yaml::Value::String("password".to_string()),
+                        serde_yaml::Value::String(password),
+                    );
+                }
             } else {
                 let username = urlencoding::decode(url.username())
                     .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
@@ -468,21 +496,6 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                         let password = urlencoding::decode(parts[1])
                             .unwrap_or(std::borrow::Cow::Borrowed(parts[1]))
                             .into_owned();
-                        map.insert(
-                            serde_yaml::Value::String("cipher".to_string()),
-                            serde_yaml::Value::String(cipher),
-                        );
-                        map.insert(
-                            serde_yaml::Value::String("password".to_string()),
-                            serde_yaml::Value::String(password),
-                        );
-                    }
-                } else if let Some(raw_password) = url.password() {
-                    let cipher = username;
-                    let password = urlencoding::decode(raw_password)
-                        .unwrap_or(std::borrow::Cow::Borrowed(raw_password))
-                        .into_owned();
-                    if !cipher.is_empty() && !password.is_empty() {
                         map.insert(
                             serde_yaml::Value::String("cipher".to_string()),
                             serde_yaml::Value::String(cipher),
@@ -521,25 +534,35 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 .next()
                 .unwrap_or_default();
             let decoded = decode_base64_padded(body)?;
-            let (server_part, query_part) = decoded
-                .split_once("/?")
-                .map_or((decoded.as_str(), ""), |(server, query)| (server, query));
-            let parts: Vec<&str> = server_part.splitn(6, ':').collect();
-            if parts.len() != 6 {
+            let (server_part, query_part) = if let Some((s, q)) = decoded.split_once("/?") {
+                (s, q)
+            } else if let Some((s, q)) = decoded.split_once('?') {
+                (s.trim_end_matches('/'), q)
+            } else {
+                (decoded.trim_end_matches('/'), "")
+            };
+            let (server, rest) = if server_part.starts_with('[') {
+                let (ipv6, rest) = server_part.split_once("]:")?;
+                (ipv6.trim_start_matches('[').to_string(), rest)
+            } else {
+                let (host, rest) = server_part.split_once(':')?;
+                (host.to_string(), rest)
+            };
+            let parts: Vec<&str> = rest.splitn(5, ':').collect();
+            if parts.len() != 5 {
                 return None;
             }
-            let server = parts[0];
-            let port = parts[1].parse::<u16>().ok()?;
-            let protocol = parts[2];
-            let method = parts[3];
-            let obfs = parts[4];
-            let password = decode_base64_padded(parts[5])?;
+            let port = parts[0].parse::<u16>().ok()?;
+            let protocol = parts[1];
+            let method = parts[2];
+            let obfs = parts[3];
+            let password = decode_base64_padded(parts[4])?;
             if server.is_empty() || method.is_empty() || password.is_empty() {
                 return None;
             }
 
             insert_yaml_string(&mut map, "type", "ssr");
-            insert_yaml_string(&mut map, "server", server);
+            insert_yaml_string(&mut map, "server", &server);
             map.insert(
                 serde_yaml::Value::String("port".to_string()),
                 serde_yaml::Value::Number(port.into()),
@@ -580,10 +603,10 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 .trim_start_matches("vmess://")
                 .split('?')
                 .next()
-                .unwrap()
+                .unwrap_or_default()
                 .split('#')
                 .next()
-                .unwrap();
+                .unwrap_or_default();
             if let Some(decoded_json) = decode_base64_padded(body_b64)
                 && let Ok(v) = serde_json::from_str::<serde_json::Value>(&decoded_json)
             {
@@ -626,11 +649,15 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     .and_then(|x| x.as_str())
                     .unwrap_or("tcp")
                     .to_string();
-                let tls = v
-                    .get("tls")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                let tls_enabled = v.get("tls").is_some_and(|val| {
+                    val.as_bool().unwrap_or_else(|| {
+                        val.as_str().is_some_and(|s| {
+                            s.eq_ignore_ascii_case("tls")
+                                || s == "1"
+                                || s.eq_ignore_ascii_case("true")
+                        }) || (val.as_u64() == Some(1))
+                    })
+                });
                 let host_sni = v
                     .get("sni")
                     .and_then(|x| x.as_str())
@@ -681,7 +708,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     insert_yaml_string(&mut map, "client-fingerprint", fingerprint);
                 }
 
-                if tls == "tls" {
+                if tls_enabled {
                     map.insert(
                         serde_yaml::Value::String("tls".to_string()),
                         serde_yaml::Value::Bool(true),
@@ -811,6 +838,10 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 if k == "skipCertVerify" || k == "allowInsecure" {
                     skip_cert_verify = v.parse::<bool>().unwrap_or(false);
                 }
+            }
+            if !public_key.is_empty() {
+                reality_enabled = true;
+                tls_enabled = true;
             }
             if tls_enabled {
                 map.insert(
@@ -1553,10 +1584,16 @@ pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
             }
             let port = port_u64 as u16;
 
-            let base_name = if name.trim().is_empty() {
+            let clean_name: String = name
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect::<String>()
+                .trim()
+                .to_string();
+            let base_name = if clean_name.is_empty() {
                 "Unnamed".to_string()
             } else {
-                name
+                clean_name
             };
             let mut unique_name = base_name.clone();
             let mut suffix = 2usize;
@@ -1799,35 +1836,21 @@ fn enrich_tls_options(
 }
 
 fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
-    let key_network = serde_yaml::Value::String("network".into());
-    let key_type = serde_yaml::Value::String("type".into());
-    let key_ws_opts = serde_yaml::Value::String("ws-opts".into());
-    let key_path = serde_yaml::Value::String("path".into());
-    let key_headers = serde_yaml::Value::String("headers".into());
-    let key_host = serde_yaml::Value::String("host".into());
-    let key_grpc_opts = serde_yaml::Value::String("grpc-opts".into());
-    let key_grpc_service_name = serde_yaml::Value::String("grpc-service-name".into());
-    let key_service_name = serde_yaml::Value::String("serviceName".into());
-    let key_h2_opts = serde_yaml::Value::String("h2-opts".into());
-    let key_http_opts = serde_yaml::Value::String("http-opts".into());
-    let key_http_upgrade_opts = serde_yaml::Value::String("http-upgrade-opts".into());
-    let key_method = serde_yaml::Value::String("method".into());
-
-    let network = map
-        .get(&key_network)
-        .and_then(|v| v.as_str())
-        .or_else(|| map.get(&key_type).and_then(|v| v.as_str()))
-        .unwrap_or("tcp");
+    let network = yaml_string_any(map, &["network", "type"]).unwrap_or("tcp");
 
     if network == "ws" {
         let mut path = "/".to_string();
         let mut headers_map = serde_json::Map::new();
 
-        if let Some(ws_opts) = map.get(&key_ws_opts).and_then(|v| v.as_mapping()) {
-            if let Some(p) = ws_opts.get(&key_path).and_then(|v| v.as_str()) {
+        if let Some(ws_opts) =
+            yaml_value_any(map, &["ws-opts", "ws_opts"]).and_then(|v| v.as_mapping())
+        {
+            if let Some(p) = yaml_string_any(ws_opts, &["path"]) {
                 path = p.to_string();
             }
-            if let Some(headers) = ws_opts.get(&key_headers).and_then(|v| v.as_mapping()) {
+            if let Some(headers) =
+                yaml_value_any(ws_opts, &["headers"]).and_then(|v| v.as_mapping())
+            {
                 for (k, v) in headers {
                     if let (Some(ks), Some(vs)) = (k.as_str(), v.as_str()) {
                         headers_map.insert(ks.to_string(), json!(vs));
@@ -1835,10 +1858,10 @@ fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
                 }
             }
         } else {
-            if let Some(p) = map.get(&key_path).and_then(|v| v.as_str()) {
+            if let Some(p) = yaml_string_any(map, &["path"]) {
                 path = p.to_string();
             }
-            if let Some(h) = map.get(&key_host).and_then(|v| v.as_str()) {
+            if let Some(h) = yaml_string_any(map, &["host"]) {
                 headers_map.insert("Host".to_string(), json!(h));
             }
         }
@@ -1850,14 +1873,29 @@ fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
         }))
     } else if network == "grpc" {
         let mut service_name = "".to_string();
-        if let Some(grpc_opts) = map.get(&key_grpc_opts).and_then(|v| v.as_mapping()) {
-            if let Some(s) = grpc_opts
-                .get(&key_grpc_service_name)
-                .and_then(|v| v.as_str())
-            {
+        if let Some(grpc_opts) =
+            yaml_value_any(map, &["grpc-opts", "grpc_opts"]).and_then(|v| v.as_mapping())
+        {
+            if let Some(s) = yaml_string_any(
+                grpc_opts,
+                &[
+                    "grpc-service-name",
+                    "grpc_service_name",
+                    "serviceName",
+                    "service_name",
+                ],
+            ) {
                 service_name = s.to_string();
             }
-        } else if let Some(s) = map.get(&key_service_name).and_then(|v| v.as_str()) {
+        } else if let Some(s) = yaml_string_any(
+            map,
+            &[
+                "grpc-service-name",
+                "grpc_service_name",
+                "serviceName",
+                "service_name",
+            ],
+        ) {
             service_name = s.to_string();
         }
 
@@ -1867,28 +1905,26 @@ fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
         }))
     } else if network == "http" || network == "h2" {
         let opts = if network == "h2" {
-            map.get(&key_h2_opts).and_then(|v| v.as_mapping())
+            yaml_value_any(map, &["h2-opts", "h2_opts"]).and_then(|v| v.as_mapping())
         } else {
-            map.get(&key_http_opts).and_then(|v| v.as_mapping())
+            yaml_value_any(map, &["http-opts", "http_opts"]).and_then(|v| v.as_mapping())
         };
         let path = opts
-            .and_then(|o| o.get(&key_path))
-            .and_then(|v| {
-                v.as_str().map(str::to_string).or_else(|| {
-                    v.as_sequence()
-                        .and_then(|s| s.first())
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string)
-                })
-            })
-            .or_else(|| {
-                map.get(&key_path)
-                    .and_then(|v| v.as_str())
+            .and_then(|o| {
+                yaml_string_any(o, &["path"])
                     .map(str::to_string)
+                    .or_else(|| {
+                        yaml_value_any(o, &["path"])
+                            .and_then(|v| v.as_sequence())
+                            .and_then(|s| s.first())
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string)
+                    })
             })
+            .or_else(|| yaml_string_any(map, &["path"]).map(str::to_string))
             .unwrap_or_else(|| "/".to_string());
         let hosts = opts
-            .and_then(|o| o.get(&key_host))
+            .and_then(|o| yaml_value_any(o, &["host"]))
             .map(|v| {
                 if let Some(host) = v.as_str() {
                     vec![host.to_string()]
@@ -1903,15 +1939,10 @@ fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
                         .unwrap_or_default()
                 }
             })
-            .or_else(|| {
-                map.get(&key_host)
-                    .and_then(|v| v.as_str())
-                    .map(|host| vec![host.to_string()])
-            })
+            .or_else(|| yaml_string_any(map, &["host"]).map(|host| vec![host.to_string()]))
             .unwrap_or_default();
         let method = opts
-            .and_then(|o| o.get(&key_method))
-            .and_then(|v| v.as_str())
+            .and_then(|o| yaml_string_any(o, &["method"]))
             .unwrap_or("");
         Some(json!({
             "type": "http",
@@ -1920,16 +1951,15 @@ fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
             "method": method
         }))
     } else if network == "httpupgrade" || network == "http-upgrade" {
-        let opts = map.get(&key_http_upgrade_opts).and_then(|v| v.as_mapping());
+        let opts = yaml_value_any(map, &["http-upgrade-opts", "http_upgrade_opts"])
+            .and_then(|v| v.as_mapping());
         let path = opts
-            .and_then(|o| o.get(&key_path))
-            .and_then(|v| v.as_str())
-            .or_else(|| map.get(&key_path).and_then(|v| v.as_str()))
+            .and_then(|o| yaml_string_any(o, &["path"]))
+            .or_else(|| yaml_string_any(map, &["path"]))
             .unwrap_or("/");
         let host = opts
-            .and_then(|o| o.get(&key_host))
-            .and_then(|v| v.as_str())
-            .or_else(|| map.get(&key_host).and_then(|v| v.as_str()))
+            .and_then(|o| yaml_string_any(o, &["host"]))
+            .or_else(|| yaml_string_any(map, &["host"]))
             .unwrap_or("");
         Some(json!({
             "type": "httpupgrade",
@@ -1951,7 +1981,6 @@ pub fn convert_clash_to_singbox(
     let key_auth_str = serde_yaml::Value::String("auth_str".into());
     let key_auth_str_dash = serde_yaml::Value::String("auth-str".into());
     let key_cipher = serde_yaml::Value::String("cipher".into());
-    let key_congestion_control = serde_yaml::Value::String("congestion_control".into());
     let key_flow = serde_yaml::Value::String("flow".into());
     let key_name = serde_yaml::Value::String("name".into());
     let key_password = serde_yaml::Value::String("password".into());
@@ -2198,16 +2227,18 @@ pub fn convert_clash_to_singbox(
                     outbound.insert("flow".to_string(), json!(flow));
                 }
 
-                let tls_enabled = map.get(&key_tls).and_then(|v| v.as_bool()).unwrap_or(false);
+                let reality_enabled = map
+                    .get(&key_reality)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    || map.get(&key_reality_opts).is_some()
+                    || yaml_string_any(map, &["public-key", "public_key", "pbk"]).is_some();
+                let tls_enabled =
+                    map.get(&key_tls).and_then(|v| v.as_bool()).unwrap_or(false) || reality_enabled;
                 let sni = map
                     .get(&key_sni)
                     .and_then(|v| v.as_str())
                     .unwrap_or(&server);
-
-                let reality_enabled = map
-                    .get(&key_reality)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
 
                 if tls_enabled {
                     let mut tls_opts = serde_json::Map::new();
@@ -2379,11 +2410,24 @@ pub fn convert_clash_to_singbox(
                 if let Some(down_mbps) = yaml_u64_any(map, &["down_mbps", "down-mbps", "down"]) {
                     outbound.insert("down_mbps".to_string(), json!(down_mbps));
                 }
-                let obfs_type = yaml_string_any(map, &["obfs"])
-                    .filter(|value| !value.is_empty() && *value != "none");
-                let obfs_password =
-                    yaml_string_any(map, &["obfs-password", "obfs_password"]).unwrap_or("");
-                if let Some(obfs_type) = obfs_type {
+                let (obfs_type, obfs_password) = if let Some(obfs_map) =
+                    yaml_value_any(map, &["obfs"]).and_then(|v| v.as_mapping())
+                {
+                    let t = yaml_string_any(obfs_map, &["type"])
+                        .unwrap_or("")
+                        .to_string();
+                    let p = yaml_string_any(obfs_map, &["password"])
+                        .unwrap_or("")
+                        .to_string();
+                    (t, p)
+                } else {
+                    let t = yaml_string_any(map, &["obfs"]).unwrap_or("").to_string();
+                    let p = yaml_string_any(map, &["obfs-password", "obfs_password"])
+                        .unwrap_or("")
+                        .to_string();
+                    (t, p)
+                };
+                if !obfs_type.is_empty() && obfs_type != "none" {
                     outbound.insert(
                         "obfs".to_string(),
                         json!({ "type": obfs_type, "password": obfs_password }),
@@ -2487,10 +2531,11 @@ pub fn convert_clash_to_singbox(
                     outbound.insert("password".to_string(), json!(password));
                 }
 
-                let congestion = map
-                    .get(&key_congestion_control)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("cubic");
+                let congestion = yaml_string_any(
+                    map,
+                    &["congestion_control", "congestion-control", "congestion"],
+                )
+                .unwrap_or("cubic");
                 outbound.insert("congestion_control".to_string(), json!(congestion));
                 if let Some(mode) = yaml_string_any(map, &["udp_relay_mode", "udp-relay-mode"])
                     .filter(|value| !value.is_empty())
@@ -2676,10 +2721,16 @@ pub fn convert_clash_to_singbox(
             outbound.insert("tcp_multipath".to_string(), json!(true));
         }
 
-        let base_tag = if name.trim().is_empty() {
+        let clean_name: String = name
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect::<String>()
+            .trim()
+            .to_string();
+        let base_tag = if clean_name.is_empty() {
             "Unnamed".to_string()
         } else {
-            name
+            clean_name
         };
         let mut tag = base_tag.clone();
         let mut suffix = 2usize;
@@ -3014,8 +3065,14 @@ pub fn ensure_direct_outbound_tag(config: &mut serde_json::Value) -> String {
     }
 
     // No direct outbound in profile — inject a standard one (Clash path already has it).
-    const FALLBACK_TAG: &str = "direct";
-    let outbound = json!({ "type": "direct", "tag": FALLBACK_TAG });
+    let existing_tags = collect_outbound_tags(config);
+    let mut candidate = "direct".to_string();
+    let mut suffix = 2usize;
+    while existing_tags.iter().any(|t| t == &candidate) {
+        candidate = format!("direct-{}", suffix);
+        suffix += 1;
+    }
+    let outbound = json!({ "type": "direct", "tag": &candidate });
     match config.get_mut("outbounds") {
         Some(serde_json::Value::Array(arr)) => arr.push(outbound),
         _ => {
@@ -3024,7 +3081,7 @@ pub fn ensure_direct_outbound_tag(config: &mut serde_json::Value) -> String {
             }
         }
     }
-    FALLBACK_TAG.to_string()
+    candidate
 }
 
 /// Apply in-app startup mitigations to a generated sing-box config:
@@ -3114,7 +3171,7 @@ pub fn merge_native_json_profile(
             if let Some(obj) = val.as_object_mut()
                 && let Some(t) = obj.get("type").and_then(|t| t.as_str())
             {
-                if t == "mixed" {
+                if t == "mixed" && !mixed_found {
                     obj.insert("listen_port".to_string(), json!(gui_config.mixed_port));
                     mixed_found = true;
                 } else if t == "tun" {
@@ -3305,6 +3362,7 @@ pub fn generate_preview_config(gui_config: &GuiConfig) -> String {
     };
     match res {
         Ok(mut val) => {
+            mitigate_run_config(&mut val);
             redact_sensitive_json(&mut val);
             match serde_json::to_string_pretty(&val) {
                 Ok(json_str) => json_str,
@@ -3392,6 +3450,7 @@ pub(crate) fn redact_sensitive_json(value: &mut serde_json::Value) {
 mod tests {
     use super::*;
     use crate::state::RoutingMode;
+    use base64::Engine;
 
     #[test]
     fn test_parse_subscription_userinfo() {
@@ -4286,5 +4345,97 @@ proxies:
         };
         let merged = merge_native_json_profile(json, &gui).unwrap();
         assert_eq!(merged["outbounds"][0]["default"], "b");
+    }
+
+    #[test]
+    fn ss_and_ssr_parsing_edge_cases() {
+        // SS with explicit user:password in URL
+        let ss_link = "ss://YWVzLTEyOC1nY206dGVzdHBhc3M=@1.2.3.4:8388#SS-Node";
+        let config = convert_clash_to_singbox(ss_link, &GuiConfig::default()).unwrap();
+        let outbounds = config["outbounds"].as_array().unwrap();
+        let ss = outbounds.iter().find(|o| o["tag"] == "SS-Node").unwrap();
+        assert_eq!(ss["method"], "aes-128-gcm");
+        assert_eq!(ss["password"], "testpass");
+
+        // SSR with bracketed IPv6 and query
+        let ssr_raw =
+            "[2001:db8::1]:8388:origin:aes-128-cfb:plain:dGVzdA/?obfsparam=&remarks=U1NSLU5vZGU";
+        let ssr_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(ssr_raw.as_bytes());
+        let ssr_link = format!("ssr://{ssr_b64}");
+        let config_ssr = convert_clash_to_singbox(&ssr_link, &GuiConfig::default()).unwrap();
+        let outbounds_ssr = config_ssr["outbounds"].as_array().unwrap();
+        let ssr = outbounds_ssr
+            .iter()
+            .find(|o| o["tag"] == "SSR-Node")
+            .unwrap();
+        assert_eq!(ssr["server"], "2001:db8::1");
+        assert_eq!(ssr["server_port"], 8388);
+    }
+
+    #[test]
+    fn vmess_vless_hy2_tuic_edge_cases() {
+        // VMess with tls: 1
+        let vmess_json = r#"{"v":"2","ps":"VMess-Node","add":"example.com","port":"443","id":"00000000-0000-0000-0000-000000000000","aid":"0","net":"ws","type":"none","host":"example.com","path":"/ws","tls":1}"#;
+        let vmess_b64 = base64::engine::general_purpose::STANDARD.encode(vmess_json.as_bytes());
+        let vmess_link = format!("vmess://{vmess_b64}");
+        let config_vmess = convert_clash_to_singbox(&vmess_link, &GuiConfig::default()).unwrap();
+        let outbounds_vmess = config_vmess["outbounds"].as_array().unwrap();
+        let vmess = outbounds_vmess
+            .iter()
+            .find(|o| o["tag"] == "VMess-Node")
+            .unwrap();
+        assert_eq!(vmess["tls"]["enabled"], true);
+
+        // VLESS with reality public key
+        let vless_link = "vless://00000000-0000-0000-0000-000000000000@vless.example.com:443?pbk=abcdef123456&sni=target.com#VLESS-Reality";
+        let config_vless = convert_clash_to_singbox(vless_link, &GuiConfig::default()).unwrap();
+        let outbounds_vless = config_vless["outbounds"].as_array().unwrap();
+        let vless = outbounds_vless
+            .iter()
+            .find(|o| o["tag"] == "VLESS-Reality")
+            .unwrap();
+        assert_eq!(vless["tls"]["enabled"], true);
+        assert_eq!(vless["tls"]["reality"]["enabled"], true);
+        assert_eq!(vless["tls"]["reality"]["public_key"], "abcdef123456");
+
+        // Hy2 with YAML mapping obfs
+        let hy2_yaml = r#"
+proxies:
+  - name: Hy2-Node
+    type: hysteria2
+    server: hy2.example.com
+    port: 443
+    password: pass
+    obfs:
+      type: salamander
+      password: obfspassword
+"#;
+        let config_hy2 = convert_clash_to_singbox(hy2_yaml, &GuiConfig::default()).unwrap();
+        let outbounds_hy2 = config_hy2["outbounds"].as_array().unwrap();
+        let hy2 = outbounds_hy2
+            .iter()
+            .find(|o| o["tag"] == "Hy2-Node")
+            .unwrap();
+        assert_eq!(hy2["obfs"]["type"], "salamander");
+        assert_eq!(hy2["obfs"]["password"], "obfspassword");
+
+        // TUIC with congestion-control
+        let tuic_yaml = r#"
+proxies:
+  - name: TUIC-Node
+    type: tuic
+    server: tuic.example.com
+    port: 8443
+    uuid: 00000000-0000-0000-0000-000000000000
+    password: pass
+    congestion-control: bbr
+"#;
+        let config_tuic = convert_clash_to_singbox(tuic_yaml, &GuiConfig::default()).unwrap();
+        let outbounds_tuic = config_tuic["outbounds"].as_array().unwrap();
+        let tuic = outbounds_tuic
+            .iter()
+            .find(|o| o["tag"] == "TUIC-Node")
+            .unwrap();
+        assert_eq!(tuic["congestion_control"], "bbr");
     }
 }

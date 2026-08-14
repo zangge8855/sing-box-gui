@@ -476,7 +476,6 @@ pub fn render<'a>(
                     cx, y0, cx, y1, x1, y1
                 ));
             }
-            down_path.push_str(" L 300 100 Z");
 
             up_path.push_str(&format!("M 0 {:.2}", get_y_up(speed_history[0].0)));
             for i in 0..points_count - 1 {
@@ -491,7 +490,7 @@ pub fn render<'a>(
                 ));
             }
         } else {
-            down_path = "M 0 100 L 300 100 Z".to_string();
+            down_path = "M 0 100 L 300 100".to_string();
             up_path = "M 0 100 L 300 100".to_string();
         }
 
@@ -503,45 +502,17 @@ pub fn render<'a>(
 
         let mut grid_lines = String::new();
         for y in [20, 40, 60, 80] {
-            grid_lines.push_str(&format!(r#"<line x1="-5" y1="{}" x2="305" y2="{}" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, y, y, grid_color));
+            grid_lines.push_str(&format!(
+                r#"<line x1="-5" y1="{}" x2="305" y2="{}" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#,
+                y, y, grid_color
+            ));
         }
         for x in [50, 100, 150, 200, 250] {
-            grid_lines.push_str(&format!(r#"<line x1="{}" y1="-5" x2="{}" y2="105" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#, x, x, grid_color));
+            grid_lines.push_str(&format!(
+                r#"<line x1="{}" y1="-5" x2="{}" y2="105" stroke="{}" stroke-dasharray="2 2" stroke-width="0.5"/>"#,
+                x, x, grid_color
+            ));
         }
-
-        let down_color_hex = format!(
-            "rgba({},{},{},1)",
-            (theme::ACCENT_BLUE.r * 255.0).round() as u8,
-            (theme::ACCENT_BLUE.g * 255.0).round() as u8,
-            (theme::ACCENT_BLUE.b * 255.0).round() as u8
-        );
-        let up_color_hex = format!(
-            "rgba({},{},{},1)",
-            (theme::ACCENT_PURPLE.r * 255.0).round() as u8,
-            (theme::ACCENT_PURPLE.g * 255.0).round() as u8,
-            (theme::ACCENT_PURPLE.b * 255.0).round() as u8
-        );
-
-        let svg_xml = format!(
-            r##"<svg viewBox="-5 -5 310 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
-                 <defs>
-                   <linearGradient id="downGrad" x1="0" y1="0" x2="0" y2="1">
-                     <stop offset="0%" stop-color="{}" stop-opacity="0.4"/>
-                     <stop offset="100%" stop-color="{}" stop-opacity="0"/>
-                   </linearGradient>
-                 </defs>
-                 {}
-                 <path d="{}" fill="url(#downGrad)" stroke="{}" stroke-width="2.5"/>
-                 <path d="{}" fill="none" stroke="{}" stroke-width="2.5"/>
-               </svg>"##,
-            down_color_hex,
-            down_color_hex,
-            grid_lines,
-            down_path,
-            down_color_hex,
-            up_path,
-            up_color_hex
-        );
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         speed_history.hash(&mut hasher);
@@ -550,15 +521,51 @@ pub fn render<'a>(
         let cache = CHART_HANDLE_CACHE.get_or_init(|| Mutex::new(None));
         let chart_handle = {
             let mut cached = cache.lock().unwrap_or_else(|error| error.into_inner());
-            if cached
-                .as_ref()
-                .is_some_and(|(key, dark, _)| *key == chart_key && *dark == dark_theme)
+            if let Some((key, dark, handle)) = cached.as_ref()
+                && *key == chart_key
+                && *dark == dark_theme
             {
-                cached
-                    .as_ref()
-                    .map(|(_, _, handle)| handle.clone())
-                    .unwrap()
+                handle.clone()
             } else {
+                let down_line_path = down_path.clone();
+                let down_fill_path = format!("{down_path} L 300 100 L 0 100 Z");
+
+                let down_color_hex = format!(
+                    "rgba({},{},{},1)",
+                    (theme::ACCENT_BLUE.r * 255.0).round() as u8,
+                    (theme::ACCENT_BLUE.g * 255.0).round() as u8,
+                    (theme::ACCENT_BLUE.b * 255.0).round() as u8
+                );
+                let up_color_hex = format!(
+                    "rgba({},{},{},1)",
+                    (theme::ACCENT_PURPLE.r * 255.0).round() as u8,
+                    (theme::ACCENT_PURPLE.g * 255.0).round() as u8,
+                    (theme::ACCENT_PURPLE.b * 255.0).round() as u8
+                );
+
+                let svg_xml = format!(
+                    r##"<svg viewBox="-5 -5 310 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+                         <defs>
+                           <linearGradient id="downGrad" x1="0" y1="0" x2="0" y2="1">
+                             <stop offset="0%" stop-color="{}" stop-opacity="0.4"/>
+                             <stop offset="100%" stop-color="{}" stop-opacity="0"/>
+                           </linearGradient>
+                         </defs>
+                         {}
+                         <path d="{}" fill="url(#downGrad)" stroke="none"/>
+                         <path d="{}" fill="none" stroke="{}" stroke-width="2.5"/>
+                         <path d="{}" fill="none" stroke="{}" stroke-width="2.5"/>
+                       </svg>"##,
+                    down_color_hex,
+                    down_color_hex,
+                    grid_lines,
+                    down_fill_path,
+                    down_line_path,
+                    down_color_hex,
+                    up_path,
+                    up_color_hex
+                );
+
                 let handle = svg::Handle::from_memory(svg_xml.into_bytes());
                 *cached = Some((chart_key, dark_theme, handle.clone()));
                 handle

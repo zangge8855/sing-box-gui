@@ -1,6 +1,8 @@
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static SYSTEM_PROXY_OWNED: AtomicBool = AtomicBool::new(false);
+static SYSPROXY_MUTEX: Mutex<()> = Mutex::new(());
 
 #[allow(dead_code)]
 fn backup_path() -> std::path::PathBuf {
@@ -32,6 +34,7 @@ fn clear_platform_backup() {
 }
 
 pub fn set_system_proxy(enable: bool, port: u16) -> Result<(), String> {
+    let _guard = SYSPROXY_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     match platform::set_system_proxy(enable, port) {
         Ok(()) => {
             SYSTEM_PROXY_OWNED.store(enable, Ordering::Release);
@@ -90,6 +93,7 @@ mod platform {
     const BACKUP_ENABLE: &str = "SingBoxGuiProxyBackupEnable";
     const BACKUP_SERVER: &str = "SingBoxGuiProxyBackupServer";
     const BACKUP_OVERRIDE: &str = "SingBoxGuiProxyBackupOverride";
+    const BACKUP_AUTOCONFIGURL: &str = "SingBoxGuiProxyBackupAutoConfigUrl";
 
     #[link(name = "wininet")]
     unsafe extern "system" {
@@ -136,6 +140,7 @@ mod platform {
         let _ = settings.delete_value(BACKUP_ENABLE);
         let _ = settings.delete_value(BACKUP_SERVER);
         let _ = settings.delete_value(BACKUP_OVERRIDE);
+        let _ = settings.delete_value(BACKUP_AUTOCONFIGURL);
         settings
             .delete_value(BACKUP_MARKER)
             .map_err(|e| format!("Failed to clear Windows proxy backup marker: {e}"))
@@ -159,10 +164,11 @@ mod platform {
         }
         let current_enable: u32 = settings.get_value("ProxyEnable").unwrap_or_default();
         let current_server: String = settings.get_value("ProxyServer").unwrap_or_default();
-        let still_owned = current_enable != 0
-            && parse_proxy_server(&current_server).is_some_and(|(host, port)| {
-                matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1") && port == expected_port
-            });
+        let is_local_proxy = parse_proxy_server(&current_server).is_some_and(|(host, port)| {
+            matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1")
+                && (port == expected_port || expected_port > 0)
+        });
+        let still_owned = current_enable != 0 && is_local_proxy;
         if !force && !still_owned {
             clear_proxy_backup(settings)?;
             return Ok(true);
@@ -197,6 +203,12 @@ mod platform {
             .set_value("ProxyOverride", &merged.join(";"))
             .map_err(|e| format!("Failed to restore Windows bypass list: {e}"))?;
 
+        if let Ok(original_pac) = settings.get_value::<String, _>(BACKUP_AUTOCONFIGURL)
+            && !original_pac.is_empty()
+        {
+            let _ = settings.set_value("AutoConfigURL", &original_pac);
+        }
+
         if force || still_owned {
             settings
                 .set_value("ProxyServer", &original_server)
@@ -225,6 +237,12 @@ mod platform {
                 let original_enable: u32 = settings.get_value("ProxyEnable").unwrap_or_default();
                 let original_server: String = settings.get_value("ProxyServer").unwrap_or_default();
                 let original: String = settings.get_value("ProxyOverride").unwrap_or_default();
+                if let Ok(pac) = settings.get_value::<String, _>("AutoConfigURL")
+                    && !pac.trim().is_empty()
+                {
+                    let _ = settings.set_value(BACKUP_AUTOCONFIGURL, &pac);
+                    let _ = settings.delete_value("AutoConfigURL");
+                }
                 settings
                     .set_value(BACKUP_ENABLE, &original_enable)
                     .map_err(|e| format!("Failed to back up Windows proxy state: {e}"))?;
@@ -260,7 +278,9 @@ mod platform {
                 Ok::<(), String>(())
             })();
             if let Err(error) = apply_result {
-                return match restore_proxy_backup(&settings, port, true) {
+                let rollback_res = restore_proxy_backup(&settings, port, true);
+                notify_proxy_changed();
+                return match rollback_res {
                     Ok(_) => Err(error),
                     Err(rollback) => Err(format!("{error}; rollback failed: {rollback}")),
                 };
@@ -269,7 +289,9 @@ mod platform {
             // Restore the complete user state if we previously backed it up.
             if !restore_proxy_backup(&settings, port, false)? {
                 let current_server: String = settings.get_value("ProxyServer").unwrap_or_default();
-                if parse_proxy_server(&current_server) == Some(("127.0.0.1".to_string(), port)) {
+                if parse_proxy_server(&current_server).is_some_and(|(host, _)| {
+                    matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1")
+                }) {
                     settings
                         .set_value("ProxyEnable", &0u32)
                         .map_err(|e| format!("Failed to disable Windows proxy: {e}"))?;

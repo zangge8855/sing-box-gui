@@ -213,9 +213,12 @@ pub fn cleanup_stale_temp_binaries() {
 }
 
 #[cfg(target_os = "windows")]
+static CURRENT_JOB_OBJECT: Mutex<Option<windows_sys::Win32::Foundation::HANDLE>> = Mutex::new(None);
+
+#[cfg(target_os = "windows")]
 fn bind_child_to_job_object(child: &std::process::Child) -> Result<(), String> {
     use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::*;
 
     unsafe {
@@ -232,12 +235,20 @@ fn bind_child_to_job_object(child: &std::process::Child) -> Result<(), String> {
             std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         );
         if set_res == 0 {
+            CloseHandle(job);
             return Err("Failed to set JobObject info".to_string());
         }
         let assign_res = AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE);
         if assign_res == 0 {
+            CloseHandle(job);
             return Err("Failed to assign process to JobObject".to_string());
         }
+
+        let mut lock = CURRENT_JOB_OBJECT.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(old_job) = lock.take() {
+            CloseHandle(old_job);
+        }
+        *lock = Some(job);
     }
     Ok(())
 }
@@ -795,7 +806,10 @@ pub fn check_core_config(gui_config: &GuiConfig) -> Result<(), String> {
     }
 }
 
+static LIFECYCLE_LOCK: Mutex<()> = Mutex::new(());
+
 pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<(), String> {
+    let _lifecycle_guard = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Reset the intentional-stop flag up front so a failed restart does not
     // leave a stale flag lingering when no child is being tracked.
     INTENTIONAL_STOP.store(false, Ordering::SeqCst);
@@ -822,7 +836,10 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
     let run_config_path = prepare_run_config(gui_config)?;
     {
         let mut check_cmd = Command::new(&core_path);
-        check_cmd.args(["check", "-c", &run_config_path.to_string_lossy()]);
+        check_cmd
+            .arg("check")
+            .arg("-c")
+            .arg(run_config_path.as_os_str());
         check_cmd.stdout(Stdio::piped());
         check_cmd.stderr(Stdio::piped());
         #[cfg(target_os = "windows")]
@@ -846,7 +863,7 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
 
     let app_dir = get_app_dir();
     let mut cmd = Command::new(&core_path);
-    cmd.args(["run", "-c", &run_config_path.to_string_lossy()]);
+    cmd.arg("run").arg("-c").arg(run_config_path.as_os_str());
     cmd.current_dir(&app_dir);
     cmd.env("ENABLE_DEPRECATED_LEGACY_DNS_SERVERS", "true");
     cmd.env("ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER", "true");
@@ -861,7 +878,9 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
         .map_err(|e| format!("Failed to start process: {}", e))?;
 
     #[cfg(target_os = "windows")]
-    if let Err(error) = bind_child_to_job_object(&child) {
+    if gui_config.close_core_on_exit
+        && let Err(error) = bind_child_to_job_object(&child)
+    {
         // Without the job object the core can outlive a crashed GUI.
         let _ = log_sender.try_send(format!(
             "[GUI] Warning: failed to bind core to job object: {error}"
@@ -889,6 +908,12 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
         return Err(e);
     }
 
+    if INTENTIONAL_STOP.load(Ordering::SeqCst) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("Core startup cancelled".to_string());
+    }
+
     INTENTIONAL_STOP.store(false, Ordering::SeqCst);
     {
         let mut g = get_last_unexpected_exit_lock();
@@ -903,6 +928,15 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
 pub fn stop_core() {
     INTENTIONAL_STOP.store(true, Ordering::SeqCst);
     CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
+    #[cfg(target_os = "windows")]
+    {
+        let mut job_lock = CURRENT_JOB_OBJECT.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(job) = job_lock.take() {
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(job);
+            }
+        }
+    }
     let mut lock = get_process_lock();
     if let Some(child) = lock.as_mut() {
         match child.try_wait() {
@@ -990,7 +1024,10 @@ fn is_core_running_locked(lock: &mut Option<Child>) -> bool {
                 let mut g = get_last_unexpected_exit_lock();
                 *g = Some(format!("Failed to inspect core process: {error}"));
                 if count >= 3 {
-                    *lock = None;
+                    if let Some(mut dead_child) = lock.take() {
+                        let _ = dead_child.kill();
+                        let _ = dead_child.wait();
+                    }
                     CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
                     CONSECUTIVE_TRY_WAIT_ERRORS.store(0, Ordering::SeqCst);
                     false

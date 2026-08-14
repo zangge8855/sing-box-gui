@@ -1,4 +1,3 @@
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -28,17 +27,14 @@ fn with_secret(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     if secret.is_empty() {
         return builder;
     }
-    let Ok(value) = HeaderValue::from_str(&format!("Bearer {}", secret)) else {
-        return builder;
-    };
-    let mut headers = HeaderMap::new();
-    headers.insert(HeaderName::from_static("authorization"), value);
-    builder.headers(headers)
+    builder.bearer_auth(secret)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TrafficInfo {
+    #[serde(default)]
     pub up: u64,
+    #[serde(default)]
     pub down: u64,
 }
 
@@ -49,39 +45,47 @@ pub struct ProxyInfo {
     pub name: String,
     #[serde(default, rename = "type")]
     pub proxy_type: String,
+    #[serde(default)]
     pub udp: Option<bool>,
+    #[serde(default)]
     pub history: Option<Vec<serde_json::Value>>,
-    pub now: Option<String>,      // only present for selectors
+    #[serde(default)]
+    pub now: Option<String>, // only present for selectors
+    #[serde(default)]
     pub all: Option<Vec<String>>, // list of sub-nodes for selectors
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProxiesResponse {
+    #[serde(default)]
     pub proxies: HashMap<String, ProxyInfo>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DelayResponse {
+    #[serde(default)]
     pub delay: u64,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
 pub struct ConnectionMetadata {
+    #[serde(default)]
     pub network: String,
-    #[serde(rename = "type")]
+    #[serde(default, rename = "type")]
     #[allow(dead_code)]
     pub conn_type: String,
-    #[serde(rename = "sourceIP")]
+    #[serde(default, rename = "sourceIP")]
     #[allow(dead_code)]
     pub source_ip: String,
-    #[serde(rename = "destinationIP")]
+    #[serde(default, rename = "destinationIP")]
     pub destination_ip: String,
-    #[serde(rename = "sourcePort")]
+    #[serde(default, rename = "sourcePort")]
     #[allow(dead_code)]
     pub source_port: String,
-    #[serde(rename = "destinationPort")]
+    #[serde(default, rename = "destinationPort")]
     #[allow(dead_code)]
     pub destination_port: String,
+    #[serde(default)]
     pub host: String,
     /// Process path when provided by clash_api (optional).
     #[serde(default, rename = "processPath")]
@@ -126,12 +130,19 @@ mod traffic_tests {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct Connection {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub metadata: ConnectionMetadata,
+    #[serde(default)]
     pub upload: u64,
+    #[serde(default)]
     pub download: u64,
+    #[serde(default)]
     pub start: String,
+    #[serde(default)]
     pub chains: Vec<String>,
+    #[serde(default)]
     pub rule: String,
 }
 
@@ -140,9 +151,9 @@ pub struct Connection {
 pub struct ConnectionsResponse {
     #[serde(default)]
     pub connections: Option<Vec<Connection>>,
-    #[serde(rename = "downloadTotal")]
+    #[serde(default, rename = "downloadTotal")]
     pub download_total: u64,
-    #[serde(rename = "uploadTotal")]
+    #[serde(default, rename = "uploadTotal")]
     pub upload_total: u64,
 }
 
@@ -360,8 +371,15 @@ pub fn spawn_traffic_monitor(
                 }
                 res_future = with_secret(client.get(&url)).send() => {
                     if let Ok(mut res) = res_future {
+                        if !res.status().is_success() {
+                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                            continue;
+                        }
                         let mut line_buffer = String::new();
                         loop {
+                            if sender.is_closed() {
+                                return;
+                            }
                             tokio::select! {
                                 _ = &mut cancel_rx => {
                                     return;
@@ -375,9 +393,12 @@ pub fn spawn_traffic_monitor(
                                             while let Some(pos) = line_buffer.find('\n') {
                                                 let line = line_buffer[..pos].trim();
                                                 if !line.is_empty()
-                                                    && let Ok(info) = serde_json::from_str::<TrafficInfo>(line) {
-                                                        let _ = sender.try_send(info);
-                                                    }
+                                                    && let Ok(info) = serde_json::from_str::<TrafficInfo>(line)
+                                                    && sender.try_send(info).is_err()
+                                                    && sender.is_closed()
+                                                {
+                                                    return;
+                                                }
                                                 line_buffer.drain(..=pos);
                                             }
                                         }
