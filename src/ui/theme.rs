@@ -181,42 +181,111 @@ pub fn protocol_color(node_type: &str) -> Color {
 /// Detect region or country flag Emoji from a node name string for fast visual recognition.
 #[allow(dead_code)]
 pub fn detect_region_flag(name: &str) -> Option<&'static str> {
-
     // If the string already contains a flag emoji, don't double-flag
-    if name.contains('🇭') || name.contains('🇯') || name.contains('🇺') || name.contains('🇸')
-        || name.contains('🇹') || name.contains('🇰') || name.contains('🇩') || name.contains('🇬')
-        || name.contains('🇨') || name.contains('🇦') || name.contains('🇷') || name.contains('🇫')
+    if name.contains('🇭')
+        || name.contains('🇯')
+        || name.contains('🇺')
+        || name.contains('🇸')
+        || name.contains('🇹')
+        || name.contains('🇰')
+        || name.contains('🇩')
+        || name.contains('🇬')
+        || name.contains('🇨')
+        || name.contains('🇦')
+        || name.contains('🇷')
+        || name.contains('🇫')
     {
         return None;
     }
     let lower = name.to_lowercase();
-    if lower.contains("香港") || lower.contains("hk") || lower.contains("hongkong") || lower.contains("hong kong") {
+    if lower.contains("香港")
+        || lower.contains("hk")
+        || lower.contains("hongkong")
+        || lower.contains("hong kong")
+    {
         Some("🇭🇰")
-    } else if lower.contains("日本") || lower.contains("jp") || lower.contains("japan") || lower.contains("tokyo") || lower.contains("osaka") {
+    } else if lower.contains("日本")
+        || lower.contains("jp")
+        || lower.contains("japan")
+        || lower.contains("tokyo")
+        || lower.contains("osaka")
+    {
         Some("🇯🇵")
-    } else if lower.contains("美国") || lower.contains("us") || lower.contains("united states") || lower.contains("america") || lower.contains("los angeles") || lower.contains("san jose") {
+    } else if lower.contains("美国")
+        || lower.contains("us")
+        || lower.contains("united states")
+        || lower.contains("america")
+        || lower.contains("los angeles")
+        || lower.contains("san jose")
+    {
         Some("🇺🇸")
-    } else if lower.contains("新加坡") || lower.contains("sg") || lower.contains("singapore") || lower.contains("狮城") {
+    } else if lower.contains("新加坡")
+        || lower.contains("sg")
+        || lower.contains("singapore")
+        || lower.contains("狮城")
+    {
         Some("🇸🇬")
-    } else if lower.contains("台湾") || lower.contains("tw") || lower.contains("taiwan") || lower.contains("台北") {
+    } else if lower.contains("台湾")
+        || lower.contains("tw")
+        || lower.contains("taiwan")
+        || lower.contains("台北")
+    {
         Some("🇹🇼")
-    } else if lower.contains("韩国") || lower.contains("kr") || lower.contains("korea") || lower.contains("首尔") || lower.contains("seoul") {
+    } else if lower.contains("韩国")
+        || lower.contains("kr")
+        || lower.contains("korea")
+        || lower.contains("首尔")
+        || lower.contains("seoul")
+    {
         Some("🇰🇷")
-    } else if lower.contains("德国") || lower.contains("de") || lower.contains("germany") || lower.contains("frankfurt") {
+    } else if lower.contains("德国")
+        || lower.contains("de")
+        || lower.contains("germany")
+        || lower.contains("frankfurt")
+    {
         Some("🇩🇪")
-    } else if lower.contains("英国") || lower.contains("uk") || lower.contains("gb") || lower.contains("britain") || lower.contains("london") {
+    } else if lower.contains("英国")
+        || lower.contains("uk")
+        || lower.contains("gb")
+        || lower.contains("britain")
+        || lower.contains("london")
+    {
         Some("🇬🇧")
-    } else if lower.contains("加拿大") || lower.contains("ca") || lower.contains("canada") || lower.contains("toronto") {
+    } else if lower.contains("加拿大")
+        || lower.contains("ca")
+        || lower.contains("canada")
+        || lower.contains("toronto")
+    {
         Some("🇨🇦")
-    } else if lower.contains("澳大利亚") || lower.contains("au") || lower.contains("australia") || lower.contains("sydney") {
+    } else if lower.contains("澳大利亚")
+        || lower.contains("au")
+        || lower.contains("australia")
+        || lower.contains("sydney")
+    {
         Some("🇦🇺")
-    } else if lower.contains("俄罗斯") || lower.contains("ru") || lower.contains("russia") || lower.contains("moscow") {
+    } else if lower.contains("俄罗斯")
+        || lower.contains("ru")
+        || lower.contains("russia")
+        || lower.contains("moscow")
+    {
         Some("🇷🇺")
-    } else if lower.contains("法国") || lower.contains("fr") || lower.contains("france") || lower.contains("paris") {
+    } else if lower.contains("法国")
+        || lower.contains("fr")
+        || lower.contains("france")
+        || lower.contains("paris")
+    {
         Some("🇫🇷")
-    } else if lower.contains("荷兰") || lower.contains("nl") || lower.contains("netherlands") || lower.contains("amsterdam") {
+    } else if lower.contains("荷兰")
+        || lower.contains("nl")
+        || lower.contains("netherlands")
+        || lower.contains("amsterdam")
+    {
         Some("🇳🇱")
-    } else if lower.contains("土耳其") || lower.contains("tr") || lower.contains("turkey") || lower.contains("istanbul") {
+    } else if lower.contains("土耳其")
+        || lower.contains("tr")
+        || lower.contains("turkey")
+        || lower.contains("istanbul")
+    {
         Some("🇹🇷")
     } else if lower.contains("印度") || lower.contains("in") || lower.contains("india") {
         Some("🇮🇳")
@@ -228,7 +297,6 @@ pub fn detect_region_flag(name: &str) -> Option<&'static str> {
         None
     }
 }
-
 
 // ── Token accessors ──────────────────────────────────────────────────────────
 
@@ -504,7 +572,6 @@ pub fn badge_colored(color: Color, theme: &iced::Theme) -> container::Style {
         ..Default::default()
     }
 }
-
 
 /// Soft ring around a status indicator (running core).
 pub fn status_ring(fill: Color) -> container::Style {
@@ -1317,8 +1384,6 @@ mod tests {
         assert_eq!(style.text_color, Some(ACCENT_PURPLE));
     }
 }
-
-
 
 pub fn button_ghost(theme: &iced::Theme, status: button::Status) -> button::Style {
     let mut base = button_secondary(theme, status);

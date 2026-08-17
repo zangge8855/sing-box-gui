@@ -4,7 +4,6 @@ use crate::ui::theme;
 use iced::widget::{button, container, row, text};
 use iced::{Alignment, Color, Element, Length};
 
-
 pub fn render<'a>(toast: &'a Toast, theme: &iced::Theme) -> Element<'a, Message> {
     let (accent, icon_str) = match toast.kind {
         ToastKind::Success => (theme::SUCCESS, "✓"),
@@ -66,4 +65,3 @@ pub fn render<'a>(toast: &'a Toast, theme: &iced::Theme) -> Element<'a, Message>
         })
         .into()
 }
-

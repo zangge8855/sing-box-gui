@@ -694,7 +694,6 @@ fn render_proxy_card<'a>(
         theme::TEXT_PRIMARY_LIGHT
     };
 
-
     let latency_font = theme::metric_font();
     let latency_text = match latency {
         Some(ms) => {
@@ -732,7 +731,9 @@ fn render_proxy_card<'a>(
     .padding([2, 6])
     .style(move |t| theme::badge_colored(proto_color, t));
 
-    let mut bottom_row = row![type_tag].spacing(crate::ui::SP_8).align_y(Alignment::Center);
+    let mut bottom_row = row![type_tag]
+        .spacing(crate::ui::SP_8)
+        .align_y(Alignment::Center);
     if let (Some(s), Some(p)) = (server, port) {
         bottom_row = bottom_row.push(
             text(format!("{}:{}", s, p))
@@ -747,7 +748,11 @@ fn render_proxy_card<'a>(
         row![
             text(flag).size(theme::TYPE_BODY),
             text(crate::ui::util::truncate_chars(node_name, 24))
-                .color(if is_selected { theme::ACCENT_PURPLE } else { text_primary })
+                .color(if is_selected {
+                    theme::ACCENT_PURPLE
+                } else {
+                    text_primary
+                })
                 .size(theme::TYPE_SECTION)
                 .font(theme::ui_font(if is_selected {
                     iced::font::Weight::Bold
@@ -762,7 +767,11 @@ fn render_proxy_card<'a>(
         .into()
     } else {
         text(crate::ui::util::truncate_chars(node_name, 26))
-            .color(if is_selected { theme::ACCENT_PURPLE } else { text_primary })
+            .color(if is_selected {
+                theme::ACCENT_PURPLE
+            } else {
+                text_primary
+            })
             .size(theme::TYPE_SECTION)
             .font(theme::ui_font(if is_selected {
                 iced::font::Weight::Bold
@@ -798,13 +807,9 @@ fn render_proxy_card<'a>(
     };
 
     let card_content = column![
-        row![
-            display_title,
-            latency_text,
-            check_mark,
-        ]
-        .align_y(Alignment::Center)
-        .spacing(6),
+        row![display_title, latency_text, check_mark,]
+            .align_y(Alignment::Center)
+            .spacing(6),
         bottom_row
     ]
     .spacing(crate::ui::SP_12)
@@ -827,7 +832,10 @@ fn render_proxy_card<'a>(
                         radius: base.border.radius,
                     },
                     shadow: iced::Shadow {
-                        color: theme::with_alpha(theme::ACCENT_PURPLE, if dark { 0.25 } else { 0.15 }),
+                        color: theme::with_alpha(
+                            theme::ACCENT_PURPLE,
+                            if dark { 0.25 } else { 0.15 },
+                        ),
                         offset: iced::Vector::new(0.0, 2.0),
                         blur_radius: 8.0,
                     },
@@ -846,7 +854,9 @@ fn render_proxy_card<'a>(
                 };
                 button::Style {
                     background: match status {
-                        button::Status::Hovered => Some(iced::Background::Color(theme::elevated_surface(_theme))),
+                        button::Status::Hovered => {
+                            Some(iced::Background::Color(theme::elevated_surface(_theme)))
+                        }
                         _ => base.background,
                     },
                     text_color: text_primary,
@@ -890,7 +900,6 @@ fn render_proxy_card<'a>(
         card_btn.into()
     }
 }
-
 
 fn build_card_grid<'a>(
     card_elements: Vec<Element<'a, Message>>,

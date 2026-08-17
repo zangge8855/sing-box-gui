@@ -154,7 +154,6 @@ pub fn render<'a>(
             .style(theme::card_bg)
         };
 
-
         let left_column = column![
             make_rule_section(
                 "rules_bypass_domains",

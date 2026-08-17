@@ -438,7 +438,6 @@ pub fn render<'a>(
                 .into()
         };
 
-
         // Render dynamic SVG chart of speed history
         let max_speed = speed_history
             .iter()

@@ -163,7 +163,6 @@ pub fn render<'a>(
             );
         }
 
-
         let log_terminal = if total_lines == 0 {
             // ToggleCore *stops* a running core — only offer "Start Core"
             // when it is actually stopped (e.g. right after Clear it isn't).

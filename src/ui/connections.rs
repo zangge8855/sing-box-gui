@@ -576,13 +576,21 @@ pub fn render<'a>(
                     let proto_badge = container(
                         text(&conn.metadata.network)
                             .size(theme::TYPE_MICRO)
-                            .color(if is_udp { theme::ACCENT_CYAN } else { theme::SUCCESS })
+                            .color(if is_udp {
+                                theme::ACCENT_CYAN
+                            } else {
+                                theme::SUCCESS
+                            })
                             .font(theme::ui_font(iced::font::Weight::Bold)),
                     )
                     .padding([2, 5])
                     .style(move |t| {
                         theme::badge_colored(
-                            if is_udp { theme::ACCENT_CYAN } else { theme::SUCCESS },
+                            if is_udp {
+                                theme::ACCENT_CYAN
+                            } else {
+                                theme::SUCCESS
+                            },
                             t,
                         )
                     });
@@ -597,8 +605,7 @@ pub fn render<'a>(
                                 .width(Length::FillPortion(2))
                                 .size(theme::TYPE_BTN_SM)
                                 .color(text_muted),
-                            container(proto_badge)
-                                .width(Length::FillPortion(1)),
+                            container(proto_badge).width(Length::FillPortion(1)),
                             text(chains_text)
                                 .width(Length::FillPortion(2))
                                 .size(theme::TYPE_BTN_SM)
@@ -657,8 +664,7 @@ pub fn render<'a>(
                                 .width(Length::FillPortion(2))
                                 .size(theme::TYPE_BTN_SM)
                                 .color(text_muted),
-                            container(traffic_row)
-                                .width(Length::FillPortion(2)),
+                            container(traffic_row).width(Length::FillPortion(2)),
                             container(close_btn)
                                 .width(Length::FillPortion(1))
                                 .center_x(Length::FillPortion(1))
@@ -668,7 +674,6 @@ pub fn render<'a>(
                         .padding([8, 10])
                         .into()
                     };
-
 
                     // Hover-friendly row surface with zebra pattern
                     list = list.push(

@@ -2839,121 +2839,118 @@ impl App {
                 ),
             };
 
-            let make_tab_btn =
-                |tab: Tab, icon_char: char, key: &'static str| -> Element<'_, Message> {
-                    let active = current_tab == tab;
-                    let active_color = ui::theme::ACCENT_PURPLE;
+            let make_tab_btn = |tab: Tab,
+                                icon_char: char,
+                                key: &'static str|
+             -> Element<'_, Message> {
+                let active = current_tab == tab;
+                let active_color = ui::theme::ACCENT_PURPLE;
 
-                    let btn_content: Element<'_, Message> = if is_compact {
-                        container(
-                            text(icon_char.to_string())
-                                .font(Font::with_name("Material Icons"))
-                                .size(ui::ICON_SIZE_LG)
-                                .color(if active {
-                                    active_color
-                                } else {
-                                    text_muted
-                                }),
-                        )
-                        .width(Length::Fill)
-                        .align_x(Alignment::Center)
-                        .into()
-                    } else {
-                        row![
-                            text(icon_char.to_string())
-                                .font(Font::with_name("Material Icons"))
-                                .size(ui::ICON_SIZE)
-                                .color(if active {
-                                    active_color
-                                } else {
-                                    text_muted
-                                }),
-                            text(ui::i18n::tr(lang, key))
-                                .size(ui::theme::TYPE_BODY)
-                                .font(ui::theme::ui_font(if active {
-                                    iced::font::Weight::Bold
-                                } else {
-                                    iced::font::Weight::Medium
-                                }))
-                                .color(if active {
-                                    active_color
-                                } else {
-                                    ui::theme::text_primary(theme)
-                                })
-                        ]
-                        .spacing(ui::SP_12)
-                        .align_y(Alignment::Center)
-                        .into()
-                    };
-
-                    let btn = button(btn_content)
-                        .padding(if is_compact { [10, 0] } else { [10, 14] })
-                        .width(Length::Fill)
-                        .style(move |t, status| {
-                            let dark = ui::theme::is_dark(t);
-                            let bg = if active {
-                                Some(iced::Background::Color(ui::theme::with_alpha(
-                                    active_color,
-                                    if dark { 0.16 } else { 0.12 },
-                                )))
+                let btn_content: Element<'_, Message> = if is_compact {
+                    container(
+                        text(icon_char.to_string())
+                            .font(Font::with_name("Material Icons"))
+                            .size(ui::ICON_SIZE_LG)
+                            .color(if active { active_color } else { text_muted }),
+                    )
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center)
+                    .into()
+                } else {
+                    row![
+                        text(icon_char.to_string())
+                            .font(Font::with_name("Material Icons"))
+                            .size(ui::ICON_SIZE)
+                            .color(if active { active_color } else { text_muted }),
+                        text(ui::i18n::tr(lang, key))
+                            .size(ui::theme::TYPE_BODY)
+                            .font(ui::theme::ui_font(if active {
+                                iced::font::Weight::Bold
                             } else {
-                                match status {
-                                    button::Status::Hovered => Some(iced::Background::Color(if dark {
-                                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.05)
-                                    } else {
-                                        iced::Color::from_rgba(0.0, 0.0, 0.0, 0.04)
-                                    })),
-                                    button::Status::Pressed => Some(iced::Background::Color(if dark {
-                                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08)
-                                    } else {
-                                        iced::Color::from_rgba(0.0, 0.0, 0.0, 0.07)
-                                    })),
-                                    _ => None,
-                                }
-                            };
-
-                            let border = if active {
-                                iced::Border {
-                                    radius: ui::theme::RADIUS_MD.into(),
-                                    width: 1.0,
-                                    color: ui::theme::with_alpha(active_color, if dark { 0.35 } else { 0.25 }),
-                                }
+                                iced::font::Weight::Medium
+                            }))
+                            .color(if active {
+                                active_color
                             } else {
-                                iced::Border {
-                                    radius: ui::theme::RADIUS_MD.into(),
-                                    width: 0.0,
-                                    color: iced::Color::TRANSPARENT,
-                                }
-                            };
-
-                            button::Style {
-                                background: bg,
-                                text_color: if active { active_color } else { text_muted },
-                                border,
-                                shadow: iced::Shadow::default(),
-                                ..Default::default()
-                            }
-                        })
-                        .on_press(Message::TabChanged(tab));
-
-                    // Compact icon rail: show tab name on hover
-                    if is_compact {
-                        tooltip(
-                            btn,
-                            container(
-                                text(ui::i18n::tr(lang, key))
-                                    .size(ui::theme::TYPE_BTN_SM)
-                                    .color(ui::theme::text_primary(theme)),
-                            )
-                            .padding([6, 10])
-                            .style(ui::theme::card_bg),
-                            tooltip::Position::Right,
-                        )
-                        .into()
-                    } else {
-                        btn.into()
-                    }
+                                ui::theme::text_primary(theme)
+                            })
+                    ]
+                    .spacing(ui::SP_12)
+                    .align_y(Alignment::Center)
+                    .into()
                 };
+
+                let btn = button(btn_content)
+                    .padding(if is_compact { [10, 0] } else { [10, 14] })
+                    .width(Length::Fill)
+                    .style(move |t, status| {
+                        let dark = ui::theme::is_dark(t);
+                        let bg = if active {
+                            Some(iced::Background::Color(ui::theme::with_alpha(
+                                active_color,
+                                if dark { 0.16 } else { 0.12 },
+                            )))
+                        } else {
+                            match status {
+                                button::Status::Hovered => Some(iced::Background::Color(if dark {
+                                    iced::Color::from_rgba(1.0, 1.0, 1.0, 0.05)
+                                } else {
+                                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.04)
+                                })),
+                                button::Status::Pressed => Some(iced::Background::Color(if dark {
+                                    iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                                } else {
+                                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.07)
+                                })),
+                                _ => None,
+                            }
+                        };
+
+                        let border = if active {
+                            iced::Border {
+                                radius: ui::theme::RADIUS_MD.into(),
+                                width: 1.0,
+                                color: ui::theme::with_alpha(
+                                    active_color,
+                                    if dark { 0.35 } else { 0.25 },
+                                ),
+                            }
+                        } else {
+                            iced::Border {
+                                radius: ui::theme::RADIUS_MD.into(),
+                                width: 0.0,
+                                color: iced::Color::TRANSPARENT,
+                            }
+                        };
+
+                        button::Style {
+                            background: bg,
+                            text_color: if active { active_color } else { text_muted },
+                            border,
+                            shadow: iced::Shadow::default(),
+                            ..Default::default()
+                        }
+                    })
+                    .on_press(Message::TabChanged(tab));
+
+                // Compact icon rail: show tab name on hover
+                if is_compact {
+                    tooltip(
+                        btn,
+                        container(
+                            text(ui::i18n::tr(lang, key))
+                                .size(ui::theme::TYPE_BTN_SM)
+                                .color(ui::theme::text_primary(theme)),
+                        )
+                        .padding([6, 10])
+                        .style(ui::theme::card_bg),
+                        tooltip::Position::Right,
+                    )
+                    .into()
+                } else {
+                    btn.into()
+                }
+            };
 
             let logo_handle = self.logo_handle.clone();
             let status_dot_color = if core_running {
@@ -3136,7 +3133,6 @@ impl App {
                 .padding([18, 14])
                 .style(ui::theme::sidebar_bg)
             };
-
 
             let main_body = if let Some(toast) = toast_ref {
                 let toast_el = ui::toast::render(toast, theme);
