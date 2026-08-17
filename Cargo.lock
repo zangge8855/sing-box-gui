@@ -4717,7 +4717,7 @@ dependencies = [
 
 [[package]]
 name = "sing-box-gui"
-version = "2026.8.4"
+version = "2026.8.17"
 dependencies = [
  "base64",
  "chrono",

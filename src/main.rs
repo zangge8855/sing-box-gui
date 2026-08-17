@@ -2842,43 +2842,32 @@ impl App {
             let make_tab_btn =
                 |tab: Tab, icon_char: char, key: &'static str| -> Element<'_, Message> {
                     let active = current_tab == tab;
-
-                    let indicator: Element<'_, Message> = container(iced::widget::Space::new())
-                        .width(4)
-                        .height(20)
-                        .style(move |_theme| container::Style {
-                            background: if active {
-                                Some(iced::Background::Color(ui::theme::ACCENT_PURPLE))
-                            } else {
-                                None
-                            },
-                            border: iced::Border {
-                                radius: 2.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        })
-                        .into();
+                    let active_color = ui::theme::ACCENT_PURPLE;
 
                     let btn_content: Element<'_, Message> = if is_compact {
-                        row![
-                            indicator,
-                            container(
-                                text(icon_char.to_string())
-                                    .font(Font::with_name("Material Icons"))
-                                    .size(ui::ICON_SIZE_LG)
-                            )
-                            .width(Length::Fill)
-                            .align_x(Alignment::Center)
-                        ]
-                        .align_y(Alignment::Center)
+                        container(
+                            text(icon_char.to_string())
+                                .font(Font::with_name("Material Icons"))
+                                .size(ui::ICON_SIZE_LG)
+                                .color(if active {
+                                    active_color
+                                } else {
+                                    text_muted
+                                }),
+                        )
+                        .width(Length::Fill)
+                        .align_x(Alignment::Center)
                         .into()
                     } else {
                         row![
-                            indicator,
                             text(icon_char.to_string())
                                 .font(Font::with_name("Material Icons"))
-                                .size(ui::ICON_SIZE),
+                                .size(ui::ICON_SIZE)
+                                .color(if active {
+                                    active_color
+                                } else {
+                                    text_muted
+                                }),
                             text(ui::i18n::tr(lang, key))
                                 .size(ui::theme::TYPE_BODY)
                                 .font(ui::theme::ui_font(if active {
@@ -2886,6 +2875,11 @@ impl App {
                                 } else {
                                     iced::font::Weight::Medium
                                 }))
+                                .color(if active {
+                                    active_color
+                                } else {
+                                    ui::theme::text_primary(theme)
+                                })
                         ]
                         .spacing(ui::SP_12)
                         .align_y(Alignment::Center)
@@ -2893,9 +2887,53 @@ impl App {
                     };
 
                     let btn = button(btn_content)
-                        .padding(if is_compact { [14, 0] } else { [14, 16] })
+                        .padding(if is_compact { [10, 0] } else { [10, 14] })
                         .width(Length::Fill)
-                        .style(ui::theme::button_tab(active))
+                        .style(move |t, status| {
+                            let dark = ui::theme::is_dark(t);
+                            let bg = if active {
+                                Some(iced::Background::Color(ui::theme::with_alpha(
+                                    active_color,
+                                    if dark { 0.16 } else { 0.12 },
+                                )))
+                            } else {
+                                match status {
+                                    button::Status::Hovered => Some(iced::Background::Color(if dark {
+                                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.05)
+                                    } else {
+                                        iced::Color::from_rgba(0.0, 0.0, 0.0, 0.04)
+                                    })),
+                                    button::Status::Pressed => Some(iced::Background::Color(if dark {
+                                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                                    } else {
+                                        iced::Color::from_rgba(0.0, 0.0, 0.0, 0.07)
+                                    })),
+                                    _ => None,
+                                }
+                            };
+
+                            let border = if active {
+                                iced::Border {
+                                    radius: ui::theme::RADIUS_MD.into(),
+                                    width: 1.0,
+                                    color: ui::theme::with_alpha(active_color, if dark { 0.35 } else { 0.25 }),
+                                }
+                            } else {
+                                iced::Border {
+                                    radius: ui::theme::RADIUS_MD.into(),
+                                    width: 0.0,
+                                    color: iced::Color::TRANSPARENT,
+                                }
+                            };
+
+                            button::Style {
+                                background: bg,
+                                text_color: if active { active_color } else { text_muted },
+                                border,
+                                shadow: iced::Shadow::default(),
+                                ..Default::default()
+                            }
+                        })
                         .on_press(Message::TabChanged(tab));
 
                     // Compact icon rail: show tab name on hover
@@ -2921,7 +2959,6 @@ impl App {
             let status_dot_color = if core_running {
                 ui::theme::SUCCESS
             } else {
-                // Neutral resting state — not an error
                 ui::theme::text_muted(theme)
             };
 
@@ -2937,7 +2974,7 @@ impl App {
                 .clip(true)
                 .style(|_t| container::Style {
                     border: iced::Border {
-                        radius: ui::theme::RADIUS_SM.into(),
+                        radius: ui::theme::RADIUS_MD.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -2969,10 +3006,10 @@ impl App {
                                 make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
                                 make_tab_btn(Tab::Settings, '\u{E8B8}', "tab_settings"),
                             ]
-                            .spacing(6)
+                            .spacing(4)
                             .width(Length::Fill)
                         ]
-                        .spacing(16)
+                        .spacing(14)
                         .width(Length::Fill),
                         iced::widget::Space::new().height(Length::Fill),
                         container({
@@ -3002,22 +3039,67 @@ impl App {
                 )
                 .width(Length::Fixed(64.0))
                 .height(Length::Fill)
-                .padding([24, 0])
+                .padding([20, 0])
                 .style(ui::theme::sidebar_bg)
             } else {
+                let bottom_status_card = container(
+                    row![
+                        ui::status_dot(
+                            status_dot_color,
+                            core_running,
+                            if core_running {
+                                ui::i18n::tr(lang, "status_running")
+                            } else {
+                                ui::i18n::tr(lang, "status_stopped")
+                            },
+                            if core_running {
+                                ui::theme::SUCCESS
+                            } else {
+                                text_muted
+                            },
+                            ui::theme::TYPE_CAPTION
+                        ),
+                        iced::widget::Space::new().width(Length::Fill),
+                        text(format!("v{}", env!("CARGO_PKG_VERSION")))
+                            .size(ui::theme::TYPE_MICRO)
+                            .color(ui::theme::text_tertiary(theme))
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill),
+                )
+                .padding([8, 12])
+                .width(Length::Fill)
+                .style(|t| {
+                    let dark = ui::theme::is_dark(t);
+                    container::Style {
+                        background: Some(iced::Background::Color(if dark {
+                            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.03)
+                        } else {
+                            iced::Color::from_rgba(0.0, 0.0, 0.0, 0.025)
+                        })),
+                        border: iced::Border {
+                            color: ui::theme::border_color(t),
+                            width: 1.0,
+                            radius: ui::theme::RADIUS_SM.into(),
+                        },
+                        ..Default::default()
+                    }
+                });
+
                 container(column![
                     column![
                         row![
                             logo_rounded(logo_handle, 32.0),
                             column![
                                 text("sing-box")
-                                    .size(18)
-                                    .font(ui::theme::ui_font(iced::font::Weight::Semibold))
+                                    .size(17)
+                                    .font(ui::theme::ui_font(iced::font::Weight::Bold))
                                     .color(ui::theme::text_primary(theme)),
                                 text("GUI")
                                     .size(ui::theme::TYPE_CAPTION)
                                     .font(ui::theme::ui_font(iced::font::Weight::Medium))
-                                    .color(ui::theme::text_tertiary(theme)),
+                                    .color(ui::theme::ACCENT_PURPLE),
                             ]
                             .spacing(0)
                         ]
@@ -3041,41 +3123,20 @@ impl App {
                             make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
                             make_tab_btn(Tab::Settings, '\u{E8B8}', "tab_settings"),
                         ]
-                        .spacing(6)
+                        .spacing(4)
                         .width(Length::Fill)
                     ]
-                    .spacing(16)
+                    .spacing(14)
                     .width(Length::Fill),
                     iced::widget::Space::new().height(Length::Fill),
-                    row![
-                        ui::status_dot(
-                            status_dot_color,
-                            core_running,
-                            if core_running {
-                                ui::i18n::tr(lang, "status_running")
-                            } else {
-                                ui::i18n::tr(lang, "status_stopped")
-                            },
-                            if core_running {
-                                ui::theme::SUCCESS
-                            } else {
-                                text_muted
-                            },
-                            ui::theme::TYPE_CAPTION
-                        ),
-                        iced::widget::Space::new().width(Length::Fill),
-                        text(format!("v{}", env!("CARGO_PKG_VERSION")))
-                            .size(ui::theme::TYPE_CAPTION)
-                            .color(text_muted)
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
+                    bottom_status_card,
                 ])
                 .width(Length::Fixed(216.0))
                 .height(Length::Fill)
-                .padding(20)
+                .padding([18, 14])
                 .style(ui::theme::sidebar_bg)
             };
+
 
             let main_body = if let Some(toast) = toast_ref {
                 let toast_el = ui::toast::render(toast, theme);

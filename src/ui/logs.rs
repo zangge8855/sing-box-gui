@@ -143,15 +143,14 @@ pub fn render<'a>(
             .into()
         };
 
-        let mut logs_col = Column::new().spacing(4);
+        let mut logs_col = Column::new().spacing(2);
         let shown = filtered_lines.len();
 
         for (line, severity) in &filtered_lines {
             let line_color = match severity {
                 3 => theme::DANGER,
                 2 => theme::WARNING,
-                // Info is informational, not a success outcome.
-                1 => theme::ACCENT_BLUE,
+                1 => theme::ACCENT_CYAN,
                 _ => text_muted,
             };
 
@@ -163,6 +162,7 @@ pub fn render<'a>(
                     .width(Length::Fill),
             );
         }
+
 
         let log_terminal = if total_lines == 0 {
             // ToggleCore *stops* a running core — only offer "Start Core"

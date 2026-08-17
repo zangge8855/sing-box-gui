@@ -72,8 +72,9 @@ pub fn render<'a>(
         // 1. System Integration Card (Left Column)
         let mut sys_items: Vec<Element<'_, Message>> = vec![
             text(tr(lang, "sys_integration"))
-                .color(text_muted)
-                .size(theme::TYPE_SECTION)
+                .color(text_primary)
+                .size(theme::TYPE_HEADING)
+                .font(theme::ui_font(iced::font::Weight::Bold))
                 .into(),
         ];
         if draft.tun_mode {
@@ -309,12 +310,14 @@ pub fn render<'a>(
         let network_dns_card = container(
             column![
                 text(tr(lang, "ports_config"))
-                    .color(text_muted)
-                    .size(theme::TYPE_SECTION),
+                    .color(text_primary)
+                    .size(theme::TYPE_HEADING)
+                    .font(theme::ui_font(iced::font::Weight::Bold)),
                 ports_row,
                 text(tr(lang, "dns_servers"))
-                    .color(text_muted)
-                    .size(theme::TYPE_SECTION),
+                    .color(text_primary)
+                    .size(theme::TYPE_HEADING)
+                    .font(theme::ui_font(iced::font::Weight::Bold)),
                 dns_row,
                 column![
                     make_toggle_row("fake_ip_label", draft.fake_ip, Message::ToggleFakeIp),

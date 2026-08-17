@@ -572,6 +572,21 @@ pub fn render<'a>(
                         .padding(theme::BTN_PAD_SM)
                         .on_press(Message::CloseConnection(conn.id.clone()));
 
+                    let is_udp = conn.metadata.network.to_lowercase().contains("udp");
+                    let proto_badge = container(
+                        text(&conn.metadata.network)
+                            .size(theme::TYPE_MICRO)
+                            .color(if is_udp { theme::ACCENT_CYAN } else { theme::SUCCESS })
+                            .font(theme::ui_font(iced::font::Weight::Bold)),
+                    )
+                    .padding([2, 5])
+                    .style(move |t| {
+                        theme::badge_colored(
+                            if is_udp { theme::ACCENT_CYAN } else { theme::SUCCESS },
+                            t,
+                        )
+                    });
+
                     let row_content: Element<'_, Message> = if is_wide {
                         row![
                             text(host_text)
@@ -582,33 +597,31 @@ pub fn render<'a>(
                                 .width(Length::FillPortion(2))
                                 .size(theme::TYPE_BTN_SM)
                                 .color(text_muted),
-                            text(&conn.metadata.network)
-                                .width(Length::FillPortion(1))
-                                .size(theme::TYPE_SECTION)
-                                .color(theme::SUCCESS),
+                            container(proto_badge)
+                                .width(Length::FillPortion(1)),
                             text(chains_text)
                                 .width(Length::FillPortion(2))
-                                .size(theme::TYPE_SECTION)
+                                .size(theme::TYPE_BTN_SM)
                                 .color(text_muted),
                             text(truncate_chars(&conn.rule, 16))
                                 .width(Length::FillPortion(1))
-                                .size(theme::TYPE_SECTION)
+                                .size(theme::TYPE_BTN_SM)
                                 .color(text_primary),
                             text(dl_text)
                                 .width(Length::FillPortion(1))
-                                .size(theme::TYPE_SECTION)
-                                .color(text_primary),
+                                .size(theme::TYPE_BTN_SM)
+                                .color(theme::ACCENT_CYAN),
                             text(ul_text)
                                 .width(Length::FillPortion(1))
-                                .size(theme::TYPE_SECTION)
-                                .color(text_primary),
+                                .size(theme::TYPE_BTN_SM)
+                                .color(theme::ACCENT_PURPLE),
                             container(close_btn)
                                 .width(Length::FillPortion(1))
                                 .center_x(Length::FillPortion(1))
                         ]
                         .align_y(Alignment::Center)
                         .spacing(crate::ui::SP_12)
-                        .padding(10)
+                        .padding([8, 10])
                         .into()
                     } else {
                         let net_rule = format!(
@@ -616,7 +629,17 @@ pub fn render<'a>(
                             conn.metadata.network,
                             truncate_chars(&conn.rule, 14)
                         );
-                        let traffic = format!("↓{} ↑{}", dl_text, ul_text);
+                        let traffic_row = row![
+                            text(format!("↓{}", dl_text))
+                                .color(theme::ACCENT_CYAN)
+                                .size(theme::TYPE_MICRO),
+                            text(format!("↑{}", ul_text))
+                                .color(theme::ACCENT_PURPLE)
+                                .size(theme::TYPE_MICRO),
+                        ]
+                        .spacing(4)
+                        .align_y(Alignment::Center);
+
                         row![
                             text(host_text)
                                 .width(Length::FillPortion(3))
@@ -634,19 +657,18 @@ pub fn render<'a>(
                                 .width(Length::FillPortion(2))
                                 .size(theme::TYPE_BTN_SM)
                                 .color(text_muted),
-                            text(traffic)
-                                .width(Length::FillPortion(2))
-                                .size(theme::TYPE_BTN_SM)
-                                .color(text_primary),
+                            container(traffic_row)
+                                .width(Length::FillPortion(2)),
                             container(close_btn)
                                 .width(Length::FillPortion(1))
                                 .center_x(Length::FillPortion(1))
                         ]
                         .align_y(Alignment::Center)
                         .spacing(crate::ui::SP_12)
-                        .padding(10)
+                        .padding([8, 10])
                         .into()
                     };
+
 
                     // Hover-friendly row surface with zebra pattern
                     list = list.push(

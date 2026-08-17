@@ -693,7 +693,7 @@ fn render_proxy_card<'a>(
     } else {
         theme::TEXT_PRIMARY_LIGHT
     };
-    let text_muted = theme::text_muted(theme);
+
 
     let latency_font = theme::metric_font();
     let latency_text = match latency {
@@ -701,100 +701,163 @@ fn render_proxy_card<'a>(
             if ms >= 9999 {
                 text(tr(lang, "latency_timeout"))
                     .color(theme::DANGER)
-                    .size(theme::TYPE_MONO)
+                    .size(theme::TYPE_CAPTION)
                     .font(latency_font)
             } else {
                 text(format!("{} ms", ms))
-                    .color(if ms < 150 {
+                    .color(if ms < 100 {
                         theme::SUCCESS
-                    } else if ms < 300 {
+                    } else if ms < 250 {
                         theme::WARNING
                     } else {
                         theme::DANGER
                     })
-                    .size(theme::TYPE_MONO)
+                    .size(theme::TYPE_CAPTION)
                     .font(latency_font)
             }
         }
         None => text("-")
-            .color(text_muted)
-            .size(theme::TYPE_MONO)
+            .color(theme::text_tertiary(theme))
+            .size(theme::TYPE_CAPTION)
             .font(latency_font),
     };
 
-    let mut bottom_row = row![].spacing(crate::ui::SP_8);
+    let proto_color = theme::protocol_color(node_type);
+    let type_tag = container(
+        text(node_type.to_uppercase())
+            .size(theme::TYPE_MICRO)
+            .color(proto_color)
+            .font(theme::ui_font(iced::font::Weight::Bold)),
+    )
+    .padding([2, 6])
+    .style(move |t| theme::badge_colored(proto_color, t));
+
+    let mut bottom_row = row![type_tag].spacing(crate::ui::SP_8).align_y(Alignment::Center);
     if let (Some(s), Some(p)) = (server, port) {
         bottom_row = bottom_row.push(
-            text(node_type.to_uppercase())
-                .color(text_muted)
-                .size(theme::TYPE_CAPTION),
-        );
-        bottom_row = bottom_row.push(
-            text(format!(" {}:{}", s, p))
-                .color(text_muted)
-                .size(theme::TYPE_CAPTION)
+            text(format!("{}:{}", s, p))
+                .color(theme::text_tertiary(theme))
+                .size(theme::TYPE_MICRO)
                 .width(Length::Fill),
         );
+    }
+
+    let flag_opt = theme::detect_region_flag(node_name);
+    let display_title: Element<'_, Message> = if let Some(flag) = flag_opt {
+        row![
+            text(flag).size(theme::TYPE_BODY),
+            text(crate::ui::util::truncate_chars(node_name, 24))
+                .color(if is_selected { theme::ACCENT_PURPLE } else { text_primary })
+                .size(theme::TYPE_SECTION)
+                .font(theme::ui_font(if is_selected {
+                    iced::font::Weight::Bold
+                } else {
+                    iced::font::Weight::Medium
+                }))
+                .width(Length::Fill),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .into()
     } else {
-        let type_tag = container(
-            text(node_type.to_uppercase())
+        text(crate::ui::util::truncate_chars(node_name, 26))
+            .color(if is_selected { theme::ACCENT_PURPLE } else { text_primary })
+            .size(theme::TYPE_SECTION)
+            .font(theme::ui_font(if is_selected {
+                iced::font::Weight::Bold
+            } else {
+                iced::font::Weight::Medium
+            }))
+            .width(Length::Fill)
+            .into()
+    };
+
+    let check_mark: Element<'_, Message> = if is_selected {
+        container(
+            text("✓")
                 .size(theme::TYPE_MICRO)
-                .color(text_muted)
+                .color(iced::Color::WHITE)
                 .font(theme::ui_font(iced::font::Weight::Bold)),
         )
-        .padding([2, 6])
-        .style(theme::badge_bg);
-        bottom_row = bottom_row.push(type_tag);
-    }
+        .width(16)
+        .height(16)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .style(|_t| container::Style {
+            background: Some(iced::Background::Color(theme::ACCENT_PURPLE)),
+            border: iced::Border {
+                radius: 8.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+    } else {
+        iced::widget::Space::new().width(0).height(0).into()
+    };
 
     let card_content = column![
         row![
-            text(crate::ui::util::truncate_chars(node_name, 28))
-                .color(text_primary)
-                .size(theme::TYPE_BODY)
-                .width(Length::Fill),
-            latency_text
+            display_title,
+            latency_text,
+            check_mark,
         ]
         .align_y(Alignment::Center)
-        .spacing(8),
+        .spacing(6),
         bottom_row
     ]
-    .spacing(if server.is_some() {
-        crate::ui::SP_12
-    } else {
-        crate::ui::SP_8
-    })
-    .padding(theme::CARD_PAD);
+    .spacing(crate::ui::SP_12)
+    .padding(theme::CARD_PAD_DENSE);
 
     let node_clone = node_name.to_string();
 
     let mut card_btn = button(card_content)
         .padding(0)
         .style(move |_theme, status| {
-            let base = if is_selected {
-                theme::card_selected(_theme)
-            } else {
-                theme::card_bg(_theme)
-            };
-            let border_color = match status {
-                button::Status::Hovered if is_selector => theme::ACCENT_PURPLE,
-                button::Status::Hovered
-                    if !is_selector && direct_selectable && server.is_some() =>
-                {
-                    theme::ACCENT_PURPLE
+            let dark = theme::is_dark(_theme);
+            if is_selected {
+                let base = theme::card_selected(_theme);
+                button::Style {
+                    background: base.background,
+                    text_color: text_primary,
+                    border: iced::Border {
+                        color: theme::ACCENT_PURPLE,
+                        width: 1.5,
+                        radius: base.border.radius,
+                    },
+                    shadow: iced::Shadow {
+                        color: theme::with_alpha(theme::ACCENT_PURPLE, if dark { 0.25 } else { 0.15 }),
+                        offset: iced::Vector::new(0.0, 2.0),
+                        blur_radius: 8.0,
+                    },
+                    ..Default::default()
                 }
-                _ => base.border.color,
-            };
-            button::Style {
-                background: base.background,
-                text_color: text_primary,
-                border: iced::Border {
-                    color: border_color,
-                    width: base.border.width,
-                    radius: base.border.radius,
-                },
-                shadow: base.shadow,
-                ..Default::default()
+            } else {
+                let base = theme::card_bg(_theme);
+                let border_color = match status {
+                    button::Status::Hovered if is_selector => theme::ACCENT_PURPLE,
+                    button::Status::Hovered
+                        if !is_selector && direct_selectable && server.is_some() =>
+                    {
+                        theme::ACCENT_PURPLE
+                    }
+                    _ => base.border.color,
+                };
+                button::Style {
+                    background: match status {
+                        button::Status::Hovered => Some(iced::Background::Color(theme::elevated_surface(_theme))),
+                        _ => base.background,
+                    },
+                    text_color: text_primary,
+                    border: iced::Border {
+                        color: border_color,
+                        width: base.border.width,
+                        radius: base.border.radius,
+                    },
+                    shadow: base.shadow,
+                    ..Default::default()
+                }
             }
         })
         .width(Length::Fill);
@@ -810,7 +873,7 @@ fn render_proxy_card<'a>(
         card_btn = card_btn.on_press(Message::SelectNode(node_clone));
     }
 
-    if node_name.chars().count() > 28 {
+    if node_name.chars().count() > 24 {
         tooltip(
             card_btn,
             container(
@@ -827,6 +890,7 @@ fn render_proxy_card<'a>(
         card_btn.into()
     }
 }
+
 
 fn build_card_grid<'a>(
     card_elements: Vec<Element<'a, Message>>,

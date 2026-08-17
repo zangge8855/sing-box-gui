@@ -146,7 +146,11 @@ pub const ACCENT_PURPLE: Color = Color::from_rgb(0.43, 0.36, 0.90);
 pub const ACCENT_PURPLE_HOVER: Color = Color::from_rgb(0.50, 0.43, 0.96);
 pub const ACCENT_PURPLE_PRESSED: Color = Color::from_rgb(0.36, 0.29, 0.79);
 pub const ACCENT_PURPLE_DISABLED: Color = Color::from_rgb(0.28, 0.24, 0.40);
-pub const ACCENT_BLUE: Color = Color::from_rgb(0.28, 0.52, 0.96); // #4785f5
+pub const ACCENT_BLUE: Color = Color::from_rgb(0.26, 0.52, 0.96); // #4285F4
+#[allow(dead_code)]
+pub const ACCENT_CYAN: Color = Color::from_rgb(0.06, 0.72, 0.85); // #0FB8D9
+#[allow(dead_code)]
+pub const ACCENT_PINK: Color = Color::from_rgb(0.92, 0.35, 0.60); // #EA5999
 /// Prefer SUCCESS for health/status; kept for decorative accents if needed.
 #[allow(dead_code)]
 pub const ACCENT_GREEN: Color = Color::from_rgb(0.18, 0.76, 0.58);
@@ -156,6 +160,75 @@ pub const DANGER: Color = Color::from_rgb(0.92, 0.30, 0.32);
 pub const DANGER_HOVER: Color = Color::from_rgb(0.96, 0.38, 0.38);
 pub const DANGER_PRESSED: Color = Color::from_rgb(0.80, 0.22, 0.24);
 pub const DANGER_DISABLED: Color = Color::from_rgb(0.40, 0.20, 0.22);
+
+/// Map proxy protocol to a distinct semantic accent color for visual scanning.
+#[allow(dead_code)]
+pub fn protocol_color(node_type: &str) -> Color {
+    match node_type.trim().to_ascii_lowercase().as_str() {
+        "hysteria" | "hysteria2" | "hy2" => Color::from_rgb(0.65, 0.36, 0.95), // Purple
+        "vless" => Color::from_rgb(0.06, 0.72, 0.85),                          // Cyan
+        "vmess" => Color::from_rgb(0.95, 0.55, 0.15),                          // Orange
+        "shadowsocks" | "ss" => Color::from_rgb(0.12, 0.75, 0.52),             // Emerald
+        "trojan" => Color::from_rgb(0.24, 0.53, 0.96),                         // Blue
+        "tuic" => Color::from_rgb(0.92, 0.32, 0.60),                           // Pink
+        "wireguard" | "wg" => Color::from_rgb(0.72, 0.30, 0.84),               // Violet
+        "direct" => Color::from_rgb(0.35, 0.75, 0.45),                         // Green
+        "block" | "reject" => Color::from_rgb(0.90, 0.28, 0.30),               // Red
+        _ => ACCENT_PURPLE,
+    }
+}
+
+/// Detect region or country flag Emoji from a node name string for fast visual recognition.
+#[allow(dead_code)]
+pub fn detect_region_flag(name: &str) -> Option<&'static str> {
+
+    // If the string already contains a flag emoji, don't double-flag
+    if name.contains('🇭') || name.contains('🇯') || name.contains('🇺') || name.contains('🇸')
+        || name.contains('🇹') || name.contains('🇰') || name.contains('🇩') || name.contains('🇬')
+        || name.contains('🇨') || name.contains('🇦') || name.contains('🇷') || name.contains('🇫')
+    {
+        return None;
+    }
+    let lower = name.to_lowercase();
+    if lower.contains("香港") || lower.contains("hk") || lower.contains("hongkong") || lower.contains("hong kong") {
+        Some("🇭🇰")
+    } else if lower.contains("日本") || lower.contains("jp") || lower.contains("japan") || lower.contains("tokyo") || lower.contains("osaka") {
+        Some("🇯🇵")
+    } else if lower.contains("美国") || lower.contains("us") || lower.contains("united states") || lower.contains("america") || lower.contains("los angeles") || lower.contains("san jose") {
+        Some("🇺🇸")
+    } else if lower.contains("新加坡") || lower.contains("sg") || lower.contains("singapore") || lower.contains("狮城") {
+        Some("🇸🇬")
+    } else if lower.contains("台湾") || lower.contains("tw") || lower.contains("taiwan") || lower.contains("台北") {
+        Some("🇹🇼")
+    } else if lower.contains("韩国") || lower.contains("kr") || lower.contains("korea") || lower.contains("首尔") || lower.contains("seoul") {
+        Some("🇰🇷")
+    } else if lower.contains("德国") || lower.contains("de") || lower.contains("germany") || lower.contains("frankfurt") {
+        Some("🇩🇪")
+    } else if lower.contains("英国") || lower.contains("uk") || lower.contains("gb") || lower.contains("britain") || lower.contains("london") {
+        Some("🇬🇧")
+    } else if lower.contains("加拿大") || lower.contains("ca") || lower.contains("canada") || lower.contains("toronto") {
+        Some("🇨🇦")
+    } else if lower.contains("澳大利亚") || lower.contains("au") || lower.contains("australia") || lower.contains("sydney") {
+        Some("🇦🇺")
+    } else if lower.contains("俄罗斯") || lower.contains("ru") || lower.contains("russia") || lower.contains("moscow") {
+        Some("🇷🇺")
+    } else if lower.contains("法国") || lower.contains("fr") || lower.contains("france") || lower.contains("paris") {
+        Some("🇫🇷")
+    } else if lower.contains("荷兰") || lower.contains("nl") || lower.contains("netherlands") || lower.contains("amsterdam") {
+        Some("🇳🇱")
+    } else if lower.contains("土耳其") || lower.contains("tr") || lower.contains("turkey") || lower.contains("istanbul") {
+        Some("🇹🇷")
+    } else if lower.contains("印度") || lower.contains("in") || lower.contains("india") {
+        Some("🇮🇳")
+    } else if lower.contains("自动") || lower.contains("auto") {
+        Some("⚡")
+    } else if lower.contains("直连") || lower.contains("direct") {
+        Some("🟢")
+    } else {
+        None
+    }
+}
+
 
 // ── Token accessors ──────────────────────────────────────────────────────────
 
@@ -328,6 +401,7 @@ pub fn card_bg(theme: &iced::Theme) -> container::Style {
 
 /// Cardless inner section used when a single outer surface already groups the
 /// content. Keeps typography consistent without stacking borders and shadows.
+#[allow(dead_code)]
 pub fn section_plain(theme: &iced::Theme) -> container::Style {
     container::Style {
         text_color: Some(text_primary(theme)),
@@ -411,6 +485,26 @@ pub fn badge_success(_theme: &iced::Theme) -> container::Style {
         ..Default::default()
     }
 }
+
+/// Pill badge with custom colored border and soft tinted background.
+#[allow(dead_code)]
+pub fn badge_colored(color: Color, theme: &iced::Theme) -> container::Style {
+    let dark = is_dark(theme);
+    container::Style {
+        background: Some(Background::Color(with_alpha(
+            color,
+            if dark { 0.16 } else { 0.12 },
+        ))),
+        border: Border {
+            color: with_alpha(color, if dark { 0.45 } else { 0.38 }),
+            width: 1.0,
+            radius: RADIUS_XS.into(),
+        },
+        text_color: Some(color),
+        ..Default::default()
+    }
+}
+
 
 /// Soft ring around a status indicator (running core).
 pub fn status_ring(fill: Color) -> container::Style {
@@ -1194,7 +1288,37 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_protocol_colors_distinct() {
+        let hy = protocol_color("hysteria2");
+        let vless = protocol_color("vless");
+        let vmess = protocol_color("vmess");
+        let ss = protocol_color("shadowsocks");
+        assert_ne!(hy, vless);
+        assert_ne!(vless, vmess);
+        assert_ne!(vmess, ss);
+    }
+
+    #[test]
+    fn test_detect_region_flag() {
+        assert_eq!(detect_region_flag("香港 BGP 01"), Some("🇭🇰"));
+        assert_eq!(detect_region_flag("Tokyo Premium"), Some("🇯🇵"));
+        assert_eq!(detect_region_flag("US - Los Angeles"), Some("🇺🇸"));
+        assert_eq!(detect_region_flag("SG Singapore 02"), Some("🇸🇬"));
+        assert_eq!(detect_region_flag("🇹🇼 台湾 01"), None); // Already has flag
+    }
+
+    #[test]
+    fn test_badge_colored() {
+        let dark = iced::Theme::Dark;
+        let style = badge_colored(ACCENT_PURPLE, &dark);
+        assert!(style.background.is_some());
+        assert_eq!(style.text_color, Some(ACCENT_PURPLE));
+    }
 }
+
+
 
 pub fn button_ghost(theme: &iced::Theme, status: button::Status) -> button::Style {
     let mut base = button_secondary(theme, status);

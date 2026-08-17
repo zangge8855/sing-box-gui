@@ -99,7 +99,7 @@ pub fn render<'a>(
             status_active,
             status_label,
             status_color,
-            theme::TYPE_BODY,
+            theme::TYPE_SECTION,
         );
 
         let core_control_btn = if core_busy {
@@ -118,7 +118,6 @@ pub fn render<'a>(
             )
             .padding(theme::BTN_PAD_SM)
             .style(theme::button_secondary)
-            // No on_press — disabled while transitioning
         } else if core_running {
             button(
                 row![
@@ -173,8 +172,9 @@ pub fn render<'a>(
             row![
                 make_icon_badge(crate::ui::icons::ICON_VPN, theme::ACCENT_PURPLE),
                 text(tr(lang, "singbox_core"))
-                    .color(text_muted)
+                    .color(theme::text_primary(theme))
                     .size(theme::TYPE_SECTION)
+                    .font(theme::ui_font(iced::font::Weight::Bold))
             ]
             .spacing(crate::ui::SP_8)
             .align_y(Alignment::Center),
@@ -198,7 +198,7 @@ pub fn render<'a>(
         let core_status_card = container(core_card_col)
             .padding(theme::CARD_PAD)
             .width(Length::FillPortion(1))
-            .style(theme::section_plain);
+            .style(theme::card_bg);
 
         // 2. System Proxy Card
         let sys_proxy_indicator = crate::ui::status_dot(
@@ -218,11 +218,9 @@ pub fn render<'a>(
             } else {
                 text_muted
             },
-            theme::TYPE_BODY,
+            theme::TYPE_SECTION,
         );
 
-        // Registry / networksetup writes run async; show the busy state and
-        // stop accepting clicks the handler would silently swallow anyway.
         let sys_proxy_btn = if system_proxy_busy {
             button(
                 row![
@@ -266,8 +264,9 @@ pub fn render<'a>(
                 row![
                     make_icon_badge(crate::ui::icons::ICON_SPEED, theme::ACCENT_BLUE),
                     text(tr(lang, "system_proxy"))
-                        .color(text_muted)
+                        .color(theme::text_primary(theme))
                         .size(theme::TYPE_SECTION)
+                        .font(theme::ui_font(iced::font::Weight::Bold))
                 ]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
@@ -283,77 +282,9 @@ pub fn render<'a>(
         )
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
-        .style(theme::section_plain);
+        .style(theme::card_bg);
 
-        // 3. Download Speed Card
-        let download_card = container(
-            column![
-                row![
-                    make_icon_badge(crate::ui::icons::ICON_DOWN, theme::ACCENT_BLUE),
-                    text(tr(lang, "download"))
-                        .color(text_muted)
-                        .size(theme::TYPE_SECTION)
-                ]
-                .spacing(crate::ui::SP_8)
-                .align_y(Alignment::Center),
-                row![
-                    text(format_speed(current_speed.down))
-                        .font(theme::metric_font())
-                        .color(theme::ACCENT_BLUE)
-                        .size(theme::TYPE_METRIC),
-                    Space::new().width(Length::Fill),
-                    text(format!(
-                        "{} {}",
-                        tr(lang, "total_label"),
-                        format_size(total_downloaded)
-                    ))
-                    .color(theme::text_tertiary(theme))
-                    .size(theme::TYPE_CAPTION)
-                ]
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
-            ]
-            .spacing(theme::GRID_GAP),
-        )
-        .padding(theme::CARD_PAD)
-        .width(Length::FillPortion(1))
-        .style(theme::section_plain);
-
-        // 4. Upload Speed Card
-        let upload_card = container(
-            column![
-                row![
-                    make_icon_badge(crate::ui::icons::ICON_UP, theme::ACCENT_PURPLE),
-                    text(tr(lang, "upload"))
-                        .color(text_muted)
-                        .size(theme::TYPE_SECTION)
-                ]
-                .spacing(crate::ui::SP_8)
-                .align_y(Alignment::Center),
-                row![
-                    text(format_speed(current_speed.up))
-                        .font(theme::metric_font())
-                        .color(theme::ACCENT_PURPLE)
-                        .size(theme::TYPE_METRIC),
-                    Space::new().width(Length::Fill),
-                    text(format!(
-                        "{} {}",
-                        tr(lang, "total_label"),
-                        format_size(total_uploaded)
-                    ))
-                    .color(theme::text_tertiary(theme))
-                    .size(theme::TYPE_CAPTION)
-                ]
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
-            ]
-            .spacing(theme::GRID_GAP),
-        )
-        .padding(theme::CARD_PAD)
-        .width(Length::FillPortion(1))
-        .style(theme::section_plain);
-
-        // 5. Routing Mode Card
+        // 3. Routing Mode Card
         let mode_options = vec![
             RoutingModeOption {
                 mode: RoutingMode::Rule,
@@ -390,12 +321,13 @@ pub fn render<'a>(
         let routing_mode_card = container(
             column![
                 row![
-                    make_icon_badge(crate::ui::icons::ICON_SETTINGS, theme::ACCENT_BLUE),
+                    make_icon_badge(crate::ui::icons::ICON_SETTINGS, theme::ACCENT_CYAN),
                     text(tr(lang, "active_mode"))
-                        .color(text_muted)
-                        .size(theme::TYPE_SECTION),
+                        .color(theme::text_primary(theme))
+                        .size(theme::TYPE_SECTION)
+                        .font(theme::ui_font(iced::font::Weight::Bold)),
                     Space::new().width(Length::Fill),
-                    text(port_text).color(text_muted).size(theme::TYPE_BTN_SM)
+                    text(port_text).color(text_muted).size(theme::TYPE_CAPTION)
                 ]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center)
@@ -408,7 +340,77 @@ pub fn render<'a>(
         )
         .padding(theme::CARD_PAD)
         .width(Length::FillPortion(1))
-        .style(theme::section_plain);
+        .style(theme::card_bg);
+
+        // 4. Download Speed Card
+        let download_card = container(
+            column![
+                row![
+                    make_icon_badge(crate::ui::icons::ICON_DOWN, theme::ACCENT_CYAN),
+                    text(tr(lang, "download"))
+                        .color(text_muted)
+                        .size(theme::TYPE_SECTION)
+                        .font(theme::ui_font(iced::font::Weight::Medium)),
+                    Space::new().width(Length::Fill),
+                    text(format!(
+                        "{} {}",
+                        tr(lang, "total_label"),
+                        format_size(total_downloaded)
+                    ))
+                    .color(theme::text_tertiary(theme))
+                    .size(theme::TYPE_CAPTION)
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
+                row![
+                    text(format_speed(current_speed.down))
+                        .font(theme::ui_font(iced::font::Weight::Bold))
+                        .color(theme::ACCENT_CYAN)
+                        .size(theme::TYPE_METRIC),
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+            ]
+            .spacing(theme::GRID_GAP),
+        )
+        .padding(theme::CARD_PAD)
+        .width(Length::FillPortion(1))
+        .style(theme::card_bg);
+
+        // 5. Upload Speed Card
+        let upload_card = container(
+            column![
+                row![
+                    make_icon_badge(crate::ui::icons::ICON_UP, theme::ACCENT_PURPLE),
+                    text(tr(lang, "upload"))
+                        .color(text_muted)
+                        .size(theme::TYPE_SECTION)
+                        .font(theme::ui_font(iced::font::Weight::Medium)),
+                    Space::new().width(Length::Fill),
+                    text(format!(
+                        "{} {}",
+                        tr(lang, "total_label"),
+                        format_size(total_uploaded)
+                    ))
+                    .color(theme::text_tertiary(theme))
+                    .size(theme::TYPE_CAPTION)
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
+                row![
+                    text(format_speed(current_speed.up))
+                        .font(theme::ui_font(iced::font::Weight::Bold))
+                        .color(theme::ACCENT_PURPLE)
+                        .size(theme::TYPE_METRIC),
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+            ]
+            .spacing(theme::GRID_GAP),
+        )
+        .padding(theme::CARD_PAD)
+        .width(Length::FillPortion(1))
+        .style(theme::card_bg);
 
         // Layout the control status cards responsively
         let control_row: Element<'_, Message> = if is_compact {
@@ -422,9 +424,6 @@ pub fn render<'a>(
                 .width(Length::Fill)
                 .into()
         };
-        let control_panel = container(control_row)
-            .width(Length::Fill)
-            .style(theme::card_bg);
 
         // Layout the traffic metric cards responsively
         let traffic_row: Element<'_, Message> = if is_compact {
@@ -438,9 +437,7 @@ pub fn render<'a>(
                 .width(Length::Fill)
                 .into()
         };
-        let traffic_panel = container(traffic_row)
-            .width(Length::Fill)
-            .style(theme::card_bg);
+
 
         // Render dynamic SVG chart of speed history
         let max_speed = speed_history
@@ -748,9 +745,9 @@ pub fn render<'a>(
         }
 
         content_col = content_col
-            .push(control_panel)
+            .push(control_row)
             .push(summary_card)
-            .push(traffic_panel)
+            .push(traffic_row)
             .push(chart_card);
 
         if let Some(hint) = empty_hint {

@@ -46,28 +46,30 @@ pub fn render<'a>(
                                  input_value: &'a str,
                                  field: RuleField,
                                  items: &'a [String]| {
-            let mut list_col = Column::new().spacing(6);
+            let mut list_col = Column::new().spacing(4);
 
             for (idx, item) in items.iter().enumerate() {
                 let del_btn = button(
                     text(crate::ui::icons::ICON_DELETE.to_string())
                         .font(iced::Font::with_name("Material Icons"))
-                        .size(crate::ui::ICON_SIZE),
+                        .size(theme::TYPE_SECTION)
+                        .color(theme::DANGER),
                 )
-                .style(theme::button_secondary)
-                .padding(theme::BTN_PAD_SM)
+                .style(theme::button_ghost)
+                .padding([4, 6])
                 .on_press(Message::RemoveRule { field, index: idx });
 
                 let item_row = row![
                     text(item)
                         .color(text_primary)
-                        .size(theme::TYPE_SECTION)
+                        .size(theme::TYPE_BTN_SM)
+                        .font(theme::mono_font())
                         .width(Length::Fill),
                     del_btn
                 ]
                 .align_y(Alignment::Center)
-                .spacing(crate::ui::SP_12)
-                .padding(theme::BTN_PAD_SM);
+                .spacing(crate::ui::SP_8)
+                .padding([4, 8]);
 
                 list_col = list_col.push(
                     container(item_row).style(move |t| theme::list_item_style(t, false, false)),
@@ -78,18 +80,18 @@ pub fn render<'a>(
                 container(
                     text(tr(lang, "no_custom_rules"))
                         .color(theme::text_tertiary(theme))
-                        .size(theme::TYPE_BTN_SM)
+                        .size(theme::TYPE_CAPTION)
                         .align_x(Alignment::Center),
                 )
                 .width(Length::Fill)
-                .height(180.0)
+                .height(140.0)
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center)
                 .into()
             } else {
                 scrollable(list_col)
                     .style(theme::scrollbar_style)
-                    .height(180.0)
+                    .height(140.0)
                     .into()
             };
 
@@ -102,40 +104,56 @@ pub fn render<'a>(
             let input_box = text_input(placeholder, input_value)
                 .on_input(move |s| Message::RulesInputChanged { field, value: s })
                 .on_submit(Message::AddRule { field })
-                .padding(10)
+                .padding([8, 10])
+                .size(theme::TYPE_BTN_SM)
                 .style(theme::input_field);
 
             let add_btn = button(
                 row![
                     text(crate::ui::icons::ICON_ADD.to_string())
                         .font(iced::Font::with_name("Material Icons"))
-                        .size(crate::ui::ICON_SIZE),
-                    text(tr(lang, "btn_add_rule")).size(theme::TYPE_BTN_MD)
+                        .size(theme::TYPE_BTN_MD),
+                    text(tr(lang, "btn_add_rule")).size(theme::TYPE_BTN_SM)
                 ]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
             )
             .style(theme::button_primary)
-            .padding(theme::BTN_PAD_MD)
+            .padding(theme::BTN_PAD_SM)
             .on_press(Message::AddRule { field });
+
+            let count_badge = container(
+                text(format!("{}", items.len()))
+                    .size(theme::TYPE_MICRO)
+                    .color(theme::ACCENT_PURPLE)
+                    .font(theme::ui_font(iced::font::Weight::Bold)),
+            )
+            .padding([2, 6])
+            .style(|t| theme::badge_colored(theme::ACCENT_PURPLE, t));
 
             container(
                 column![
-                    text(tr(lang, title_key))
-                        .color(text_primary)
-                        .size(theme::TYPE_HEADING)
-                        .font(theme::ui_font(iced::font::Weight::Semibold)),
+                    row![
+                        text(tr(lang, title_key))
+                            .color(text_primary)
+                            .size(theme::TYPE_SECTION)
+                            .font(theme::ui_font(iced::font::Weight::Bold)),
+                        count_badge,
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
                     row![input_box, add_btn]
-                        .spacing(crate::ui::SP_12)
+                        .spacing(crate::ui::SP_8)
                         .align_y(Alignment::Center),
                     list_content
                 ]
                 .spacing(crate::ui::SP_12),
             )
-            .padding(theme::CARD_PAD_DENSE)
+            .padding(theme::CARD_PAD)
             .width(Length::Fill)
             .style(theme::card_bg)
         };
+
 
         let left_column = column![
             make_rule_section(
