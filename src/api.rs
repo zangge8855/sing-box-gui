@@ -7,6 +7,7 @@ fn get_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap_or_default()
@@ -15,7 +16,12 @@ fn get_client() -> &'static reqwest::Client {
 
 fn get_streaming_client() -> &'static reqwest::Client {
     static STREAM_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    STREAM_CLIENT.get_or_init(|| reqwest::Client::builder().build().unwrap_or_default())
+    STREAM_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap_or_default()
+    })
 }
 
 /// Look up `experimental.clash_api.secret` from the on-disk run configuration

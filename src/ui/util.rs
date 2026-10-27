@@ -77,10 +77,57 @@ pub fn truncate_chars(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// East Asian wide / emoji code points occupy roughly two Latin columns.
+fn is_wide(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x115F
+        | 0x2E80..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1FAFF
+        | 0x20000..=0x3FFFD)
+}
+
+/// Truncate to an approximate rendered width, where CJK counts as two
+/// columns. Keeps mixed CJK/Latin labels on a single line in fixed cards.
+pub fn truncate_width(s: &str, max_cols: usize) -> String {
+    let width = |c: char| if is_wide(c) { 2 } else { 1 };
+    if s.chars().map(width).sum::<usize>() <= max_cols {
+        return s.to_string();
+    }
+    let budget = max_cols.saturating_sub(1);
+    let mut used = 0;
+    let mut out = String::new();
+    for c in s.chars() {
+        let w = width(c);
+        if used + w > budget {
+            break;
+        }
+        used += w;
+        out.push(c);
+    }
+    let trimmed = out.trim_end();
+    format!("{trimmed}…")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::state::Language;
+
+    #[test]
+    fn truncate_width_counts_cjk_as_two_columns() {
+        assert_eq!(truncate_width("HK-01", 10), "HK-01");
+        assert_eq!(truncate_width("香港 Hong Kong", 14), "香港 Hong Kong");
+        assert_eq!(truncate_width("香港 Hong Kong", 13), "香港 Hong Ko…");
+        let out = truncate_width("新加坡备用线路 · Singapore", 12);
+        assert_eq!(out, "新加坡备用…");
+        assert_eq!(truncate_width("abcdefghij", 6), "abcde…");
+        assert_eq!(truncate_width("abcdefghij", 0), "…");
+    }
 
     #[test]
     fn truncate_short_unchanged() {

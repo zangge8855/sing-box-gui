@@ -1,12 +1,10 @@
 use crate::message::Message;
-use crate::state::GuiConfig;
+use crate::state::{GuiConfig, Language};
 use crate::ui::theme;
-use crate::ui::util::{format_traffic_usage_lang, traffic_usage_ratio, truncate_chars};
+use crate::ui::util::{format_size, traffic_usage_ratio, truncate_chars};
 use crate::ui::{PAGE_COMPACT_W, page_header};
-use iced::widget::{
-    Column, Space, button, column, container, responsive, row, scrollable, text, text_input,
-};
-use iced::{Alignment, Color, Element, Length};
+use iced::widget::{Column, Space, button, column, container, responsive, row, text, text_input};
+use iced::{Alignment, Element, Length};
 
 #[allow(clippy::too_many_arguments)]
 pub fn render<'a>(
@@ -44,12 +42,14 @@ pub fn render<'a>(
             .on_submit(Message::DownloadSubscription)
             .padding(crate::ui::SP_12)
             .width(Length::Fill)
+            .size(theme::TYPE_BODY)
             .style(theme::input_field);
 
         let download_btn = if downloading {
             button(
                 text(tr(lang, "btn_downloading"))
                     .size(theme::TYPE_BTN_LG)
+                    .width(Length::Fill)
                     .align_x(Alignment::Center),
             )
             .padding(theme::BTN_PAD_LG)
@@ -58,6 +58,7 @@ pub fn render<'a>(
             button(
                 text(tr(lang, "btn_download"))
                     .size(theme::TYPE_BTN_LG)
+                    .width(Length::Fill)
                     .align_x(Alignment::Center),
             )
             .padding(theme::BTN_PAD_LG)
@@ -77,6 +78,7 @@ pub fn render<'a>(
         let clipboard_btn = button(
             text(tr(lang, "btn_import_clipboard"))
                 .size(theme::TYPE_BTN_LG)
+                .width(Length::Fill)
                 .align_x(Alignment::Center),
         )
         .padding(theme::BTN_PAD_LG)
@@ -86,6 +88,7 @@ pub fn render<'a>(
         let file_btn = button(
             text(tr(lang, "btn_import_file"))
                 .size(theme::TYPE_BTN_LG)
+                .width(Length::Fill)
                 .align_x(Alignment::Center),
         )
         .padding(theme::BTN_PAD_LG)
@@ -108,13 +111,13 @@ pub fn render<'a>(
             .into()
         } else {
             column![
-                row![input, download_btn]
+                row![input, download_btn.width(Length::Shrink)]
                     .spacing(crate::ui::SP_12)
                     .align_y(Alignment::Center)
                     .width(Length::Fill),
                 row![
-                    clipboard_btn,
-                    file_btn,
+                    clipboard_btn.width(Length::Shrink),
+                    file_btn.width(Length::Shrink),
                     iced::widget::Space::new().width(Length::Fill),
                 ]
                 .spacing(crate::ui::SP_12)
@@ -143,8 +146,10 @@ pub fn render<'a>(
                 row![
                     crate::ui::material_icon(crate::ui::icons::ICON_WARNING)
                         .size(theme::TYPE_HEADING)
-                        .color(theme::DANGER),
-                    text(err).size(theme::TYPE_SECTION).color(theme::DANGER)
+                        .color(theme::danger_text(theme)),
+                    text(err)
+                        .size(theme::TYPE_SECTION)
+                        .color(theme::danger_text(theme))
                 ]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
@@ -171,38 +176,71 @@ pub fn render<'a>(
                 // Only the card whose update is in flight reads "Downloading…";
                 // the rest stay labeled but disabled while a download runs.
                 let is_updating = updating_id.as_deref() == Some(profile.id.as_str());
-                let update_btn = if downloading {
-                    button(
-                        text(tr(
-                            lang,
-                            if is_updating {
-                                "btn_downloading"
-                            } else {
-                                "btn_update"
-                            },
-                        ))
-                        .size(theme::TYPE_BTN_SM),
-                    )
-                    .padding(theme::BTN_PAD_SM)
-                    .style(theme::button_secondary)
-                } else {
-                    button(text(tr(lang, "btn_update")).size(theme::TYPE_BTN_SM))
-                        .padding(theme::BTN_PAD_SM)
-                        .style(theme::button_primary)
-                        .on_press(Message::UpdateSubscription(profile.id.clone()))
-                };
+                let mut update_btn = button(
+                    text(tr(
+                        lang,
+                        if is_updating {
+                            "btn_downloading"
+                        } else {
+                            "btn_update"
+                        },
+                    ))
+                    .size(theme::TYPE_BTN_SM),
+                )
+                .padding(theme::BTN_PAD_SM)
+                .style(theme::button_secondary);
+                if !downloading {
+                    update_btn =
+                        update_btn.on_press(Message::UpdateSubscription(profile.id.clone()));
+                }
 
-                let delete_actions: Element<'a, Message> =
-                    if confirm_delete_id == Some(profile.id.as_str()) {
+                // A pending delete confirmation keeps the More row open.
+                let confirming_delete = confirm_delete_id == Some(profile.id.as_str());
+                let show_more =
+                    confirming_delete || more_id.as_deref() == Some(profile.id.as_str());
+                let more_btn = button(
+                    row![
+                        text(tr(lang, if show_more { "btn_less" } else { "btn_more" }))
+                            .size(theme::TYPE_BTN_SM),
+                        crate::ui::material_icon(if show_more {
+                            crate::ui::icons::ICON_EXPAND_LESS
+                        } else {
+                            crate::ui::icons::ICON_EXPAND_MORE
+                        })
+                        .size(theme::TYPE_BTN_SM),
+                    ]
+                    .spacing(2)
+                    .align_y(Alignment::Center),
+                )
+                .padding(theme::BTN_PAD_SM)
+                .style(theme::button_ghost)
+                .on_press(Message::ToggleProfileMore(profile.id.clone()));
+
+                // At most one primary per card: switching profiles is the real
+                // decision, refreshing is routine, and edit/delete are rare
+                // enough to live behind More.
+                let mut actions_row = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
+                if !is_active {
+                    actions_row = actions_row.push(
+                        button(text(tr(lang, "btn_select")).size(theme::TYPE_BTN_SM))
+                            .padding(theme::BTN_PAD_SM)
+                            .style(theme::button_primary)
+                            .on_press(Message::SelectProfile(profile.id.clone())),
+                    );
+                }
+                actions_row = actions_row.push(update_btn).push(more_btn);
+
+                let secondary_row: Option<Element<'a, Message>> = if show_more {
+                    let delete_actions: Element<'a, Message> = if confirming_delete {
                         row![
-                            button(text(tr(lang, "btn_confirm_delete")).size(theme::TYPE_BTN_SM))
-                                .padding(theme::BTN_PAD_SM)
-                                .style(theme::button_danger)
-                                .on_press(Message::ConfirmDeleteProfile),
                             button(text(tr(lang, "btn_cancel")).size(theme::TYPE_BTN_SM))
                                 .padding(theme::BTN_PAD_SM)
                                 .style(theme::button_secondary)
                                 .on_press(Message::CancelDeleteProfile),
+                            button(text(tr(lang, "btn_confirm_delete")).size(theme::TYPE_BTN_SM))
+                                .padding(theme::BTN_PAD_SM)
+                                .style(theme::button_danger)
+                                .on_press(Message::ConfirmDeleteProfile),
                         ]
                         .spacing(crate::ui::SP_8)
                         .align_y(Alignment::Center)
@@ -210,52 +248,11 @@ pub fn render<'a>(
                     } else {
                         button(text(tr(lang, "btn_delete")).size(theme::TYPE_BTN_SM))
                             .padding(theme::BTN_PAD_SM)
-                            .style(theme::button_secondary)
+                            .style(theme::button_danger_soft)
                             .on_press(Message::RequestDeleteProfile(profile.id.clone()))
                             .into()
                     };
-
-                let show_more = more_id.as_deref() == Some(profile.id.as_str());
-                let more_btn = button(
-                    text(if show_more {
-                        tr(lang, "btn_less")
-                    } else {
-                        tr(lang, "btn_more")
-                    })
-                    .size(theme::TYPE_BTN_SM),
-                )
-                .padding(theme::BTN_PAD_SM)
-                .style(theme::button_secondary)
-                .on_press(Message::ToggleProfileMore(profile.id.clone()));
-
-                let badge_or_spacer: Element<'a, Message> = if is_active {
-                    container(
-                        text(tr(lang, "active_profile"))
-                            .color(Color::WHITE)
-                            .size(theme::TYPE_BTN_SM),
-                    )
-                    .padding(theme::BTN_PAD_SM)
-                    .style(theme::badge_success)
-                    .into()
-                } else {
-                    iced::widget::Space::new().width(Length::Shrink).into()
-                };
-
-                // Primary actions only: select / update / delete (+ more toggle)
-                let mut actions_row = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
-                if !is_active {
-                    let select_btn = button(text(tr(lang, "btn_select")).size(theme::TYPE_BTN_SM))
-                        .padding(theme::BTN_PAD_SM)
-                        .style(theme::button_secondary)
-                        .on_press(Message::SelectProfile(profile.id.clone()));
-                    actions_row = actions_row.push(select_btn);
-                }
-                actions_row = actions_row
-                    .push(update_btn)
-                    .push(delete_actions)
-                    .push(more_btn);
-
-                let secondary_row: Option<Element<'a, Message>> = if show_more {
+                    // Destructive action set apart at the far end.
                     Some(
                         row![
                             button(text(tr(lang, "btn_edit_url")).size(theme::TYPE_BTN_SM))
@@ -266,6 +263,8 @@ pub fn render<'a>(
                                 .padding(theme::BTN_PAD_SM)
                                 .style(theme::button_secondary)
                                 .on_press(Message::EditProfile(profile.id.clone())),
+                            Space::new().width(Length::Fill),
+                            delete_actions,
                         ]
                         .spacing(crate::ui::SP_8)
                         .align_y(Alignment::Center)
@@ -313,19 +312,19 @@ pub fn render<'a>(
                         text(tr(lang, "edit_link_title"))
                             .color(text_primary)
                             .size(theme::TYPE_HEADING)
-                            .font(theme::ui_font(iced::font::Weight::Bold)),
+                            .font(theme::ui_font(iced::font::Weight::Semibold)),
                         column![
                             text(tr(lang, "placeholder_profile_name"))
                                 .color(text_muted)
                                 .size(theme::TYPE_CAPTION),
-                            name_input
+                            name_input.on_submit(Message::SaveProfileEdit)
                         ]
                         .spacing(4),
                         column![
                             text(tr(lang, "placeholder_profile_url"))
                                 .color(text_muted)
                                 .size(theme::TYPE_CAPTION),
-                            url_input_field
+                            url_input_field.on_submit(Message::SaveProfileEdit)
                         ]
                         .spacing(4),
                         row![
@@ -346,17 +345,39 @@ pub fn render<'a>(
                         match (profile.traffic_upload, profile.traffic_download) {
                             (Some(u), Some(d)) => {
                                 let total = profile.traffic_total.unwrap_or(0);
-                                let label = text(format_traffic_usage_lang(lang, u, d, total))
-                                    .color(theme::ACCENT_BLUE)
-                                    .size(theme::TYPE_CAPTION);
+                                let used = u.saturating_add(d);
+                                let caption =
+                                    |s: String| text(s).color(text_muted).size(theme::TYPE_CAPTION);
+                                // Word order differs: "剩余 1 GB" vs "1 GB left".
+                                let labelled = |key: &'static str, bytes: u64| match lang {
+                                    Language::Zh => {
+                                        format!("{} {}", tr(lang, key), format_size(bytes))
+                                    }
+                                    Language::En => {
+                                        format!("{} {}", format_size(bytes), tr(lang, key))
+                                    }
+                                };
                                 if let Some(ratio) = traffic_usage_ratio(u, d, total) {
                                     let bar_color = if ratio >= 0.9 {
                                         theme::DANGER
                                     } else if ratio >= 0.75 {
                                         theme::WARNING
                                     } else {
-                                        theme::ACCENT_BLUE
+                                        theme::accent(theme)
                                     };
+                                    let labels = row![
+                                        caption(format!(
+                                            "{} / {}",
+                                            format_size(used),
+                                            format_size(total)
+                                        )),
+                                        Space::new().width(Length::Fill),
+                                        caption(labelled(
+                                            "traffic_left",
+                                            total.saturating_sub(used)
+                                        )),
+                                    ]
+                                    .align_y(Alignment::Center);
                                     // Simple fill bar without relying on ProgressBar private height API
                                     let bar = container(
                                         row![
@@ -364,7 +385,7 @@ pub fn render<'a>(
                                                 .width(Length::FillPortion(
                                                     (ratio * 1000.0).max(1.0) as u16
                                                 ))
-                                                .height(6.0)
+                                                .height(4.0)
                                                 .style(move |_t| container::Style {
                                                     background: Some(iced::Background::Color(
                                                         bar_color
@@ -379,7 +400,7 @@ pub fn render<'a>(
                                                 .width(Length::FillPortion(
                                                     ((1.0 - ratio) * 1000.0).max(1.0) as u16
                                                 ))
-                                                .height(6.0),
+                                                .height(4.0),
                                         ]
                                         .width(Length::Fill),
                                     )
@@ -388,7 +409,7 @@ pub fn render<'a>(
                                     .style(|t| {
                                         container::Style {
                                             background: Some(iced::Background::Color(
-                                                theme::input_surface(t),
+                                                theme::border_color(t),
                                             )),
                                             border: iced::Border {
                                                 radius: theme::RADIUS_MICRO.into(),
@@ -397,66 +418,110 @@ pub fn render<'a>(
                                             ..Default::default()
                                         }
                                     });
-                                    Some(column![label, bar].spacing(4).width(Length::Fill).into())
+                                    Some(column![labels, bar].spacing(6).width(Length::Fill).into())
                                 } else {
-                                    Some(label.into())
+                                    Some(caption(labelled("traffic_used", used)).into())
                                 }
                             }
                             _ => None,
                         };
 
-                    let expire_line = profile.expire_at.and_then(|ts| {
-                        chrono::DateTime::from_timestamp(ts, 0).map(|dt| {
-                            let near = {
-                                let now = chrono::Utc::now().timestamp();
-                                ts.saturating_sub(now) < 7 * 24 * 3600
-                            };
-                            text(format!(
-                                "{}: {}",
-                                tr(lang, "expire_at_label"),
-                                dt.with_timezone(&chrono::Local).format("%Y-%m-%d")
-                            ))
-                            .color(if near { theme::WARNING } else { text_muted })
-                            .size(theme::TYPE_CAPTION)
-                        })
-                    });
-
-                    let mut meta_col = column![
-                        text(truncate_chars(&profile.name, 36))
-                            .color(text_primary)
-                            .size(theme::TYPE_BODY)
-                            .font(theme::ui_font(iced::font::Weight::Bold)),
-                        text(display_url).color(text_muted).size(theme::TYPE_BTN_SM),
+                    let mut meta_line = row![
                         text(format!(
-                            "{}: {}",
+                            "{} {}",
                             tr(lang, "updated_at_label"),
                             profile.updated_at
                         ))
                         .color(text_muted)
-                        .size(theme::TYPE_CAPTION),
+                        .size(theme::TYPE_CAPTION)
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center);
+                    if let Some(ts) = profile.expire_at
+                        && let Some(dt) = chrono::DateTime::from_timestamp(ts, 0)
+                    {
+                        let near =
+                            ts.saturating_sub(chrono::Utc::now().timestamp()) < 7 * 24 * 3600;
+                        meta_line = meta_line
+                            .push(
+                                text("·")
+                                    .color(theme::text_tertiary(theme))
+                                    .size(theme::TYPE_CAPTION),
+                            )
+                            .push(
+                                text(format!(
+                                    "{} {}",
+                                    tr(lang, "expire_at_label"),
+                                    dt.with_timezone(&chrono::Local).format("%Y-%m-%d")
+                                ))
+                                .color(if near {
+                                    theme::warning_text(theme)
+                                } else {
+                                    text_muted
+                                })
+                                .size(theme::TYPE_CAPTION),
+                            );
+                    }
+
+                    // Status reads as a small pill beside the name, not as a
+                    // control-sized block that looks like a disabled button.
+                    let mut name_row = row![
+                        text(truncate_chars(&profile.name, 36))
+                            .color(text_primary)
+                            .size(theme::TYPE_HEADING)
+                            .font(theme::ui_font(iced::font::Weight::Semibold))
                     ]
                     .spacing(crate::ui::SP_8)
+                    .align_y(Alignment::Center);
+                    if is_active {
+                        name_row = name_row.push(
+                            container(
+                                row![
+                                    crate::ui::material_icon(crate::ui::icons::ICON_CHECK_CIRCLE)
+                                        .size(theme::TYPE_CAPTION),
+                                    text(tr(lang, "active_profile"))
+                                        .size(theme::TYPE_CAPTION)
+                                        .font(theme::ui_font(iced::font::Weight::Semibold)),
+                                ]
+                                .spacing(4)
+                                .align_y(Alignment::Center),
+                            )
+                            .padding([2, 8])
+                            .style(theme::badge_success),
+                        );
+                    }
+
+                    let info_col = column![
+                        name_row,
+                        text(display_url)
+                            .color(theme::text_tertiary(theme))
+                            .size(theme::TYPE_CAPTION)
+                            .font(theme::mono_font()),
+                        meta_line,
+                    ]
+                    .spacing(6)
                     .width(Length::Fill);
 
-                    if let Some(t) = traffic_block {
-                        meta_col = meta_col.push(t);
+                    // Wide: actions sit beside the identity block. Compact: they
+                    // follow the usage bar so the name keeps the full width.
+                    let mut card_layout =
+                        Column::new().spacing(crate::ui::SP_12).width(Length::Fill);
+                    if is_compact {
+                        card_layout = card_layout.push(info_col);
+                        if let Some(t) = traffic_block {
+                            card_layout = card_layout.push(t);
+                        }
+                        card_layout = card_layout.push(actions_row);
+                    } else {
+                        card_layout = card_layout.push(
+                            row![info_col, actions_row]
+                                .spacing(crate::ui::SP_12)
+                                .align_y(Alignment::Center),
+                        );
+                        if let Some(t) = traffic_block {
+                            card_layout = card_layout.push(t);
+                        }
                     }
-                    if let Some(e) = expire_line {
-                        meta_col = meta_col.push(e);
-                    }
-
-                    let mut card_layout = column![
-                        meta_col,
-                        row![
-                            badge_or_spacer,
-                            iced::widget::Space::new().width(Length::Fill),
-                            actions_row
-                        ]
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill)
-                    ]
-                    .spacing(crate::ui::SP_12);
-
                     if let Some(sec) = secondary_row {
                         card_layout = card_layout.push(sec);
                     }
@@ -501,10 +566,7 @@ pub fn render<'a>(
                 }
                 grid_rows = grid_rows.push(current_row);
             }
-            scrollable(grid_rows)
-                .style(theme::scrollbar_style)
-                .height(Length::Fill)
-                .into()
+            grid_rows.into()
         };
 
         let mut main_layout_col = column![add_form,]
@@ -531,12 +593,9 @@ pub fn render<'a>(
             is_compact,
         );
 
-        let col = column![header, main_layout_col]
-            .spacing(crate::ui::SP_20)
-            .width(Length::Fill)
-            .height(Length::Fill);
-
-        crate::ui::page_body_fixed_with_pad(col.into(), is_compact)
+        // Scroll the import form with the records. A fixed form plus a nested
+        // list left no room for profiles on short/HiDPI windows.
+        crate::ui::page_shell_with_pad(header, main_layout_col.into(), is_compact)
     });
 
     main_content.into()

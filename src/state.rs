@@ -183,7 +183,22 @@ pub enum Language {
     Zh,
 }
 
+impl Language {
+    pub fn from_locale(locale: &str) -> Self {
+        if locale
+            .split(['-', '_', '.'])
+            .next()
+            .is_some_and(|code| code.eq_ignore_ascii_case("zh"))
+        {
+            Self::Zh
+        } else {
+            Self::En
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GuiConfig {
     pub subscriptions: Vec<Profile>,
     pub active_profile_id: Option<String>,
@@ -256,20 +271,7 @@ pub enum AppTheme {
 
 impl Default for GuiConfig {
     fn default() -> Self {
-        #[allow(unused_mut)]
-        let mut lang = Language::En;
-        #[cfg(target_os = "windows")]
-        {
-            use winreg::RegKey;
-            use winreg::enums::HKEY_CURRENT_USER;
-            if let Ok(hkcu) =
-                RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International")
-                && let Ok(locale) = hkcu.get_value::<String, _>("LocaleName")
-                && locale.to_lowercase().starts_with("zh")
-            {
-                lang = Language::Zh;
-            }
-        }
+        let lang = Language::from_locale(sys_locale::get_locale().as_deref().unwrap_or("en"));
         Self {
             subscriptions: Vec::new(),
             active_profile_id: None,
@@ -449,6 +451,33 @@ pub enum ProxySort {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locale_detection_handles_desktop_locale_formats() {
+        for locale in ["zh_CN.UTF-8", "zh-Hans-CN", "zh-Hant-TW", "ZH_hk"] {
+            assert_eq!(Language::from_locale(locale), Language::Zh);
+        }
+        for locale in ["en_US.UTF-8", "de-DE", "C", "", "zhongwen"] {
+            assert_eq!(Language::from_locale(locale), Language::En);
+        }
+    }
+
+    #[test]
+    fn older_settings_keep_profiles_and_fill_new_fields() {
+        let config: GuiConfig = serde_json::from_value(serde_json::json!({
+            "language": "En", "mixed_port": 8080, "active_profile_id": "work",
+            "subscriptions": [{ "id": "work", "name": "Work", "url": "https://example.com/sub",
+                "file_path": "work.json", "is_subscription": true, "updated_at": "2026-09-06" }]
+        }))
+        .unwrap();
+        assert_eq!(config.subscriptions[0].name, "Work");
+        assert_eq!(config.active_profile_id.as_deref(), Some("work"));
+        assert_eq!(config.mixed_port, 8080);
+        assert_eq!(config.api_port, 9090);
+        assert_eq!(config.language, Language::En);
+        assert!(config.close_core_on_exit);
+        assert!(!config.system_proxy_owned);
+    }
 
     #[test]
     fn toast_duration_scales_with_length_and_clamps() {

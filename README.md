@@ -2,11 +2,11 @@
 # sing-box GUI
 
 [![Build](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml/badge.svg)](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml)
-![Version](https://img.shields.io/badge/version-2026.8.17-6d5ce7.svg)
+![Version](https://img.shields.io/badge/version-2026.10.28-2E7D6B.svg)
 
 
 <p align="center">
-  <img src="assets/logo.jpg" alt="sing-box GUI" width="112" height="112" />
+  <img src="assets/logo.svg" alt="sing-box GUI" width="112" height="112" />
 </p>
 
 A native-style, cross-platform desktop client for [sing-box](https://github.com/SagerNet/sing-box), built with Rust and Iced. It focuses on reliable profile conversion, low-overhead runtime monitoring, restrained desktop UI, and consistent behavior on Windows, macOS, and Linux.
@@ -51,7 +51,7 @@ Tor and other local-runtime outbounds that depend on an external executable rema
 
 ## Platform builds
 
-Every `main` push and version tag builds all release targets. Pull requests run the shared verification suite plus a Windows compile check:
+Every `main` push and version tag builds all release targets. Pull requests run the shared verification suite, native Windows/macOS tests, and a Linux Wayland screenshot/tray check:
 
 | Platform | Architectures | Artifact |
 | --- | --- | --- |
@@ -59,11 +59,17 @@ Every `main` push and version tag builds all release targets. Pull requests run 
 | macOS | Intel + Apple Silicon | universal binary |
 | Linux | x86_64, ARM64 | native binary |
 
-The workflow runs format, unit-test, Clippy, compile, and security checks before release builds. Every platform artifact includes a checksum; Release assets are published only for a matching `v*` tag.
+The workflow runs format, unit-test, Clippy, compile, and security checks before publication. Every platform artifact includes a checksum; Release assets are published only for a matching `v*` tag.
+
+Windows uses Segoe UI, macOS uses the built-in Helvetica Neue family, and Linux follows Fontconfig. Bundled Noto CJK supplies Chinese glyphs. Layouts adapt from 640×480 to wide desktop windows, with centered content, fixed page actions, and scrollable forms.
+
+On Linux, the window runs on native Wayland or X11. The tray uses StatusNotifierItem over the session bus; it does not require a GTK/X11 event loop. Closing the window keeps the app in the tray when a host is available. On desktops without a tray host (for example, GNOME without AppIndicator support), closing exits normally. If the host disappears while the window is hidden, the window reopens. The optional launcher in `assets/sing-box-gui.desktop` matches the Wayland application ID; install it alongside `assets/app-icon.png` under the `sing-box-gui` icon name when packaging the app.
 
 ## Development
 
-Rust 1.85 or newer is required by the Rust 2024 edition used by this project.
+See the [2026-09-06 UI and platform audit / 本地检查记录](docs/AUDIT.md) for fixes, screenshots, and validation limits.
+
+Rust 1.88 or newer is required, including by the image dependency. Linux builds require the usual X11/Wayland, xkbcommon, OpenSSL, and pkg-config development packages; GTK and AppIndicator development packages are no longer required.
 
 ```bash
 cargo test
@@ -79,10 +85,22 @@ Important modules:
 - `src/api.rs` — Clash API, selector changes, latency tests, connections, and traffic polling.
 - `src/ui/` — responsive desktop workspaces, localization, typography, and visual tokens.
 - `src/sysproxy.rs` / `src/platform.rs` — system proxy, elevation, and auto-start integration.
+- `src/tray.rs` — Linux D-Bus tray integration and Windows/macOS native tray menus.
+
+For repeatable UI checks on Linux, install Weston, `dbus-run-session`, and PyGObject (`python3-gi` on Ubuntu), then run:
+
+```bash
+cargo build --locked --features ui-smoke
+python3 scripts/ui_smoke.py --output target/ui-smoke-1x
+python3 scripts/ui_smoke.py --scale 2 --output target/ui-smoke-2x
+python3 scripts/ui_smoke.py --no-tray --filter en-light-640 --output target/ui-smoke-no-tray
+```
+
+The runner creates a private Wayland compositor, D-Bus session, and data directory. It uses the app's default wgpu renderer (Mesa Vulkan drivers work on headless CI); `--backend tiny-skia` selects the slower software fallback. Its synthetic fixtures cover all seven pages, both languages and themes, four window sizes, and scrolled/edit/error states. It validates screenshot dimensions and scale, tray activation, window state preservation, tray host loss/recovery, and the no-tray exit path. It does not start a proxy core or change the desktop's proxy settings. Screenshots from this Linux runner do not replace runtime checks on Windows or macOS.
 
 ### Accessibility note
 
-The Iced 0.14/wgpu backend currently exposes limited Windows UI Automation metadata compared with native WinUI controls. All primary flows remain keyboard-operable, including Tab navigation, Enter activation, Escape cancellation, and Ctrl+S settings save; screen-reader structure may still depend on future Iced/winit accessibility support.
+Tab/Shift+Tab navigate text inputs; Enter submits supported forms, Escape cancels profile editing/deletion, Ctrl+S saves, and Ctrl+1…7 switches pages (Command replaces Ctrl on macOS). Iced 0.14 still has limited screen-reader metadata and keyboard focus support for buttons, switches, and pick lists; these controls require pointer interaction.
 
 ## 中文说明
 
@@ -99,6 +117,14 @@ sing-box GUI 是使用 Rust 与 Iced 编写的跨平台桌面客户端，强调�
 - 设置采用草稿后统一应用；配置与订阅原子写入；官方内核与应用更新会校验 SHA-256、平台格式并支持失败回滚。
 - 支持 Windows 注册表、macOS LaunchAgent、Linux XDG 自启动和各平台系统代理集成。
 
+### 平台界面与 Wayland
+
+Windows 使用 Segoe UI，macOS 使用系统自带的 Helvetica Neue，Linux 遵循 Fontconfig；内置 Noto CJK 提供中文字形。界面适配 640×480 至宽屏窗口，正文居中限宽，标题和主要操作保持可见，长表单可以滚动。
+
+Linux 支持原生 Wayland 和 X11，托盘通过 D-Bus StatusNotifierItem 工作，不依赖 GTK/X11 事件循环。有托盘时关闭窗口会保留后台状态；无托盘的桌面（例如未启用 AppIndicator 的 GNOME）会正常退出。托盘服务消失时，隐藏的窗口会自动恢复。打包时可使用 `assets/sing-box-gui.desktop`，它与 Wayland 应用 ID 一致；应用图标使用 `assets/app-icon.png`，安装名称为 `sing-box-gui`。
+
+开发需要 Rust 1.88 及以上版本。上方的 `scripts/ui_smoke.py` 命令会在独立的 Wayland 会话中验证中英文、深浅主题、1 倍/2 倍缩放、窗口尺寸与托盘行为，生成可检查的截图；测试使用模拟数据，不启动代理内核，也不修改当前桌面的代理设置。Windows 和 macOS 的实际渲染仍需在对应系统上验收。
+
 ### 协议兼容性
 
 分享链接与 Clash 转换支持 Shadowsocks（含 SIP002 插件）、ShadowsocksR、VMess、VLESS/Reality、Trojan、Hysteria、Hysteria2、TUIC、AnyTLS、Naive、SSH、ShadowTLS，以及 Clash 中的 SOCKS/HTTP 节点。可保留 WS、HTTP/H2、HTTPUpgrade、QUIC、gRPC、SNI、ALPN、uTLS 指纹、Reality、混淆、带宽、端口跳跃、UDP 转发、0-RTT、心跳及 SSH 私钥等常用参数。
@@ -109,11 +135,11 @@ Tor 等依赖本机外部可执行文件的 outbound 继续通过原生 sing-box
 
 ### GitHub Actions
 
-每次推送都会在 GitHub 上执行 Windows x64/ARM64、macOS Universal、Linux x64/ARM64 的单元测试和 Release 构建。普通分支构建只上传 Actions Artifacts；仅版本标签会创建 GitHub Release。
+每次推送都会在 GitHub 上执行 Windows、macOS、Linux 的测试及对应架构的 Release 构建；PR 会检查 Windows/macOS 原生测试和 Linux Wayland 截图/托盘行为。普通分支构建只上传 Actions Artifacts；仅版本标签会创建 GitHub Release。
 
 ### 无障碍说明
 
-Iced 0.14/wgpu 在 Windows 上暴露的 UI Automation 信息仍少于原生 WinUI 控件。主要操作均保留键盘路径（Tab、Enter、Escape、Ctrl+S），但屏幕阅读器结构仍受 Iced/winit 后续无障碍支持限制。
+Tab/Shift+Tab 切换文本输入框，Enter 提交支持的表单，Escape 取消订阅编辑/删除，Ctrl+S 保存，Ctrl+1…7 切换页面（macOS 使用 Command）。Iced 0.14 的屏幕阅读器元数据，以及按钮、开关和下拉菜单的键盘焦点支持仍有限，这些控件需要鼠标操作。
 
 ## License
 

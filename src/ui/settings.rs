@@ -59,7 +59,7 @@ pub fn render<'a>(
             container(
                 text(tr(lang, "settings_pending"))
                     .size(theme::TYPE_CAPTION)
-                    .color(theme::WARNING),
+                    .color(theme::warning_text(theme)),
             )
             .padding([8, 10])
             .width(Length::Fill)
@@ -74,7 +74,7 @@ pub fn render<'a>(
             text(tr(lang, "sys_integration"))
                 .color(text_primary)
                 .size(theme::TYPE_HEADING)
-                .font(theme::ui_font(iced::font::Weight::Bold))
+                .font(theme::ui_font(iced::font::Weight::Semibold))
                 .into(),
         ];
         if draft.tun_mode {
@@ -82,7 +82,7 @@ pub fn render<'a>(
                 container(
                     text(tr(lang, "tun_admin_banner"))
                         .size(theme::TYPE_CAPTION)
-                        .color(theme::WARNING),
+                        .color(theme::warning_text(theme)),
                 )
                 .padding(10)
                 .width(Length::Fill)
@@ -155,7 +155,7 @@ pub fn render<'a>(
                 item_col = item_col.push(
                     text(tr(lang, error_key))
                         .size(theme::TYPE_CAPTION)
-                        .color(theme::DANGER),
+                        .color(theme::danger_text(theme)),
                 );
             }
             sys_items.push(item_col.into());
@@ -190,6 +190,7 @@ pub fn render<'a>(
         let mixed_port_input = text_input("2080", &draft.mixed_port)
             .on_input(Message::MixedPortChanged)
             .on_submit(Message::SaveSettings)
+            .size(theme::TYPE_BODY)
             .padding(10)
             .style(if mixed_port_error.is_none() {
                 theme::input_field
@@ -200,6 +201,7 @@ pub fn render<'a>(
         let api_port_input = text_input("9090", &draft.api_port)
             .on_input(Message::ApiPortChanged)
             .on_submit(Message::SaveSettings)
+            .size(theme::TYPE_BODY)
             .padding(10)
             .style(if api_port_error.is_none() {
                 theme::input_field
@@ -220,7 +222,7 @@ pub fn render<'a>(
             mixed_col = mixed_col.push(
                 text(tr(lang, key))
                     .size(theme::TYPE_CAPTION)
-                    .color(theme::DANGER),
+                    .color(theme::danger_text(theme)),
             );
         }
 
@@ -237,7 +239,7 @@ pub fn render<'a>(
             api_col = api_col.push(
                 text(tr(lang, key))
                     .size(theme::TYPE_CAPTION)
-                    .color(theme::DANGER),
+                    .color(theme::danger_text(theme)),
             );
         }
 
@@ -254,6 +256,7 @@ pub fn render<'a>(
         let dns_local_input = text_input("223.5.5.5", &draft.dns_server_local)
             .on_input(Message::DnsLocalChanged)
             .on_submit(Message::SaveSettings)
+            .size(theme::TYPE_BODY)
             .padding(10)
             .style(if dns_local_error.is_some() {
                 theme::input_field_error
@@ -264,6 +267,7 @@ pub fn render<'a>(
         let dns_remote_input = text_input("8.8.8.8", &draft.dns_server_remote)
             .on_input(Message::DnsRemoteChanged)
             .on_submit(Message::SaveSettings)
+            .size(theme::TYPE_BODY)
             .padding(10)
             .style(if dns_remote_error.is_some() {
                 theme::input_field_error
@@ -283,7 +287,7 @@ pub fn render<'a>(
             dns_local_col = dns_local_col.push(
                 text(tr(lang, key))
                     .size(theme::TYPE_CAPTION)
-                    .color(theme::DANGER),
+                    .color(theme::danger_text(theme)),
             );
         }
 
@@ -299,7 +303,7 @@ pub fn render<'a>(
             dns_remote_col = dns_remote_col.push(
                 text(tr(lang, key))
                     .size(theme::TYPE_CAPTION)
-                    .color(theme::DANGER),
+                    .color(theme::danger_text(theme)),
             );
         }
 
@@ -312,12 +316,12 @@ pub fn render<'a>(
                 text(tr(lang, "ports_config"))
                     .color(text_primary)
                     .size(theme::TYPE_HEADING)
-                    .font(theme::ui_font(iced::font::Weight::Bold)),
+                    .font(theme::ui_font(iced::font::Weight::Semibold)),
                 ports_row,
                 text(tr(lang, "dns_servers"))
                     .color(text_primary)
                     .size(theme::TYPE_HEADING)
-                    .font(theme::ui_font(iced::font::Weight::Bold)),
+                    .font(theme::ui_font(iced::font::Weight::Semibold)),
                 dns_row,
                 column![
                     make_toggle_row("fake_ip_label", draft.fake_ip, Message::ToggleFakeIp),
@@ -359,7 +363,9 @@ pub fn render<'a>(
         })
         .width(Length::Fill)
         .padding(8)
-        .style(theme::pick_list);
+        .text_size(theme::TYPE_BODY)
+        .style(theme::pick_list)
+        .menu_style(theme::pick_list_menu);
 
         let theme_label = text(tr(lang, "app_theme"))
             .color(text_muted)
@@ -390,7 +396,9 @@ pub fn render<'a>(
         })
         .width(Length::Fill)
         .padding(8)
-        .style(theme::pick_list);
+        .text_size(theme::TYPE_BODY)
+        .style(theme::pick_list)
+        .menu_style(theme::pick_list_menu);
 
         let app_prefs_content: Element<'_, Message> = if is_compact {
             column![
@@ -456,7 +464,9 @@ pub fn render<'a>(
         })
         .width(Length::Fill)
         .padding(8)
-        .style(theme::pick_list);
+        .text_size(theme::TYPE_BODY)
+        .style(theme::pick_list)
+        .menu_style(theme::pick_list_menu);
 
         let auto_update_block = column![
             text(tr(lang, "auto_update_interval"))
@@ -490,7 +500,7 @@ pub fn render<'a>(
             column![
                 row![
                     text(tr(lang, "core_installed_status"))
-                        .color(theme::SUCCESS)
+                        .color(theme::success_text(theme))
                         .size(theme::TYPE_SECTION)
                         .width(Length::Fill),
                     text(version_label)
@@ -522,7 +532,7 @@ pub fn render<'a>(
 
             row![
                 text(tr(lang, "core_not_found"))
-                    .color(theme::DANGER)
+                    .color(theme::danger_text(theme))
                     .size(theme::TYPE_SECTION)
                     .width(Length::Fill),
                 btn
@@ -548,13 +558,15 @@ pub fn render<'a>(
                 crate::ui::loading_row(tr(lang, "core_installing"), theme)
             }
             CoreInstallState::Installed => text(tr(lang, "core_install_success"))
-                .color(theme::SUCCESS)
+                .color(theme::success_text(theme))
                 .into(),
             CoreInstallState::Error(error) => column![
                 text(tr(lang, "core_install_failed"))
-                    .color(theme::DANGER)
+                    .color(theme::danger_text(theme))
                     .size(theme::TYPE_SECTION),
-                text(error).color(theme::DANGER).size(theme::TYPE_CAPTION),
+                text(error)
+                    .color(theme::danger_text(theme))
+                    .size(theme::TYPE_CAPTION),
                 button(text(tr(lang, "btn_retry_core")).size(theme::TYPE_BTN_SM))
                     .padding(theme::BTN_PAD_SM)
                     .style(theme::button_secondary)
@@ -580,6 +592,7 @@ pub fn render<'a>(
         )
         .on_input(Message::LatencyTestUrlChanged)
         .on_submit(Message::SaveSettings)
+        .size(theme::TYPE_BODY)
         .padding(10)
         .style(if latency_url_error.is_some() {
             theme::input_field_error
@@ -590,6 +603,7 @@ pub fn render<'a>(
         let latency_timeout_input = text_input("2000", &draft.latency_test_timeout_ms)
             .on_input(Message::LatencyTestTimeoutChanged)
             .on_submit(Message::SaveSettings)
+            .size(theme::TYPE_BODY)
             .padding(10)
             .style(if latency_timeout_error.is_some() {
                 theme::input_field_error
@@ -612,7 +626,7 @@ pub fn render<'a>(
             latency_block = latency_block.push(
                 text(tr(lang, key))
                     .size(theme::TYPE_CAPTION)
-                    .color(theme::DANGER),
+                    .color(theme::danger_text(theme)),
             );
         }
         latency_block = latency_block.push(
@@ -625,9 +639,26 @@ pub fn render<'a>(
             latency_block = latency_block.push(
                 text(tr(lang, key))
                     .size(theme::TYPE_CAPTION)
-                    .color(theme::DANGER),
+                    .color(theme::danger_text(theme)),
             );
         }
+        let latency_card = container(
+            column![
+                text(tr(lang, "latency_test_settings"))
+                    .color(text_primary)
+                    .size(theme::TYPE_HEADING)
+                    .font(theme::ui_font(iced::font::Weight::Semibold)),
+                latency_block,
+            ]
+            .spacing(crate::ui::SP_12),
+        )
+        .padding(theme::CARD_PAD)
+        .width(Length::Fill)
+        .style(theme::card_bg);
+        let auto_update_card = container(auto_update_block)
+            .padding(theme::CARD_PAD)
+            .width(Length::Fill)
+            .style(theme::card_bg);
 
         let open_dir_btn = button(
             text(tr(lang, "btn_open_data_dir"))
@@ -643,6 +674,7 @@ pub fn render<'a>(
         let core_path_input = text_input(tr(lang, "placeholder_core_path"), &draft.core_path)
             .on_input(Message::CorePathChanged)
             .on_submit(Message::SaveSettings)
+            .size(theme::TYPE_BODY)
             .padding(10)
             .style(if errors.contains_key("core_path") {
                 theme::input_field_error
@@ -672,7 +704,7 @@ pub fn render<'a>(
             core_path_row.push(
                 text(tr(lang, key))
                     .size(theme::TYPE_CAPTION)
-                    .color(theme::DANGER),
+                    .color(theme::danger_text(theme)),
             )
         } else {
             core_path_row
@@ -685,8 +717,6 @@ pub fn render<'a>(
                 .font(theme::ui_font(iced::font::Weight::Semibold)),
             core_downloader,
             core_path_row,
-            latency_block,
-            auto_update_block,
             open_dir_btn,
         ]
         .spacing(crate::ui::SP_12);
@@ -736,7 +766,7 @@ pub fn render<'a>(
                     ))
                     .width(Length::Fill),
                     text(tag.clone())
-                        .color(theme::WARNING)
+                        .color(theme::warning_text(theme))
                         .size(theme::TYPE_CAPTION),
                 ]
                 .width(Length::Fill)
@@ -750,7 +780,7 @@ pub fn render<'a>(
                     ))
                     .width(Length::Fill),
                     text(tag.clone())
-                        .color(theme::WARNING)
+                        .color(theme::warning_text(theme))
                         .size(theme::TYPE_CAPTION),
                 ]
                 .width(Length::Fill)
@@ -766,7 +796,7 @@ pub fn render<'a>(
                             .into();
                     row![
                         text(tr(lang, "status_uptodate"))
-                            .color(theme::SUCCESS)
+                            .color(theme::success_text(theme))
                             .size(theme::TYPE_SECTION)
                             .width(Length::Fill),
                         btn
@@ -811,7 +841,7 @@ pub fn render<'a>(
                     let status_row = row![
                         column![
                             text(format!("{}: {}", tr(lang, "status_new_version"), tag))
-                                .color(theme::WARNING)
+                                .color(theme::warning_text(theme))
                                 .size(theme::TYPE_SECTION),
                             text(tr(lang, "help_new_version"))
                                 .color(text_muted)
@@ -836,7 +866,7 @@ pub fn render<'a>(
                         column![
                             status_row,
                             text(tr(lang, key))
-                                .color(theme::DANGER)
+                                .color(theme::danger_text(theme))
                                 .size(theme::TYPE_CAPTION)
                         ]
                         .spacing(crate::ui::SP_8)
@@ -856,7 +886,7 @@ pub fn render<'a>(
                     column![
                         row![
                             text(tr(lang, "status_check_failed"))
-                                .color(theme::DANGER)
+                                .color(theme::danger_text(theme))
                                 .size(theme::TYPE_SECTION)
                                 .width(Length::Fill),
                             btn
@@ -864,7 +894,7 @@ pub fn render<'a>(
                         .width(Length::Fill)
                         .align_y(Alignment::Center),
                         text(err.clone())
-                            .color(theme::DANGER)
+                            .color(theme::danger_text(theme))
                             .size(theme::TYPE_CAPTION)
                     ]
                     .spacing(crate::ui::SP_8)
@@ -887,50 +917,47 @@ pub fn render<'a>(
             .style(theme::card_bg)
         };
 
-        // Layout columns responsively
-        let left_col = column![settings_card].spacing(20).width(if is_compact {
-            Length::Fill
-        } else {
-            Length::FillPortion(1)
-        });
-
-        let mid_col = column![network_dns_card, app_prefs_card]
-            .spacing(20)
-            .width(if is_compact {
-                Length::Fill
-            } else {
-                Length::FillPortion(1)
-            });
-
+        // Independent columns keep related cards together without leaving
+        // row-sized holes below a shorter group of settings.
         let main_row_layout: Element<'_, Message> = if size.width < crate::ui::SETTINGS_2COL_W {
             column![
-                left_col,
-                mid_col,
-                column![core_mgmt_card, app_update_card]
-                    .spacing(20)
-                    .width(Length::Fill)
+                app_prefs_card,
+                settings_card,
+                network_dns_card,
+                latency_card,
+                core_mgmt_card,
+                auto_update_card,
+                app_update_card,
             ]
             .spacing(20)
             .width(Length::Fill)
             .into()
         } else if size.width < crate::ui::SETTINGS_3COL_W {
-            column![
-                row![left_col, mid_col].spacing(20).width(Length::Fill),
-                row![
-                    core_mgmt_card.width(Length::FillPortion(1)),
-                    app_update_card.width(Length::FillPortion(1))
+            row![
+                column![app_prefs_card, settings_card, auto_update_card]
+                    .spacing(20)
+                    .width(Length::FillPortion(1)),
+                column![
+                    network_dns_card,
+                    latency_card,
+                    core_mgmt_card,
+                    app_update_card
                 ]
                 .spacing(20)
-                .width(Length::Fill)
+                .width(Length::FillPortion(1)),
             ]
             .spacing(20)
             .width(Length::Fill)
             .into()
         } else {
             row![
-                left_col,
-                mid_col,
-                column![core_mgmt_card, app_update_card]
+                column![settings_card, auto_update_card]
+                    .spacing(20)
+                    .width(Length::FillPortion(1)),
+                column![network_dns_card, latency_card]
+                    .spacing(20)
+                    .width(Length::FillPortion(1)),
+                column![app_prefs_card, core_mgmt_card, app_update_card]
                     .spacing(20)
                     .width(Length::FillPortion(1))
             ]
@@ -972,7 +999,7 @@ pub fn render<'a>(
                                 .color(text_primary)
                         )
                         .style(theme::scrollbar_style)
-                        .height(Length::Fixed(280.0))
+                        .height(Length::Fixed((size.height - 320.0).clamp(120.0, 280.0)))
                         .width(Length::Fill)
                     )
                     .padding(theme::CARD_PAD_DENSE)
@@ -1005,13 +1032,35 @@ pub fn render<'a>(
             .spacing(crate::ui::SP_20)
             .width(Length::Fill);
 
-        let save_btn = button(text(tr(lang, "btn_save_apply")).size(theme::TYPE_BTN_LG))
-            .padding(theme::BTN_PAD_LG)
-            .style(theme::button_primary)
-            .on_press(Message::SaveSettings);
+        // Save only lights up when there is something to save, and a way
+        // back sits beside it. Header buttons share the medium size.
+        let mut save_btn = button(text(tr(lang, "btn_save_apply")).size(theme::TYPE_BTN_MD))
+            .padding(theme::BTN_PAD_MD)
+            .style(theme::button_primary);
+        let mut header_actions = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
+        if has_pending_changes {
+            save_btn = save_btn.on_press(Message::SaveSettings);
+            header_actions = header_actions.push(
+                button(text(tr(lang, "btn_discard_changes")).size(theme::TYPE_BTN_MD))
+                    .padding(theme::BTN_PAD_MD)
+                    .style(theme::button_secondary)
+                    .on_press(Message::DiscardSettings),
+            );
+        }
+        header_actions = header_actions.push(save_btn);
 
-        let header = page_header("settings", lang, Some(save_btn.into()), theme, is_compact);
-        crate::ui::page_shell_with_pad(header, content_col.into(), is_compact)
+        let header = page_header(
+            "settings",
+            lang,
+            Some(header_actions.into()),
+            theme,
+            is_compact,
+        );
+        crate::ui::page_shell_with_pad(
+            header,
+            content_col.into(),
+            crate::ui::is_pad_compact(size.width),
+        )
     });
 
     main_content.into()

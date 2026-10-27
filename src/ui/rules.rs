@@ -31,7 +31,7 @@ pub fn render<'a>(
                 text(tr(lang, "rules_builtin_title"))
                     .color(text_primary)
                     .size(theme::TYPE_HEADING)
-                    .font(theme::ui_font(iced::font::Weight::Bold)),
+                    .font(theme::ui_font(iced::font::Weight::Semibold)),
                 text(tr(lang, "rules_builtin_desc"))
                     .color(text_muted)
                     .size(theme::TYPE_BTN_SM),
@@ -49,14 +49,14 @@ pub fn render<'a>(
             let mut list_col = Column::new().spacing(4);
 
             for (idx, item) in items.iter().enumerate() {
+                // Quiet until hovered, like the connection table's close glyph.
                 let del_btn = button(
                     text(crate::ui::icons::ICON_DELETE.to_string())
                         .font(iced::Font::with_name("Material Icons"))
-                        .size(theme::TYPE_SECTION)
-                        .color(theme::DANGER),
+                        .size(16),
                 )
-                .style(theme::button_ghost)
-                .padding([4, 6])
+                .style(theme::button_dismiss)
+                .padding(4)
                 .on_press(Message::RemoveRule { field, index: idx });
 
                 let item_row = row![
@@ -89,7 +89,17 @@ pub fn render<'a>(
                 .align_y(Alignment::Center)
                 .into()
             } else {
+                // Embedded thin bar: it takes a lane (so it never covers the
+                // delete glyphs) only once the list overflows; a short list
+                // keeps the full width, flush with the input row above.
                 scrollable(list_col)
+                    .direction(scrollable::Direction::Vertical(
+                        scrollable::Scrollbar::new()
+                            .width(6)
+                            .scroller_width(6)
+                            .margin(0)
+                            .spacing(6),
+                    ))
                     .style(theme::scrollbar_style)
                     .height(140.0)
                     .into()
@@ -125,19 +135,19 @@ pub fn render<'a>(
             let count_badge = container(
                 text(format!("{}", items.len()))
                     .size(theme::TYPE_MICRO)
-                    .color(theme::ACCENT_PURPLE)
+                    .color(theme::accent_text(theme))
                     .font(theme::ui_font(iced::font::Weight::Bold)),
             )
             .padding([2, 6])
-            .style(|t| theme::badge_colored(theme::ACCENT_PURPLE, t));
+            .style(|t| theme::badge_colored(theme::ACCENT, t));
 
             container(
                 column![
                     row![
                         text(tr(lang, title_key))
                             .color(text_primary)
-                            .size(theme::TYPE_SECTION)
-                            .font(theme::ui_font(iced::font::Weight::Bold)),
+                            .size(theme::TYPE_HEADING)
+                            .font(theme::ui_font(iced::font::Weight::Semibold)),
                         count_badge,
                     ]
                     .spacing(8)
@@ -214,7 +224,11 @@ pub fn render<'a>(
             .spacing(20)
             .width(Length::Fill);
 
-        crate::ui::page_shell_with_pad(header, content.into(), is_compact)
+        crate::ui::page_shell_with_pad(
+            header,
+            content.into(),
+            crate::ui::is_pad_compact(size.width),
+        )
     });
 
     main_content.into()

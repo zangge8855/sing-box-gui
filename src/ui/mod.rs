@@ -18,8 +18,8 @@ use iced::{Alignment, Element, Length};
 
 // ── Responsive breakpoints (content / window width in px) ────────────────────
 /// Minimum window width — must stay below SHELL_COMPACT_W so icon sidebar is reachable.
-pub const WINDOW_MIN_W: f32 = 720.0;
-pub const WINDOW_MIN_H: f32 = 600.0;
+pub const WINDOW_MIN_W: f32 = 640.0;
+pub const WINDOW_MIN_H: f32 = 480.0;
 /// Shell sidebar collapses to icon-only below this window width.
 pub const SHELL_COMPACT_W: f32 = 820.0;
 /// Page header actions stack vertically below this content width.
@@ -154,6 +154,13 @@ pub fn page_padding_compact() -> iced::Padding {
     }
 }
 
+/// Page insets switch at one width for every tab. Pages pick their own
+/// breakpoints for layout (stacked toolbars, table vs cards), but if each
+/// also chose its padding the content edge would jump when changing tabs.
+pub fn is_pad_compact(width: f32) -> bool {
+    width < PAGE_COMPACT_W
+}
+
 pub fn page_pad(is_compact: bool) -> iced::Padding {
     if is_compact {
         page_padding_compact()
@@ -162,8 +169,15 @@ pub fn page_pad(is_compact: bool) -> iced::Padding {
     }
 }
 
-// Unified page header: title (size 22, semibold primary) on the left, optional
-// actions on the right, separated by a fill space.
+/// Space available to cards after the shared page insets, in logical pixels.
+pub fn page_content_width(width: f32, is_compact: bool) -> f32 {
+    let padding = page_pad(is_compact);
+    (width.min(PAGE_MAX_WIDTH) - padding.left - padding.right).max(0.0)
+}
+
+// Unified page header: title (semibold primary) on the left, optional actions
+// on the right, separated by a fill space. Whitespace, not a rule, divides it
+// from the body.
 pub fn page_header<'a>(
     title_key: &'static str,
     lang: crate::state::Language,
@@ -177,37 +191,27 @@ pub fn page_header<'a>(
         .font(ui_theme::ui_font(iced::font::Weight::Semibold))
         .color(text_primary);
 
-    let content: Element<'a, Message> = if is_compact {
+    // The zero-width strut keeps the title on the same baseline on every tab,
+    // stacked or not, with or without actions, without clipping taller rows.
+    let title_row = row![Space::new().height(40), title].align_y(Alignment::Center);
+    if is_compact {
         if let Some(actions_el) = actions {
-            column![title, actions_el]
+            column![title_row, actions_el]
                 .spacing(SP_12)
                 .width(Length::Fill)
                 .into()
         } else {
-            row![title].into()
+            title_row.into()
         }
     } else {
-        let mut header_row = row![title].align_y(Alignment::Center).width(Length::Fill);
+        let mut header_row = title_row.width(Length::Fill);
 
         if let Some(actions_el) = actions {
             header_row = header_row.push(Space::new().width(Length::Fill));
             header_row = header_row.push(actions_el);
         }
         header_row.into()
-    };
-
-    let divider = container(Space::new())
-        .height(1)
-        .width(Length::Fill)
-        .style(|t| container::Style {
-            background: Some(iced::Background::Color(ui_theme::border_color(t))),
-            ..Default::default()
-        });
-
-    column![content, divider]
-        .spacing(SP_12)
-        .width(Length::Fill)
-        .into()
+    }
 }
 
 /// Outer scrollable page shell — for tabs whose content is taller than the window.
@@ -224,23 +228,54 @@ pub fn page_shell_with_pad<'a>(
     content: Element<'a, Message>,
     is_compact: bool,
 ) -> Element<'a, Message> {
-    let col = column![header, content].spacing(SP_20).width(Length::Fill);
+    // Keep the title/actions reachable when editing a long settings page.
+    // The floating scrollbar lives in the page's right inset: content gets
+    // a matching right pad, so the bar never paints over card edges and the
+    // cards still line up with the header actions.
+    let body = scrollable(container(content).padding(iced::Padding {
+        top: 1.0,
+        right: SCROLL_GUTTER,
+        bottom: 1.0,
+        left: 1.0,
+    }))
+    .id(iced::widget::Id::new("page-body"))
+    .direction(iced::widget::scrollable::Direction::Vertical(
+        iced::widget::scrollable::Scrollbar::new()
+            .width(6)
+            .scroller_width(6)
+            .margin(3),
+    ))
+    .style(ui_theme::scrollbar_style)
+    .height(Length::Fill)
+    .width(Length::Fill);
 
-    let inner = container(col)
+    let pad = page_pad(is_compact);
+    let col = column![
+        container(header).padding(iced::Padding {
+            right: SCROLL_GUTTER,
+            ..Default::default()
+        }),
+        body
+    ]
+    .spacing(SP_20)
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    container(col)
         .width(Length::Fill)
         .max_width(PAGE_MAX_WIDTH)
         .center_x(Length::Fill)
-        .padding(page_pad(is_compact));
-
-    container(
-        scrollable(inner)
-            .style(ui_theme::scrollbar_style)
-            .height(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+        .height(Length::Fill)
+        .padding(iced::Padding {
+            right: pad.right - SCROLL_GUTTER,
+            ..pad
+        })
+        .into()
 }
+
+/// Width of the page scrollbar lane (6px bar + 3px margin each side), carved
+/// out of the page's right inset.
+const SCROLL_GUTTER: f32 = 12.0;
 
 /// Non-scrolling shell for pages that manage their own inner scroll area
 /// (e.g. Logs terminal, Proxies grid).
@@ -310,14 +345,15 @@ pub fn empty_state<'a>(
         col = col.push(
             text(desc)
                 .size(ui_theme::TYPE_BTN_SM)
-                .color(ui_theme::text_muted(theme)),
+                .color(ui_theme::text_muted(theme))
+                .align_x(Alignment::Center),
         );
     }
     if let Some(btn) = cta {
-        col = col.push(btn);
+        col = col.push(Space::new().height(SP_8)).push(btn);
     }
 
-    container(col)
+    container(col.max_width(420))
         .padding(theme::SP_40)
         .width(Length::Fill)
         .center_x(Length::Fill)
@@ -330,8 +366,8 @@ pub fn loading_row<'a>(label: &'a str, theme: &iced::Theme) -> Element<'a, Messa
     let bar = container(Space::new())
         .width(Length::Fixed(72.0))
         .height(Length::Fixed(4.0))
-        .style(|_t| container::Style {
-            background: Some(iced::Background::Color(ui_theme::ACCENT_PURPLE)),
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(ui_theme::accent(t))),
             border: iced::Border {
                 radius: 2.0.into(),
                 ..Default::default()

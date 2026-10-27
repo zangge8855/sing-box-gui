@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>sing-box GUI</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1E4D43"/>
+      <stop offset="1" stop-color="#0B1C18"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3FBF98" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#3FBF98" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="core" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#FBE3A6"/>
+      <stop offset="0.55" stop-color="#E2AE4F"/>
+      <stop offset="1" stop-color="#B9822B"/>
+    </radialGradient>
+    <mask id="hub" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="#FFFFFF"/>
+      <circle cx="256" cy="256" r="31.8" fill="#000000"/>
+    </mask>
+    <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E6F7F0"/>
+      <stop offset="1" stop-color="#B3E4D2"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6FD0AF"/>
+      <stop offset="1" stop-color="#46B08E"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2B9677"/>
+      <stop offset="1" stop-color="#1C735B"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#tile)"/>
+  <rect x="17" y="17" width="478" height="478" rx="107" fill="none" stroke="url(#rim)" stroke-width="2"/>
+  <ellipse cx="256" cy="268" rx="200" ry="190" fill="url(#glow)"/>
+  <g mask="url(#hub)">
+    <path d="M148.95,204.59 L233.14,253.20 Q247.00,261.20 247.00,277.20 L247.00,374.41 Q247.00,390.41 233.14,382.41 L148.95,333.80 Q135.10,325.80 135.10,309.80 L135.10,212.59 Q135.10,196.59 148.95,204.59 Z" fill="url(#left)"/>
+    <path d="M278.86,253.20 L363.05,204.59 Q376.90,196.59 376.90,212.59 L376.90,309.80 Q376.90,325.80 363.05,333.80 L278.86,382.41 Q265.00,390.41 265.00,374.41 L265.00,277.20 Q265.00,261.20 278.86,253.20 Z" fill="url(#right)"/>
+    <path d="M269.86,124.39 L354.05,173.00 Q367.90,181.00 354.05,189.00 L269.86,237.61 Q256.00,245.61 242.14,237.61 L157.95,189.00 Q144.10,181.00 157.95,173.00 L242.14,124.39 Q256.00,116.39 269.86,124.39 Z" fill="url(#top)"/>
+  </g>
+  <circle cx="256" cy="256" r="21.0" fill="url(#core)"/>
+</svg>

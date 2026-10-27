@@ -74,7 +74,38 @@ fn format_unexpected_exit(exit_code: Option<i32>) -> String {
     }
 }
 
+/// sing-box colours its level tags unless `log.disable_color` is set, even
+/// when stdout is a pipe, so native profiles would show `\x1b[36mINFO\x1b[0m`
+/// on the Logs page. ESC never occurs inside UTF-8 or GBK multibyte
+/// sequences, so this is safe to run before decoding.
+fn strip_ansi(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if !bytes.contains(&0x1b) {
+        return std::borrow::Cow::Borrowed(bytes);
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != 0x1b {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if bytes.get(i) == Some(&b'[') {
+            // CSI: parameter/intermediate bytes up to a final byte 0x40..=0x7E.
+            i += 1;
+            while i < bytes.len() && !(0x40..=0x7e).contains(&bytes[i]) {
+                i += 1;
+            }
+        }
+        // Skip the CSI final byte, or the second byte of a two-byte escape.
+        i += 1;
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 fn decode_log_line(bytes: &[u8]) -> String {
+    let bytes = &*strip_ansi(bytes);
     // Try UTF-8 first
     if let Ok(s) = std::str::from_utf8(bytes) {
         return s.to_string();
@@ -1085,6 +1116,43 @@ pub fn get_core_version(gui_config: &GuiConfig) -> Result<String, String> {
 mod tests {
     use super::*;
     use std::process::Stdio;
+
+    #[test]
+    fn log_lines_drop_ansi_colour_codes() {
+        let raw = b"+0800 2026-10-27 14:30:00 \x1b[36mINFO\x1b[0m [1 0ms] router: ok";
+        assert_eq!(
+            decode_log_line(raw),
+            "+0800 2026-10-27 14:30:00 INFO [1 0ms] router: ok"
+        );
+        assert_eq!(decode_log_line(b"plain \xe4\xb8\xad"), "plain 中");
+        // A truncated trailing escape must not panic or leak the ESC byte.
+        assert_eq!(decode_log_line(b"cut \x1b[3"), "cut ");
+    }
+
+    /// The release zip is deflated; guards the trimmed `zip` feature set.
+    #[test]
+    fn core_zip_entries_inflate_with_enabled_features() {
+        use std::io::{Cursor, Read, Write};
+        let payload = b"MZ sing-box core ".repeat(64);
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        writer
+            .start_file("sing-box-1.12.0-windows-amd64/sing-box.exe", options)
+            .unwrap();
+        writer.write_all(&payload).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut entry = archive.by_index(0).unwrap();
+        let path = entry.enclosed_name().unwrap();
+        assert!(entry.is_file());
+        assert!(is_safe_core_entry(&path, "sing-box.exe"));
+        assert_eq!(entry.size(), payload.len() as u64);
+        let mut out = Vec::new();
+        entry.read_to_end(&mut out).unwrap();
+        assert_eq!(out, payload);
+    }
 
     #[test]
     fn is_core_running_fast_reads_cached_flag_without_process() {

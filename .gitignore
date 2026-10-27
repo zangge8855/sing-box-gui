@@ -1,4 +1,5 @@
 /target
+__pycache__/
 /vendor/wayland-scanner/target/
 .system_generated/
 

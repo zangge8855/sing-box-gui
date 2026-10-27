@@ -80,15 +80,15 @@ pub fn render<'a>(
         // Disabled (no on_press) when core is stopped or already testing
         let speed_test_btn = if latency_testing {
             button(crate::ui::loading_row(tr(lang, "testing_latency"), theme))
-                .padding(theme::BTN_PAD_MD)
+                .padding(theme::BTN_PAD_TOOLBAR)
                 .style(theme::button_secondary)
         } else if !core_running {
             button(text(tr(lang, "test_latency")).size(theme::TYPE_BTN_MD))
-                .padding(theme::BTN_PAD_MD)
+                .padding(theme::BTN_PAD_TOOLBAR)
                 .style(theme::button_secondary)
         } else {
             button(text(tr(lang, "test_latency")).size(theme::TYPE_BTN_MD))
-                .padding(theme::BTN_PAD_MD)
+                .padding(theme::BTN_PAD_TOOLBAR)
                 .style(theme::button_primary)
                 .on_press(Message::StartLatencyTest)
         };
@@ -101,6 +101,7 @@ pub fn render<'a>(
             } else {
                 Length::Fixed(theme::SEARCH_WIDTH)
             })
+            .size(theme::TYPE_BODY)
             .style(theme::input_field);
 
         let sort_options = vec![
@@ -129,7 +130,9 @@ pub fn render<'a>(
                 Message::SetProxySort(opt.sort)
             })
             .padding(8)
-            .style(theme::pick_list);
+            .text_size(theme::TYPE_BODY)
+            .style(theme::pick_list)
+            .menu_style(theme::pick_list_menu);
 
         if is_compact {
             column![
@@ -138,12 +141,12 @@ pub fn render<'a>(
                     text(format!("{}:", tr(lang, "sort_nodes_by")))
                         .size(theme::TYPE_CAPTION)
                         .color(text_muted),
-                    sort_picker.width(Length::Fill)
+                    sort_picker.width(Length::Fill),
+                    speed_test_btn
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center)
-                .width(Length::Fill),
-                speed_test_btn.width(Length::Fill)
+                .width(Length::Fill)
             ]
             .spacing(8)
             .width(Length::Fill)
@@ -170,13 +173,9 @@ pub fn render<'a>(
     if !groups.is_empty() {
         // Sort groups (e.g. Proxy first, then alphabetical)
         groups.sort_by(|a, b| {
-            if a.name == "Proxy" {
-                std::cmp::Ordering::Less
-            } else if b.name == "Proxy" {
-                std::cmp::Ordering::Greater
-            } else {
-                a.name.cmp(&b.name)
-            }
+            (b.name == "Proxy")
+                .cmp(&(a.name == "Proxy"))
+                .then_with(|| a.name.cmp(&b.name))
         });
 
         // Find selected group
@@ -222,14 +221,14 @@ pub fn render<'a>(
                                 .size(theme::TYPE_BTN_SM)
                                 .font(theme::ui_font(iced::font::Weight::Bold))
                                 .color(if is_active {
-                                    theme::ACCENT_PURPLE
+                                    theme::accent_text(theme)
                                 } else {
                                     text_primary
                                 }),
                             text(crate::ui::util::truncate_chars(active_node, 16))
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active {
-                                    theme::ACCENT_PURPLE
+                                    theme::accent_text(theme)
                                 } else {
                                     theme::text_muted(theme)
                                 })
@@ -266,14 +265,14 @@ pub fn render<'a>(
                                 .size(theme::TYPE_SECTION)
                                 .font(theme::ui_font(iced::font::Weight::Bold))
                                 .color(if is_active {
-                                    theme::ACCENT_PURPLE
+                                    theme::accent_text(theme)
                                 } else {
                                     text_primary
                                 }),
                             text(crate::ui::util::truncate_chars(active_node, 20))
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active {
-                                    theme::ACCENT_PURPLE
+                                    theme::accent_text(theme)
                                 } else {
                                     theme::text_muted(theme)
                                 })
@@ -297,20 +296,10 @@ pub fn render<'a>(
                 .height(Length::Fill)
             };
 
-            let grid_width = if is_compact {
-                size.width
-            } else {
-                size.width - 220.0
-            };
-            let cols = if grid_width < 450.0 {
-                1
-            } else if grid_width < 700.0 {
-                2
-            } else if grid_width < 950.0 {
-                3
-            } else {
-                4
-            };
+            let grid_width = crate::ui::page_content_width(size.width, is_compact)
+                - if is_compact { 0.0 } else { 221.0 };
+            let cols = card_columns(grid_width);
+            let card_w = card_width(grid_width, cols);
 
             let right_pane_content: Element<'a, Message> = if let Some(ref sub_nodes) =
                 group_info_moved.all
@@ -319,7 +308,7 @@ pub fn render<'a>(
                 let mut filtered_sub_nodes: Vec<&String> = if search_query_moved.trim().is_empty() {
                     sub_nodes.iter().collect()
                 } else {
-                    let q = search_query_moved.to_lowercase();
+                    let q = search_query_moved.trim().to_lowercase();
                     sub_nodes
                         .iter()
                         .filter(|n| {
@@ -397,6 +386,7 @@ pub fn render<'a>(
                             is_selector,
                             selectable,
                             Some(group_name.to_string()),
+                            card_w,
                             theme,
                             lang,
                         );
@@ -466,42 +456,48 @@ pub fn render<'a>(
         main_content.into()
     } else {
         // Fallback: simple flat node list when core is not running / no groups
+        // Empty states follow the window like the populated page, so the
+        // title and insets don't jump when nodes arrive.
         if nodes.is_empty() {
-            let cta = if !core_running {
-                Some(
-                    button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
-                        .padding(theme::BTN_PAD_MD)
-                        .style(theme::button_primary)
-                        .on_press(Message::ToggleCore)
-                        .into(),
-                )
-            } else {
-                None
-            };
-            let content = crate::ui::empty_state(
-                tr(lang, "no_nodes"),
-                Some(if !core_running {
-                    tr(lang, "core_not_running_hint")
+            return responsive(move |size| {
+                let is_compact = size.width < PAGE_COMPACT_W;
+                let cta = if !core_running {
+                    Some(
+                        button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
+                            .padding(theme::BTN_PAD_MD)
+                            .style(theme::button_primary)
+                            .on_press(Message::ToggleCore)
+                            .into(),
+                    )
                 } else {
-                    tr(lang, "no_proxy_groups")
-                }),
-                cta,
-                theme,
-            );
-            let header = page_header(
-                "proxy_nodes",
-                lang,
-                Some(make_header_actions(search_query, true)),
-                theme,
-                true,
-            );
-            return crate::ui::page_shell_fixed_with_pad(header, content, true);
+                    None
+                };
+                let content = crate::ui::empty_state(
+                    tr(lang, "no_nodes"),
+                    Some(if !core_running {
+                        tr(lang, "core_not_running_hint")
+                    } else {
+                        tr(lang, "no_proxy_groups")
+                    }),
+                    cta,
+                    theme,
+                );
+                let header = page_header(
+                    "proxy_nodes",
+                    lang,
+                    Some(make_header_actions(search_query, is_compact)),
+                    theme,
+                    is_compact,
+                );
+                crate::ui::page_shell_fixed_with_pad(header, content, is_compact)
+            })
+            .into();
         }
 
         let mut filtered_nodes: Vec<&ProxyNode> = if search_query.trim().is_empty() {
             nodes.iter().collect()
         } else {
-            let q = search_query.to_lowercase();
+            let q = search_query.trim().to_lowercase();
             nodes
                 .iter()
                 .filter(|n| {
@@ -527,24 +523,28 @@ pub fn render<'a>(
         }
 
         if filtered_nodes.is_empty() {
-            let cta = button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
-                .padding(theme::BTN_PAD_MD)
-                .style(theme::button_secondary)
-                .on_press(Message::NodeSearchChanged(String::new()));
-            let content = crate::ui::empty_state(
-                tr(lang, "no_matching_nodes"),
-                None,
-                Some(cta.into()),
-                theme,
-            );
-            let header = page_header(
-                "proxy_nodes",
-                lang,
-                Some(make_header_actions(search_query, true)),
-                theme,
-                true,
-            );
-            return crate::ui::page_shell_fixed_with_pad(header, content, true);
+            return responsive(move |size| {
+                let is_compact = size.width < PAGE_COMPACT_W;
+                let cta = button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
+                    .padding(theme::BTN_PAD_MD)
+                    .style(theme::button_secondary)
+                    .on_press(Message::NodeSearchChanged(String::new()));
+                let content = crate::ui::empty_state(
+                    tr(lang, "no_matching_nodes"),
+                    None,
+                    Some(cta.into()),
+                    theme,
+                );
+                let header = page_header(
+                    "proxy_nodes",
+                    lang,
+                    Some(make_header_actions(search_query, is_compact)),
+                    theme,
+                    is_compact,
+                );
+                crate::ui::page_shell_fixed_with_pad(header, content, is_compact)
+            })
+            .into();
         }
 
         let content = responsive(move |size| {
@@ -560,6 +560,9 @@ pub fn render<'a>(
                 &filtered_nodes[..]
             };
 
+            let grid_width = crate::ui::page_content_width(size.width, is_compact);
+            let cols = card_columns(grid_width);
+            let card_w = card_width(grid_width, cols);
             let mut card_elements: Vec<Element<'_, Message>> = Vec::new();
 
             for &node in display_nodes {
@@ -575,22 +578,12 @@ pub fn render<'a>(
                     false,
                     node.selectable,
                     None,
+                    card_w,
                     theme,
                     lang,
                 );
                 card_elements.push(card);
             }
-
-            // Calculate columns based on width
-            let cols = if size.width < 500.0 {
-                1
-            } else if size.width < 750.0 {
-                2
-            } else if size.width < 1000.0 {
-                3
-            } else {
-                4
-            };
 
             let grid_content: Element<'_, Message> =
                 build_card_grid(card_elements, cols, total_nodes, max_render, theme, lang);
@@ -623,51 +616,61 @@ fn render_proxy_summary<'a>(
     use crate::ui::i18n::tr;
 
     let status_color = if core_running {
-        theme::SUCCESS
+        theme::success_text(theme)
     } else {
         theme::text_tertiary(theme)
     };
-    let status_dot = container(Space::new())
-        .width(8)
-        .height(8)
-        .style(move |_| container::Style {
-            background: Some(iced::Background::Color(status_color)),
-            border: iced::Border {
-                radius: 4.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-    let mut metrics = format!(
-        "{} {}  ·  {} {}",
-        node_count,
-        tr(lang, "nodes_unit"),
-        protocol_count,
-        tr(lang, "protocols_unit"),
-    );
-    if group_count > 0 {
-        metrics.push_str(&format!("  ·  {} {}", group_count, tr(lang, "groups_unit")));
-    }
-
-    row![
-        status_dot,
-        text(if core_running {
+    let status = crate::ui::status_dot(
+        status_color,
+        core_running,
+        if core_running {
             tr(lang, "status_running")
         } else {
             tr(lang, "status_stopped")
-        })
-        .size(theme::TYPE_CAPTION)
-        .color(status_color),
-        text(metrics)
-            .size(theme::TYPE_CAPTION)
-            .color(theme::text_muted(theme)),
+        },
+        status_color,
+        theme::TYPE_CAPTION,
+    );
+
+    // Figures in ink, units in grey — quieter than a "·"-joined string.
+    let figure = |value: usize, unit_key: &'static str| {
+        row![
+            text(value.to_string())
+                .size(theme::TYPE_CAPTION)
+                .font(theme::metric_font())
+                .color(theme::text_primary(theme)),
+            text(tr(lang, unit_key))
+                .size(theme::TYPE_CAPTION)
+                .color(theme::text_muted(theme)),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center)
+    };
+
+    let mut summary = row![
+        status,
+        figure(node_count, "nodes_unit"),
+        figure(protocol_count, "protocols_unit"),
     ]
-    .spacing(crate::ui::SP_8)
-    .align_y(Alignment::Center)
-    .into()
+    .spacing(crate::ui::SP_20)
+    .align_y(Alignment::Center);
+    if group_count > 0 {
+        summary = summary.push(figure(group_count, "groups_unit"));
+    }
+    summary.into()
 }
 
 // --- Helper Functions for Deduplication ---
+
+/// Every card shares one height so grid rows line up regardless of name length.
+const PROXY_CARD_HEIGHT: f32 = 84.0;
+const PROXY_CARD_MIN_W: f32 = 236.0;
+
+/// Width of one grid card for `cols` columns spread across `grid_width`.
+fn card_width(grid_width: f32, cols: usize) -> f32 {
+    let cols = cols.max(1) as f32;
+    ((grid_width - (cols - 1.0) * theme::GRID_GAP) / cols).max(PROXY_CARD_MIN_W)
+}
 
 #[allow(clippy::too_many_arguments)]
 fn render_proxy_card<'a>(
@@ -680,197 +683,209 @@ fn render_proxy_card<'a>(
     is_selector: bool,
     direct_selectable: bool,
     group_clone: Option<String>,
+    card_w: f32,
     theme: &iced::Theme,
     lang: crate::state::Language,
 ) -> Element<'a, Message> {
     use crate::ui::i18n::tr;
     use crate::ui::theme;
+    use crate::ui::util::truncate_width;
     use iced::widget::{button, column, container, row, text, tooltip};
     use iced::{Alignment, Length};
 
-    let text_primary = if theme::is_dark(theme) {
-        theme::TEXT_PRIMARY_DARK
-    } else {
-        theme::TEXT_PRIMARY_LIGHT
-    };
+    let text_primary = theme::text_primary(theme);
+    let pad = theme::CARD_PAD_DENSE;
 
-    let latency_font = theme::metric_font();
-    let latency_text = match latency {
-        Some(ms) => {
-            if ms >= 9999 {
-                text(tr(lang, "latency_timeout"))
-                    .color(theme::DANGER)
-                    .size(theme::TYPE_CAPTION)
-                    .font(latency_font)
+    // Latency: a small semantic dot plus the figure, right-aligned.
+    let (latency_label, latency_color) = match latency {
+        Some(ms) if ms >= 9999 => (
+            tr(lang, "latency_timeout").to_string(),
+            theme::danger_text(theme),
+        ),
+        Some(ms) => (
+            format!("{ms} ms"),
+            if ms < 100 {
+                theme::success_text(theme)
+            } else if ms < 250 {
+                theme::warning_text(theme)
             } else {
-                text(format!("{} ms", ms))
-                    .color(if ms < 100 {
-                        theme::SUCCESS
-                    } else if ms < 250 {
-                        theme::WARNING
-                    } else {
-                        theme::DANGER
-                    })
-                    .size(theme::TYPE_CAPTION)
-                    .font(latency_font)
-            }
-        }
-        None => text("-")
-            .color(theme::text_tertiary(theme))
-            .size(theme::TYPE_CAPTION)
-            .font(latency_font),
+                theme::danger_text(theme)
+            },
+        ),
+        None => ("—".to_string(), theme::text_tertiary(theme)),
     };
+    let latency_el = row![
+        container(Space::new())
+            .width(6)
+            .height(6)
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(theme::with_alpha(
+                    latency_color,
+                    if latency.is_some() { 1.0 } else { 0.5 },
+                ))),
+                border: iced::Border {
+                    radius: 3.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        text(latency_label)
+            .size(theme::TYPE_CAPTION)
+            .font(theme::metric_font())
+            .color(latency_color),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
 
     let proto_color = theme::protocol_color(node_type);
+    let proto_label = node_type.to_uppercase();
     let type_tag = container(
-        text(node_type.to_uppercase())
+        text(truncate_width(&proto_label, 12))
             .size(theme::TYPE_MICRO)
-            .color(proto_color)
-            .font(theme::ui_font(iced::font::Weight::Bold)),
+            .color(theme::badge_text(proto_color, theme))
+            .font(theme::ui_font(iced::font::Weight::Semibold)),
     )
     .padding([2, 6])
     .style(move |t| theme::badge_colored(proto_color, t));
 
-    let mut bottom_row = row![type_tag]
+    // Meta row: protocol chip, server (when known), latency.
+    let mut meta_row = row![type_tag]
         .spacing(crate::ui::SP_8)
         .align_y(Alignment::Center);
     if let (Some(s), Some(p)) = (server, port) {
-        bottom_row = bottom_row.push(
-            text(format!("{}:{}", s, p))
+        let chip_w = 14.0 + proto_label.chars().count().min(12) as f32 * 7.0;
+        let server_px = card_w - pad * 2.0 - chip_w - 72.0 - crate::ui::SP_8 * 2.0;
+        let server_cols = (server_px / 6.6).max(6.0) as usize;
+        meta_row = meta_row.push(
+            text(truncate_width(&format!("{s}:{p}"), server_cols))
                 .color(theme::text_tertiary(theme))
-                .size(theme::TYPE_MICRO)
+                .size(theme::TYPE_CAPTION)
+                .wrapping(text::Wrapping::None)
                 .width(Length::Fill),
+        );
+    } else {
+        meta_row = meta_row.push(Space::new().width(Length::Fill));
+    }
+    meta_row = meta_row.push(latency_el);
+
+    let clean_name: String = node_name
+        .chars()
+        .filter(|c| !(('\u{1f1e6}'..='\u{1f1ff}').contains(c)))
+        .collect();
+    let clean_name = clean_name.trim();
+    let flag_opt = theme::detect_region_code(node_name);
+
+    // Budget the name to one line: card width minus padding, region chip and
+    // the selection mark, at ~7.4px per Latin column for 14px text.
+    let name_px = card_w
+        - pad * 2.0
+        - if flag_opt.is_some() { 34.0 } else { 0.0 }
+        - if is_selected { 26.0 } else { 0.0 };
+    let name_cols = (name_px / 7.4).max(8.0) as usize;
+    let display_name = truncate_width(clean_name, name_cols);
+    let name_truncated = display_name != clean_name;
+    let name_text = text(display_name)
+        .shaping(text::Shaping::Advanced)
+        .wrapping(text::Wrapping::None)
+        .color(if is_selected {
+            theme::accent_text(theme)
+        } else {
+            text_primary
+        })
+        .size(theme::TYPE_SECTION)
+        .font(theme::ui_font(if is_selected {
+            iced::font::Weight::Semibold
+        } else {
+            iced::font::Weight::Medium
+        }))
+        .width(Length::Fill);
+
+    let mut title_row = row![].spacing(8).align_y(Alignment::Center);
+    if let Some(code) = flag_opt {
+        title_row = title_row.push(
+            container(
+                text(code)
+                    .size(theme::TYPE_MICRO)
+                    .font(theme::ui_font(iced::font::Weight::Semibold))
+                    .color(theme::text_muted(theme)),
+            )
+            .padding([2, 5])
+            .style(theme::badge_bg),
+        );
+    }
+    title_row = title_row.push(name_text);
+    if is_selected {
+        title_row = title_row.push(
+            container(
+                text(crate::ui::icons::ICON_CHECK.to_string())
+                    .font(iced::Font::with_name("Material Icons"))
+                    .size(12)
+                    .color(theme::on_accent(theme)),
+            )
+            .width(18)
+            .height(18)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .style(|t| container::Style {
+                background: Some(iced::Background::Color(theme::accent(t))),
+                border: iced::Border {
+                    radius: 9.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
         );
     }
 
-    let flag_opt = theme::detect_region_flag(node_name);
-    let display_title: Element<'_, Message> = if let Some(flag) = flag_opt {
-        row![
-            text(flag).size(theme::TYPE_BODY),
-            text(crate::ui::util::truncate_chars(node_name, 24))
-                .color(if is_selected {
-                    theme::ACCENT_PURPLE
-                } else {
-                    text_primary
-                })
-                .size(theme::TYPE_SECTION)
-                .font(theme::ui_font(if is_selected {
-                    iced::font::Weight::Bold
-                } else {
-                    iced::font::Weight::Medium
-                }))
-                .width(Length::Fill),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-        .into()
-    } else {
-        text(crate::ui::util::truncate_chars(node_name, 26))
-            .color(if is_selected {
-                theme::ACCENT_PURPLE
-            } else {
-                text_primary
-            })
-            .size(theme::TYPE_SECTION)
-            .font(theme::ui_font(if is_selected {
-                iced::font::Weight::Bold
-            } else {
-                iced::font::Weight::Medium
-            }))
-            .width(Length::Fill)
-            .into()
-    };
-
-    let check_mark: Element<'_, Message> = if is_selected {
-        container(
-            text("✓")
-                .size(theme::TYPE_MICRO)
-                .color(iced::Color::WHITE)
-                .font(theme::ui_font(iced::font::Weight::Bold)),
-        )
-        .width(16)
-        .height(16)
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center)
-        .style(|_t| container::Style {
-            background: Some(iced::Background::Color(theme::ACCENT_PURPLE)),
-            border: iced::Border {
-                radius: 8.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-        .into()
-    } else {
-        iced::widget::Space::new().width(0).height(0).into()
-    };
-
-    let card_content = column![
-        row![display_title, latency_text, check_mark,]
-            .align_y(Alignment::Center)
-            .spacing(6),
-        bottom_row
-    ]
-    .spacing(crate::ui::SP_12)
-    .padding(theme::CARD_PAD_DENSE);
+    let card_content = column![title_row, Space::new().height(Length::Fill), meta_row]
+        .padding(pad)
+        .height(Length::Fill);
 
     let node_clone = node_name.to_string();
+    let interactive = if group_clone.is_some() {
+        is_selector
+    } else {
+        direct_selectable && server.is_some()
+    };
 
     let mut card_btn = button(card_content)
         .padding(0)
-        .style(move |_theme, status| {
-            let dark = theme::is_dark(_theme);
+        .height(Length::Fixed(PROXY_CARD_HEIGHT))
+        .width(Length::Fill)
+        .style(move |t, status| {
             if is_selected {
-                let base = theme::card_selected(_theme);
-                button::Style {
+                let base = theme::card_selected(t);
+                return button::Style {
                     background: base.background,
                     text_color: text_primary,
-                    border: iced::Border {
-                        color: theme::ACCENT_PURPLE,
-                        width: 1.5,
-                        radius: base.border.radius,
-                    },
-                    shadow: iced::Shadow {
-                        color: theme::with_alpha(
-                            theme::ACCENT_PURPLE,
-                            if dark { 0.25 } else { 0.15 },
-                        ),
-                        offset: iced::Vector::new(0.0, 2.0),
-                        blur_radius: 8.0,
-                    },
-                    ..Default::default()
-                }
-            } else {
-                let base = theme::card_bg(_theme);
-                let border_color = match status {
-                    button::Status::Hovered if is_selector => theme::ACCENT_PURPLE,
-                    button::Status::Hovered
-                        if !is_selector && direct_selectable && server.is_some() =>
-                    {
-                        theme::ACCENT_PURPLE
-                    }
-                    _ => base.border.color,
-                };
-                button::Style {
-                    background: match status {
-                        button::Status::Hovered => {
-                            Some(iced::Background::Color(theme::elevated_surface(_theme)))
-                        }
-                        _ => base.background,
-                    },
-                    text_color: text_primary,
-                    border: iced::Border {
-                        color: border_color,
-                        width: base.border.width,
-                        radius: base.border.radius,
-                    },
+                    border: base.border,
                     shadow: base.shadow,
                     ..Default::default()
-                }
+                };
             }
-        })
-        .width(Length::Fill);
+            let base = theme::card_bg(t);
+            let engaged =
+                interactive && matches!(status, button::Status::Hovered | button::Status::Pressed);
+            button::Style {
+                background: if engaged {
+                    Some(iced::Background::Color(theme::elevated_surface(t)))
+                } else {
+                    base.background
+                },
+                text_color: text_primary,
+                border: iced::Border {
+                    color: if engaged {
+                        theme::with_alpha(theme::accent(t), 0.55)
+                    } else {
+                        base.border.color
+                    },
+                    width: base.border.width,
+                    radius: base.border.radius,
+                },
+                shadow: base.shadow,
+                ..Default::default()
+            }
+        });
 
     if let Some(gc) = group_clone {
         if is_selector {
@@ -883,7 +898,7 @@ fn render_proxy_card<'a>(
         card_btn = card_btn.on_press(Message::SelectNode(node_clone));
     }
 
-    if node_name.chars().count() > 24 {
+    if name_truncated {
         tooltip(
             card_btn,
             container(
@@ -892,13 +907,19 @@ fn render_proxy_card<'a>(
                     .color(theme::text_primary(theme)),
             )
             .padding([6, 10])
-            .style(theme::card_bg),
+            .style(theme::popover_bg),
             tooltip::Position::Top,
         )
         .into()
     } else {
         card_btn.into()
     }
+}
+
+fn card_columns(width: f32) -> usize {
+    ((width + theme::GRID_GAP) / (PROXY_CARD_MIN_W + theme::GRID_GAP))
+        .floor()
+        .clamp(1.0, 4.0) as usize
 }
 
 fn build_card_grid<'a>(

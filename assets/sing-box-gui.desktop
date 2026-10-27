@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=sing-box GUI
+Comment=Manage sing-box profiles and proxy connections
+Comment[zh_CN]=管理 sing-box 配置与代理连接
+Exec=sing-box-gui
+Icon=sing-box-gui
+Terminal=false
+Categories=Network;
+StartupWMClass=sing-box-gui

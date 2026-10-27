@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>sing-box GUI</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1E4D43"/>
+      <stop offset="1" stop-color="#0B1C18"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3FBF98" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#3FBF98" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="core" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#FBE3A6"/>
+      <stop offset="0.55" stop-color="#E2AE4F"/>
+      <stop offset="1" stop-color="#B9822B"/>
+    </radialGradient>
+    <mask id="hub" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="#FFFFFF"/>
+      <circle cx="256" cy="256" r="41.4" fill="#000000"/>
+    </mask>
+    <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E6F7F0"/>
+      <stop offset="1" stop-color="#B3E4D2"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6FD0AF"/>
+      <stop offset="1" stop-color="#46B08E"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2B9677"/>
+      <stop offset="1" stop-color="#1C735B"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#tile)"/>
+  <rect x="1" y="1" width="510" height="510" rx="111" fill="none" stroke="url(#rim)" stroke-width="2"/>
+  <ellipse cx="256" cy="268" rx="200" ry="190" fill="url(#glow)"/>
+  <g>
+    <path d="M134.44,205.44 L225.14,257.81 Q239.00,265.81 239.00,281.81 L239.00,386.56 Q239.00,402.56 225.14,394.56 L134.44,342.19 Q120.58,334.19 120.58,318.19 L120.58,213.44 Q120.58,197.44 134.44,205.44 Z" fill="url(#left)"/>
+    <path d="M286.86,257.81 L377.56,205.44 Q391.42,197.44 391.42,213.44 L391.42,318.19 Q391.42,334.19 377.56,342.19 L286.86,394.56 Q273.00,402.56 273.00,386.56 L273.00,281.81 Q273.00,265.81 286.86,257.81 Z" fill="url(#right)"/>
+    <path d="M269.86,107.63 L360.56,160.00 Q374.42,168.00 360.56,176.00 L269.86,228.37 Q256.00,236.37 242.14,228.37 L151.44,176.00 Q137.58,168.00 151.44,160.00 L242.14,107.63 Q256.00,99.63 269.86,107.63 Z" fill="url(#top)"/>
+  </g>
+</svg>

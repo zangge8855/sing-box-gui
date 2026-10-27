@@ -124,26 +124,6 @@ pub fn load_gui_config() -> GuiConfig {
         let _ = save_gui_config(&config);
     }
 
-    // One-time migration for existing users to match system locale if not migrated yet
-    let migration_file = get_app_dir().join(".migrated_locale");
-    if !migration_file.exists() {
-        #[cfg(target_os = "windows")]
-        {
-            use winreg::RegKey;
-            use winreg::enums::HKEY_CURRENT_USER;
-            if let Ok(hkcu) =
-                RegKey::predef(HKEY_CURRENT_USER).open_subkey("Control Panel\\International")
-                && let Ok(locale) = hkcu.get_value::<String, _>("LocaleName")
-                && locale.to_lowercase().starts_with("zh")
-                && config.language == crate::state::Language::default()
-            {
-                config.language = crate::state::Language::Zh;
-                let _ = save_gui_config(&config);
-            }
-        }
-        let _ = fs::write(migration_file, "done");
-    }
-
     config
 }
 
@@ -2860,15 +2840,7 @@ pub fn convert_clash_to_singbox(
     })];
 
     if gui_config.tun_mode {
-        inbounds.push(json!({
-            "type": "tun",
-            "tag": "tun-in",
-            "interface_name": "singbox-tun",
-            "address": ["172.19.0.1/30"],
-            "auto_route": true,
-            "strict_route": true,
-            "stack": "system"
-        }));
+        inbounds.push(default_tun_inbound());
     }
 
     // Build Rules
@@ -3147,6 +3119,19 @@ pub fn mitigate_run_config(config: &mut serde_json::Value) {
     }
 }
 
+fn default_tun_inbound() -> serde_json::Value {
+    #[allow(unused_mut)]
+    let mut inbound = json!({
+        "type": "tun", "tag": "tun-in", "address": ["172.19.0.1/30"],
+        "auto_route": true, "strict_route": true, "stack": "system"
+    });
+    #[cfg(not(target_os = "macos"))]
+    {
+        inbound["interface_name"] = json!("singbox-tun");
+    }
+    inbound
+}
+
 pub fn merge_native_json_profile(
     json_content: &str,
     gui_config: &GuiConfig,
@@ -3175,6 +3160,7 @@ pub fn merge_native_json_profile(
                     obj.insert("listen_port".to_string(), json!(gui_config.mixed_port));
                     mixed_found = true;
                 } else if t == "tun" {
+                    #[cfg(not(target_os = "macos"))]
                     obj.entry("interface_name".to_string())
                         .or_insert(json!("singbox-tun"));
                     obj.entry("auto_route".to_string()).or_insert(json!(true));
@@ -3195,15 +3181,7 @@ pub fn merge_native_json_profile(
             }));
         }
         if gui_config.tun_mode && !tun_found {
-            arr.push(json!({
-                "type": "tun",
-                "tag": "tun-in",
-                "interface_name": "singbox-tun",
-                "address": ["172.19.0.1/30"],
-                "auto_route": true,
-                "strict_route": true,
-                "stack": "system"
-            }));
+            arr.push(default_tun_inbound());
         } else if !gui_config.tun_mode && tun_found {
             arr.retain(|val| val.get("type").and_then(|t| t.as_str()) != Some("tun"));
         }
@@ -3215,15 +3193,7 @@ pub fn merge_native_json_profile(
             "listen_port": gui_config.mixed_port
         })];
         if gui_config.tun_mode {
-            arr.push(json!({
-                "type": "tun",
-                "tag": "tun-in",
-                "interface_name": "singbox-tun",
-                "address": ["172.19.0.1/30"],
-                "auto_route": true,
-                "strict_route": true,
-                "stack": "system"
-            }));
+            arr.push(default_tun_inbound());
         }
         config_obj.insert("inbounds".to_string(), serde_json::Value::Array(arr));
     }
@@ -3451,6 +3421,35 @@ mod tests {
     use super::*;
     use crate::state::RoutingMode;
     use base64::Engine;
+
+    #[test]
+    fn generated_tun_uses_a_platform_valid_interface_name() {
+        let config = GuiConfig {
+            tun_mode: true,
+            ..GuiConfig::default()
+        };
+        let merged = merge_native_json_profile(
+            r#"{"outbounds":[{"type":"direct","tag":"direct"}]}"#,
+            &config,
+        )
+        .unwrap();
+        let tun = merged["inbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|inbound| inbound["type"] == "tun")
+            .unwrap();
+        assert_eq!(tun["auto_route"], true);
+        #[cfg(target_os = "macos")]
+        assert!(
+            tun.get("interface_name").is_none(),
+            "macOS must allocate its own utunN interface"
+        );
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(tun["interface_name"], "singbox-tun");
+        let native = merge_native_json_profile(r#"{"inbounds":[{"type":"tun","interface_name":"utun123"}],"outbounds":[{"type":"direct","tag":"direct"}]}"#, &config).unwrap();
+        assert_eq!(native["inbounds"][0]["interface_name"], "utun123");
+    }
 
     #[test]
     fn test_parse_subscription_userinfo() {

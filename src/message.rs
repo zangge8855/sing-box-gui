@@ -25,6 +25,8 @@ pub enum SystemProxyContext {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    #[cfg(feature = "ui-smoke")]
+    Smoke(crate::smoke::Action),
     NoOp,
     TabChanged(Tab),
     NodeSearchChanged(String),
@@ -110,8 +112,12 @@ pub enum Message {
     },
     SystemThemeDetected(bool),
     RoutingModeChanged(RoutingMode),
-    ModeSet(Result<String, String>),
+    ModeSet {
+        mode: RoutingMode,
+        result: Result<(), String>,
+    },
     SaveSettings,
+    DiscardSettings,
     FetchConnections,
     ConnectionsFetched(Result<crate::api::ConnectionsResponse, String>),
     CloseConnection(String),
@@ -119,8 +125,11 @@ pub enum Message {
     CloseAllConnections,
     AllConnectionsClosed(Result<(), String>),
     TrayIconClicked,
+    #[cfg(target_os = "linux")]
+    TrayUnavailable,
     TrayMenuClicked(String),
     WindowOpened(iced::window::Id),
+    WindowResized(iced::window::Id, iced::Size),
     WindowCloseRequested(iced::window::Id),
     KeyboardEvent(iced::keyboard::Event),
 
