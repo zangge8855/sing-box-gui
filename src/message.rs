@@ -1,4 +1,6 @@
-use crate::state::{AppTheme, GuiConfig, Language, LogFilter, RoutingMode, RuleField, Tab};
+use crate::state::{
+    AppTheme, GuiConfig, Language, LogFilter, RoutingMode, RuleField, RuleTarget, Tab,
+};
 
 /// Latest GitHub release info for in-app updates.
 #[derive(Debug, Clone)]
@@ -42,11 +44,11 @@ pub enum Message {
         error: Option<String>,
     },
     RulesInputChanged {
-        field: RuleField,
+        target: RuleTarget,
         value: String,
     },
     AddRule {
-        field: RuleField,
+        target: RuleTarget,
     },
     RemoveRule {
         field: RuleField,

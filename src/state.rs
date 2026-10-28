@@ -137,6 +137,25 @@ impl RuleField {
     }
 }
 
+/// Where a custom rule sends matching traffic. The Rules page takes one input
+/// per target and files each entry as a domain or IP rule by its shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RuleTarget {
+    Direct,
+    Proxy,
+}
+
+impl RuleTarget {
+    pub fn field(self, is_ip: bool) -> RuleField {
+        match (self, is_ip) {
+            (RuleTarget::Direct, false) => RuleField::BypassDomains,
+            (RuleTarget::Direct, true) => RuleField::BypassIps,
+            (RuleTarget::Proxy, false) => RuleField::ProxyDomains,
+            (RuleTarget::Proxy, true) => RuleField::ProxyIps,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LogFilter {
     #[default]

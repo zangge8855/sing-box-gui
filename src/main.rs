@@ -96,10 +96,8 @@ struct App {
     selected_group: String,
     pending_routing_mode: Option<state::RoutingMode>,
     proxy_groups: std::collections::HashMap<String, crate::api::ProxyInfo>,
-    bypass_domain_input: String,
-    proxy_domain_input: String,
-    bypass_ip_input: String,
-    proxy_ip_input: String,
+    direct_rule_input: String,
+    proxy_rule_input: String,
     settings_draft: RuntimeSettingsDraft,
     settings_errors: std::collections::BTreeMap<&'static str, &'static str>,
     connections_search: String,
@@ -295,10 +293,8 @@ impl App {
             selected_group: String::new(),
             pending_routing_mode: None,
             proxy_groups: std::collections::HashMap::new(),
-            bypass_domain_input: String::new(),
-            proxy_domain_input: String::new(),
-            bypass_ip_input: String::new(),
-            proxy_ip_input: String::new(),
+            direct_rule_input: String::new(),
+            proxy_rule_input: String::new(),
             settings_draft,
             settings_errors: std::collections::BTreeMap::new(),
             connections_search: String::new(),
@@ -931,6 +927,15 @@ impl App {
         self.show_toast(Toast::success(msg));
     }
 
+    fn rule_list_mut(&mut self, field: state::RuleField) -> &mut Vec<String> {
+        match field {
+            state::RuleField::BypassDomains => &mut self.gui_config.custom_bypass_domains,
+            state::RuleField::ProxyDomains => &mut self.gui_config.custom_proxy_domains,
+            state::RuleField::BypassIps => &mut self.gui_config.custom_bypass_ips,
+            state::RuleField::ProxyIps => &mut self.gui_config.custom_proxy_ips,
+        }
+    }
+
     fn toast_error(&mut self, msg: impl Into<String>) {
         self.show_toast(Toast::error(msg));
     }
@@ -1168,71 +1173,61 @@ impl App {
                 }
                 Task::none()
             }
-            Message::RulesInputChanged { field, value } => {
-                match field {
-                    state::RuleField::BypassDomains => self.bypass_domain_input = value,
-                    state::RuleField::ProxyDomains => self.proxy_domain_input = value,
-                    state::RuleField::BypassIps => self.bypass_ip_input = value,
-                    state::RuleField::ProxyIps => self.proxy_ip_input = value,
+            Message::RulesInputChanged { target, value } => {
+                match target {
+                    state::RuleTarget::Direct => self.direct_rule_input = value,
+                    state::RuleTarget::Proxy => self.proxy_rule_input = value,
                 }
                 Task::none()
             }
-            Message::AddRule { field } => {
-                let raw = match field {
-                    state::RuleField::BypassDomains => &self.bypass_domain_input,
-                    state::RuleField::ProxyDomains => &self.proxy_domain_input,
-                    state::RuleField::BypassIps => &self.bypass_ip_input,
-                    state::RuleField::ProxyIps => &self.proxy_ip_input,
+            Message::AddRule { target } => {
+                let raw = match target {
+                    state::RuleTarget::Direct => self.direct_rule_input.clone(),
+                    state::RuleTarget::Proxy => self.proxy_rule_input.clone(),
                 };
-                let normalized = match normalize_custom_rule(field, raw) {
-                    Ok(value) => value,
-                    Err(key) => {
-                        self.toast_error(self.tr(key));
-                        return Task::none();
+                // A pasted batch is validated as a whole first, so one typo
+                // never leaves half of it applied.
+                let mut entries = Vec::new();
+                for item in split_rule_entries(&raw) {
+                    let field = target.field(looks_like_ip_rule(item));
+                    match normalize_custom_rule(field, item) {
+                        Ok(value) => entries.push((field, value)),
+                        Err(key) => {
+                            self.toast_error(format!("{} ({item})", self.tr(key)));
+                            return Task::none();
+                        }
                     }
-                };
-                let (val, list) = match field {
-                    state::RuleField::BypassDomains => (
-                        &mut self.bypass_domain_input,
-                        &mut self.gui_config.custom_bypass_domains,
-                    ),
-                    state::RuleField::ProxyDomains => (
-                        &mut self.proxy_domain_input,
-                        &mut self.gui_config.custom_proxy_domains,
-                    ),
-                    state::RuleField::BypassIps => (
-                        &mut self.bypass_ip_input,
-                        &mut self.gui_config.custom_bypass_ips,
-                    ),
-                    state::RuleField::ProxyIps => (
-                        &mut self.proxy_ip_input,
-                        &mut self.gui_config.custom_proxy_ips,
-                    ),
-                };
-                if !list
-                    .iter()
-                    .any(|item| item.eq_ignore_ascii_case(&normalized))
-                {
-                    list.push(normalized.clone());
-                    val.clear();
-                    self.config_dirty = true;
+                }
+                if entries.is_empty() {
+                    return Task::none();
+                }
+                let mut added = 0;
+                for (field, value) in entries {
+                    let list = self.rule_list_mut(field);
+                    if list.iter().any(|item| item.eq_ignore_ascii_case(&value)) {
+                        continue;
+                    }
+                    list.push(value.clone());
+                    added += 1;
                     self.push_log(format!(
                         "[GUI] Added custom rule to {}: {}",
                         field.as_str(),
-                        normalized
+                        value
                     ));
-                    return self.restart_core();
                 }
-                self.toast_info(self.tr("duplicate_rule"));
-                Task::none()
+                if added == 0 {
+                    self.toast_info(self.tr("duplicate_rule"));
+                    return Task::none();
+                }
+                match target {
+                    state::RuleTarget::Direct => self.direct_rule_input.clear(),
+                    state::RuleTarget::Proxy => self.proxy_rule_input.clear(),
+                }
+                self.config_dirty = true;
+                self.restart_core()
             }
             Message::RemoveRule { field, index } => {
-                let list = match field {
-                    state::RuleField::BypassDomains => &mut self.gui_config.custom_bypass_domains,
-                    state::RuleField::ProxyDomains => &mut self.gui_config.custom_proxy_domains,
-                    state::RuleField::BypassIps => &mut self.gui_config.custom_bypass_ips,
-                    state::RuleField::ProxyIps => &mut self.gui_config.custom_proxy_ips,
-                };
+                let list = self.rule_list_mut(field);
                 if index < list.len() {
                     let removed = list.remove(index);
                     self.config_dirty = true;
@@ -2747,10 +2742,8 @@ impl App {
         let url_input_ref = &self.url_input;
         let profile_error_ref = self.profile_error.as_deref();
         let confirm_delete_profile_id_ref = self.confirm_delete_profile_id.as_deref();
-        let bypass_domain_input_ref = &self.bypass_domain_input;
-        let proxy_domain_input_ref = &self.proxy_domain_input;
-        let bypass_ip_input_ref = &self.bypass_ip_input;
-        let proxy_ip_input_ref = &self.proxy_ip_input;
+        let direct_rule_input_ref = &self.direct_rule_input;
+        let proxy_rule_input_ref = &self.proxy_rule_input;
         let active_connections_ref = &self.active_connections;
         let connections_search_ref = &self.connections_search;
         let log_lines_ref = &self.log_lines;
@@ -2794,6 +2787,8 @@ impl App {
                     total_downloaded,
                     selected_node_for_dash,
                     active_connections_count,
+                    downloading,
+                    updating_profile_id_ref,
                     theme,
                 ),
                 Tab::Proxies => ui::proxies::render(
@@ -2823,10 +2818,8 @@ impl App {
                 ),
                 Tab::Rules => ui::rules::render(
                     gui_config_ref,
-                    bypass_domain_input_ref,
-                    proxy_domain_input_ref,
-                    bypass_ip_input_ref,
-                    proxy_ip_input_ref,
+                    direct_rule_input_ref,
+                    proxy_rule_input_ref,
                     theme,
                 ),
                 Tab::Connections => ui::connections::render(
@@ -3232,6 +3225,12 @@ struct ProfileFetchResult {
     expire_at: Option<i64>,
 }
 
+/// Subscription panels choose the response format by User-Agent. A plain
+/// "clash" UA gets classic Clash YAML, which drops VLESS, Hysteria2, TUIC and
+/// AnyTLS nodes; a Mihomo-style UA keeps them (plus the traffic header), and
+/// the result is converted to sing-box locally either way.
+const SUBSCRIPTION_USER_AGENT: &str = "clash.meta";
+
 /// Download or open a profile URL/path and write the profile file only.
 /// The GUI thread owns `gui_config` mutations (avoids load/save races).
 async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
@@ -3390,7 +3389,7 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
         .unwrap_or_else(|_| reqwest::Client::new());
     let res = client
         .get(url)
-        .header("User-Agent", "clash")
+        .header("User-Agent", SUBSCRIPTION_USER_AGENT)
         .send()
         .await
         .map_err(|e| format!("Download request failed: {}", e))?;
@@ -3518,6 +3517,28 @@ fn collect_due_subscription_ids(gui_config: &GuiConfig, hours: u32) -> Vec<Strin
         }
     }
     due
+}
+
+/// Splits a pasted batch of rules on commas, semicolons and whitespace,
+/// including the full-width punctuation a Chinese IME produces.
+fn split_rule_entries(value: &str) -> impl Iterator<Item = &str> {
+    value
+        .split(|c: char| matches!(c, ',' | ';' | '，' | '；' | '、') || c.is_whitespace())
+        .filter(|item| !item.is_empty())
+}
+
+/// True when an entry is shaped like an IP address or CIDR range. Digit-only
+/// and hex-colon strings count even when malformed, so "192.168.1" is reported
+/// as a bad IP instead of being filed as a domain.
+fn looks_like_ip_rule(value: &str) -> bool {
+    let value = value.trim();
+    let address = value.split_once('/').map_or(value, |(address, _)| address);
+    let ipv4ish = address.chars().all(|c| c.is_ascii_digit() || c == '.');
+    let ipv6ish = address.contains(':')
+        && address
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '.'));
+    !address.is_empty() && (ipv4ish || ipv6ish)
 }
 
 fn normalize_custom_rule(field: state::RuleField, value: &str) -> Result<String, &'static str> {
@@ -3887,6 +3908,41 @@ mod tests {
             Some("高级订阅".to_string())
         );
         assert_eq!(parse_profile_title_header("   "), None);
+    }
+
+    #[test]
+    fn rule_entries_split_and_classify_by_shape() {
+        let entries: Vec<_> =
+            split_rule_entries(" a.com, b.com；10.0.0.0/8  c.com，d.com\n").collect();
+        assert_eq!(entries, ["a.com", "b.com", "10.0.0.0/8", "c.com", "d.com"]);
+        for ip in [
+            "10.0.0.0/8",
+            "192.0.2.1",
+            "2001:db8::/32",
+            "::1",
+            "192.168.1",
+        ] {
+            assert!(looks_like_ip_rule(ip), "{ip} should be an IP rule");
+        }
+        for domain in [
+            "example.com",
+            "*.example.com",
+            "cafe.com",
+            "https://example.com",
+        ] {
+            assert!(
+                !looks_like_ip_rule(domain),
+                "{domain} should be a domain rule"
+            );
+        }
+        assert_eq!(
+            state::RuleTarget::Direct.field(true),
+            state::RuleField::BypassIps
+        );
+        assert_eq!(
+            state::RuleTarget::Proxy.field(false),
+            state::RuleField::ProxyDomains
+        );
     }
 
     #[test]

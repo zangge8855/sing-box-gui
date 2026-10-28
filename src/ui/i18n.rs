@@ -126,6 +126,30 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "core_unexpected_exit",
     "connection_close_failed",
     "connections_close_failed",
+    "dash_current_profile",
+    "import_formats_hint",
+    "rules_direct_title",
+    "rules_direct_desc",
+    "rules_proxy_title",
+    "rules_proxy_desc",
+    "placeholder_rule",
+    "rule_tag_domain",
+    "rule_tag_ip",
+    "settings_general",
+    "settings_proxy",
+    "settings_advanced",
+    "settings_core",
+    "help_mixed_port",
+    "help_api_port",
+    "help_dns_local",
+    "help_dns_remote",
+    "data_dir_label",
+    "help_data_dir",
+    "btn_open",
+    "core_status_installed",
+    "core_status_missing",
+    "app_version_current",
+    "help_config_preview",
 ];
 
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
@@ -157,7 +181,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_autostart" => "Launch this app when you sign in to your desktop.",
             "help_close_core" => "Stop sing-box process when the GUI exits.",
             "help_auto_start_core" => "Start core automatically if a profile is active.",
-            "help_auto_sys_proxy" => "Turn on system proxy when the core starts.",
+            "help_auto_sys_proxy" => {
+                "Points the system proxy at the local proxy port once the core is up."
+            }
             "help_tcp_fast_open" => "Enable TCP Fast Open on supported outbounds.",
             "help_tcp_multipath" => "Enable Multipath TCP when the OS supports it.",
             "help_fake_ip" => "Resolve remote domains to fake IPs for better routing.",
@@ -176,7 +202,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_import_file" => "Import File",
             "expire_at_label" => "Expires",
             "empty_profiles_hint" => {
-                "Paste a subscription URL above, or import from clipboard / local file."
+                "Paste a link above, or import from the clipboard or a local file."
             }
             "empty_dashboard_title" => "No active profile yet",
             "empty_dashboard_desc" => "Import a subscription to get started.",
@@ -249,7 +275,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "port_invalid_error" => "Ports must be valid numbers between 1 and 65535.",
             "appearance_settings" => "Appearance",
             "port_reserved_error" => "Ports below 1024 are reserved; choose higher ports.",
-            "port_conflict_error" => "Mixed proxy and Clash API ports must be different.",
+            "port_conflict_error" => "Proxy and controller ports must be different.",
             "settings_saved_toast" => "Settings saved and applied.",
             "profile_selected_toast" => "Active profile updated.",
             "settings_pending" => "Unsaved changes — Save & Apply to use them, or Discard",
@@ -315,14 +341,14 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
 
             // Profiles
             "profile_manager" => "Profile Manager",
-            "btn_download" => "Download",
-            "btn_downloading" => "Downloading...",
-            "sub_url_placeholder" => "Enter clash YAML or sharing subscription URL",
+            "btn_download" => "Import",
+            "btn_downloading" => "Importing…",
+            "sub_url_placeholder" => "Paste a subscription URL, share link or config",
             "btn_select" => "Use",
             "btn_delete" => "Delete",
             "active_profile" => "In use",
-            "import_sub" => "Import New Subscription",
-            "no_profiles" => "No profiles imported yet. Enter a subscription URL above to import.",
+            "import_sub" => "Add Subscription",
+            "no_profiles" => "No subscriptions yet",
             "updated_at_label" => "Updated",
 
             // Rules
@@ -343,8 +369,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             // Settings
             "ports_config" => "Ports Configuration",
             "mixed_port" => "Mixed Port",
-            "api_port" => "Clash API Port",
-            "dns_servers" => "DNS Servers",
+            "api_port" => "Controller Port",
+            "dns_servers" => "DNS",
             "dns_local" => "DNS Local (Direct)",
             "dns_remote" => "DNS Remote (Proxy)",
             "bypass_rules" => "Routing & Rules",
@@ -369,8 +395,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "routing_rules_desc" => "Rules (Bypass LAN/CN)",
             "routing_global_desc" => "Global (All Proxy)",
             "routing_direct_desc" => "Direct (Bypass All)",
-            "mixed_port_label" => "Mixed Port (HTTP+SOCKS)",
-            "api_port_label" => "Clash API Port",
+            "mixed_port_label" => "Proxy Port",
+            "api_port_label" => "Controller Port",
             "tun_mode_label" => "TUN Mode",
             "autostart_label" => "Start on Boot",
             "btn_save_apply" => "Save & Apply",
@@ -426,7 +452,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "latency_test_url_label" => "Latency test URL",
             "latency_test_settings" => "Connection Tests",
             "latency_test_timeout_label" => "Latency timeout (ms)",
-            "help_latency_test" => "Used by multi-node delay tests via Clash API.",
+            "help_latency_test" => {
+                "Requested when testing node latency; a lightweight 204 page works best."
+            }
             "col_process" => "Process",
             "process_unknown" => "—",
             "empty_connections_hint" => "Start the core to see live connections.",
@@ -486,6 +514,36 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "sort_download" => "Download",
             "sort_upload" => "Upload",
 
+            // Layout redesign
+            "dash_current_profile" => "Subscription",
+            "import_formats_hint" => {
+                "Accepts subscription URLs, share links (vless://, hy2://, …), sing-box JSON, Clash/Mihomo YAML and Base64 — all converted to sing-box."
+            }
+            "rules_direct_title" => "Direct",
+            "rules_direct_desc" => "Matching domains (and subdomains) and IPs skip the proxy.",
+            "rules_proxy_title" => "Proxy",
+            "rules_proxy_desc" => "Matching domains (and subdomains) and IPs always use the proxy.",
+            "placeholder_rule" => "e.g. example.com, 10.0.0.0/8",
+            "rule_tag_domain" => "Domain",
+            "rule_tag_ip" => "IP",
+            "settings_general" => "General",
+            "settings_proxy" => "Proxy",
+            "settings_advanced" => "Advanced",
+            "settings_core" => "Core",
+            "help_mixed_port" => "Local port shared by HTTP and SOCKS5.",
+            "help_api_port" => {
+                "Local controller used for node switching, latency tests and traffic stats."
+            }
+            "help_dns_local" => "Resolves China and direct domains.",
+            "help_dns_remote" => "Resolves everything else through the proxy.",
+            "data_dir_label" => "Data folder",
+            "help_data_dir" => "Profiles, settings, logs and the core live here.",
+            "btn_open" => "Open",
+            "core_status_installed" => "Installed",
+            "core_status_missing" => "Not installed",
+            "app_version_current" => "Current version {}",
+            "help_config_preview" => "The full configuration handed to sing-box.",
+
             _ => key,
         },
         Language::Zh => match key {
@@ -513,7 +571,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_autostart" => "登录桌面时自动启动本程序。",
             "help_close_core" => "退出图形界面时关闭 sing-box 进程。",
             "help_auto_start_core" => "若已有激活订阅，启动客户端时自动运行内核。",
-            "help_auto_sys_proxy" => "内核启动时自动开启系统代理。",
+            "help_auto_sys_proxy" => "内核就绪后，将系统代理指向本机代理端口。",
             "help_tcp_fast_open" => "在支持的出站上启用 TCP Fast Open。",
             "help_tcp_multipath" => "在系统支持时启用多径 TCP。",
             "help_fake_ip" => "将远程域名解析为虚假 IP，便于分流。",
@@ -531,7 +589,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_import_clipboard" => "从剪贴板导入",
             "btn_import_file" => "导入本地文件",
             "expire_at_label" => "到期",
-            "empty_profiles_hint" => "在上方粘贴订阅链接，或从剪贴板 / 本地文件导入。",
+            "empty_profiles_hint" => "在上方粘贴链接，或从剪贴板 / 本地文件导入。",
             "empty_dashboard_title" => "尚未激活订阅",
             "empty_dashboard_desc" => "先导入订阅配置，即可开始使用。",
             "btn_goto_profiles" => "前往订阅管理",
@@ -596,7 +654,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "port_invalid_error" => "端口必须是 1 到 65535 之间的有效数字。",
             "appearance_settings" => "外观与语言",
             "port_reserved_error" => "1024 以下为系统保留端口，请选择更高的端口。",
-            "port_conflict_error" => "混合代理端口和 Clash API 端口不能相同。",
+            "port_conflict_error" => "代理端口与控制端口不能相同。",
             "settings_saved_toast" => "设置已保存并应用。",
             "profile_selected_toast" => "已切换活动订阅。",
             "settings_pending" => "有未保存的更改：点击“保存并应用”生效，或“放弃更改”还原",
@@ -656,14 +714,14 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
 
             // Profiles
             "profile_manager" => "订阅列表",
-            "btn_download" => "下载订阅",
-            "btn_downloading" => "正在下载...",
-            "sub_url_placeholder" => "输入 Clash YAML 或节点分享链接",
+            "btn_download" => "导入",
+            "btn_downloading" => "正在导入…",
+            "sub_url_placeholder" => "粘贴订阅链接、节点分享链接或配置内容",
             "btn_select" => "使用",
             "btn_delete" => "删除",
             "active_profile" => "使用中",
-            "import_sub" => "导入新订阅",
-            "no_profiles" => "尚未导入订阅，请在上方输入订阅链接进行下载导入。",
+            "import_sub" => "添加订阅",
+            "no_profiles" => "还没有订阅",
             "updated_at_label" => "更新于",
 
             // Rules
@@ -684,8 +742,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             // Settings
             "ports_config" => "网络端口配置",
             "mixed_port" => "混合代理端口",
-            "api_port" => "Clash API 端口",
-            "dns_servers" => "DNS 服务器设置",
+            "api_port" => "控制端口",
+            "dns_servers" => "DNS",
             "dns_local" => "本地 DNS (直连)",
             "dns_remote" => "远程 DNS (代理)",
             "bypass_rules" => "分流规则设定",
@@ -710,8 +768,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "routing_rules_desc" => "规则分流 (绕过大陆/局域网)",
             "routing_global_desc" => "全局代理 (所有流量走代理)",
             "routing_direct_desc" => "直接连接 (所有流量直连)",
-            "mixed_port_label" => "混合代理端口 (HTTP+SOCKS)",
-            "api_port_label" => "Clash API 端口",
+            "mixed_port_label" => "代理端口",
+            "api_port_label" => "控制端口",
             "tun_mode_label" => "TUN 虚拟网卡模式",
             "autostart_label" => "开机自启",
             "btn_save_apply" => "保存并应用",
@@ -765,7 +823,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "latency_test_url_label" => "测速 URL",
             "latency_test_settings" => "连接测试",
             "latency_test_timeout_label" => "测速超时 (毫秒)",
-            "help_latency_test" => "多节点延迟测试经 Clash API 使用此地址。",
+            "help_latency_test" => "节点测速时请求的地址，返回 204 的轻量页面最佳。",
             "col_process" => "进程",
             "process_unknown" => "—",
             "empty_connections_hint" => "启动内核后可查看活动连接。",
@@ -821,6 +879,34 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "sort_rule" => "分流规则",
             "sort_download" => "下载流量",
             "sort_upload" => "上传流量",
+
+            // Layout redesign
+            "dash_current_profile" => "当前订阅",
+            "import_formats_hint" => {
+                "支持订阅链接、vless:// hy2:// 等分享链接、sing-box JSON、Clash/Mihomo YAML 与 Base64，统一转换为 sing-box 配置。"
+            }
+            "rules_direct_title" => "直连",
+            "rules_direct_desc" => "匹配的域名（含子域名）与 IP 不经过代理。",
+            "rules_proxy_title" => "代理",
+            "rules_proxy_desc" => "匹配的域名（含子域名）与 IP 始终经过代理。",
+            "placeholder_rule" => "如 example.com, 10.0.0.0/8，可一次添加多条",
+            "rule_tag_domain" => "域名",
+            "rule_tag_ip" => "IP",
+            "settings_general" => "通用",
+            "settings_proxy" => "代理",
+            "settings_advanced" => "高级",
+            "settings_core" => "内核",
+            "help_mixed_port" => "本机 HTTP 与 SOCKS5 共用的监听端口。",
+            "help_api_port" => "本机控制接口，用于切换节点、测速与流量统计。",
+            "help_dns_local" => "解析国内及直连域名。",
+            "help_dns_remote" => "经代理解析其他域名。",
+            "data_dir_label" => "数据目录",
+            "help_data_dir" => "订阅、设置、日志与内核都保存在这里。",
+            "btn_open" => "打开",
+            "core_status_installed" => "已安装",
+            "core_status_missing" => "未安装",
+            "app_version_current" => "当前版本 {}",
+            "help_config_preview" => "即将交给 sing-box 的完整配置。",
 
             _ => key,
         },

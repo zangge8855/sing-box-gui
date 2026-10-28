@@ -30,9 +30,9 @@ pub const PAGE_NARROW_W: f32 = 800.0;
 pub const CONNECTIONS_TABLE_W: f32 = 850.0;
 /// Connections: full 7-column table above this.
 pub const CONNECTIONS_WIDE_W: f32 = 1100.0;
-/// Settings 2-column layout above this; 3-col above SETTINGS_3COL_W.
-pub const SETTINGS_2COL_W: f32 = 800.0;
-pub const SETTINGS_3COL_W: f32 = 1150.0;
+/// Settings splits into two columns above this, once each row has room for
+/// its label beside an inline control.
+pub const SETTINGS_2COL_W: f32 = 1100.0;
 /// Dashboard stacks status cards below this.
 pub const DASHBOARD_COMPACT_W: f32 = 780.0;
 /// Content max width for page shells.
@@ -58,12 +58,12 @@ mod tests {
     fn connection_tiers_are_ordered() {
         assert!(CONNECTIONS_TABLE_W < CONNECTIONS_WIDE_W);
         assert!(PAGE_COMPACT_W <= PAGE_NARROW_W);
-        assert!(SETTINGS_2COL_W < SETTINGS_3COL_W);
+        assert!(PAGE_NARROW_W < SETTINGS_2COL_W);
     }
 
     #[test]
-    fn page_max_width_above_settings_3col() {
-        assert!(PAGE_MAX_WIDTH >= SETTINGS_3COL_W);
+    fn page_max_width_above_settings_2col() {
+        assert!(PAGE_MAX_WIDTH >= SETTINGS_2COL_W);
     }
 
     #[test]
@@ -383,6 +383,41 @@ pub fn loading_row<'a>(label: &'a str, theme: &iced::Theme) -> Element<'a, Messa
     .spacing(SP_12)
     .align_y(Alignment::Center)
     .into()
+}
+
+/// Thin subscription usage meter: jade until 75%, amber to 90%, then red.
+pub fn usage_bar<'a>(ratio: f32, theme: &iced::Theme) -> Element<'a, Message> {
+    let fill = if ratio >= 0.9 {
+        ui_theme::DANGER
+    } else if ratio >= 0.75 {
+        ui_theme::WARNING
+    } else {
+        ui_theme::accent(theme)
+    };
+    let segment = |portion: f32, color: Option<iced::Color>| {
+        container(Space::new())
+            .width(Length::FillPortion((portion * 1000.0).max(1.0) as u16))
+            .height(4.0)
+            .style(move |_| container::Style {
+                background: color.map(iced::Background::Color),
+                border: iced::Border {
+                    radius: ui_theme::RADIUS_MICRO.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+    };
+    container(row![segment(ratio, Some(fill)), segment(1.0 - ratio, None)].width(Length::Fill))
+        .width(Length::Fill)
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(ui_theme::border_color(t))),
+            border: iced::Border {
+                radius: ui_theme::RADIUS_MICRO.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 /// Default Material Icons glyph size used across shell + pages.

@@ -1,7 +1,7 @@
 use crate::message::Message;
-use crate::state::{GuiConfig, Language};
+use crate::state::GuiConfig;
 use crate::ui::theme;
-use crate::ui::util::{format_size, traffic_usage_ratio, truncate_chars};
+use crate::ui::util::{format_size, labelled_size, traffic_usage_ratio, truncate_chars};
 use crate::ui::{PAGE_COMPACT_W, page_header};
 use iced::widget::{Column, Space, button, column, container, responsive, row, text, text_input};
 use iced::{Alignment, Element, Length};
@@ -36,7 +36,8 @@ pub fn render<'a>(
         let text_primary = theme::text_primary(theme);
         let text_muted = theme::text_muted(theme);
 
-        // Add subscription input form
+        // Import: one input that takes any link or document, with the other
+        // sources tucked beside the title instead of a half-empty second row.
         let input = text_input(tr(lang, "sub_url_placeholder"), url_input)
             .on_input(Message::SubscriptionInputChanged)
             .on_submit(Message::DownloadSubscription)
@@ -45,26 +46,27 @@ pub fn render<'a>(
             .size(theme::TYPE_BODY)
             .style(theme::input_field);
 
-        let download_btn = if downloading {
-            button(
-                text(tr(lang, "btn_downloading"))
-                    .size(theme::TYPE_BTN_LG)
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center),
-            )
-            .padding(theme::BTN_PAD_LG)
-            .style(theme::button_secondary)
+        let mut import_btn = button(
+            text(tr(
+                lang,
+                if downloading {
+                    "btn_downloading"
+                } else {
+                    "btn_download"
+                },
+            ))
+            .size(theme::TYPE_BTN_LG)
+            .align_x(Alignment::Center),
+        )
+        .padding(theme::BTN_PAD_LG)
+        .style(if downloading {
+            theme::button_secondary
         } else {
-            button(
-                text(tr(lang, "btn_download"))
-                    .size(theme::TYPE_BTN_LG)
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center),
-            )
-            .padding(theme::BTN_PAD_LG)
-            .style(theme::button_primary)
-            .on_press(Message::DownloadSubscription)
-        };
+            theme::button_primary
+        });
+        if !downloading {
+            import_btn = import_btn.on_press(Message::DownloadSubscription);
+        }
 
         let open_folder_btn = button(
             text(tr(lang, "btn_open_folder"))
@@ -75,66 +77,32 @@ pub fn render<'a>(
         .style(theme::button_secondary)
         .on_press(Message::OpenProfilesFolder);
 
-        let clipboard_btn = button(
-            text(tr(lang, "btn_import_clipboard"))
-                .size(theme::TYPE_BTN_LG)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        )
-        .padding(theme::BTN_PAD_LG)
-        .style(theme::button_secondary)
-        .on_press(Message::ImportFromClipboard);
-
-        let file_btn = button(
-            text(tr(lang, "btn_import_file"))
-                .size(theme::TYPE_BTN_LG)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        )
-        .padding(theme::BTN_PAD_LG)
-        .style(theme::button_secondary)
-        .on_press(Message::ImportLocalFile);
-
-        let form_layout: Element<'a, Message> = if is_compact {
-            column![
-                input,
-                download_btn.width(Length::Fill),
-                row![
-                    clipboard_btn.width(Length::Fill),
-                    file_btn.width(Length::Fill)
-                ]
-                .spacing(crate::ui::SP_12)
-                .width(Length::Fill)
-            ]
-            .spacing(crate::ui::SP_12)
-            .width(Length::Fill)
-            .into()
-        } else {
-            column![
-                row![input, download_btn.width(Length::Shrink)]
-                    .spacing(crate::ui::SP_12)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
-                row![
-                    clipboard_btn.width(Length::Shrink),
-                    file_btn.width(Length::Shrink),
-                    iced::widget::Space::new().width(Length::Fill),
-                ]
-                .spacing(crate::ui::SP_12)
-                .align_y(Alignment::Center)
-            ]
-            .spacing(crate::ui::SP_12)
-            .width(Length::Fill)
-            .into()
+        let source_btn = |key: &'static str, msg: Message| {
+            button(text(tr(lang, key)).size(theme::TYPE_BTN_SM))
+                .padding(theme::BTN_PAD_SM)
+                .style(theme::button_secondary)
+                .on_press(msg)
         };
 
         let add_form = container(
             column![
-                text(tr(lang, "import_sub"))
-                    .color(text_primary)
-                    .size(theme::TYPE_HEADING)
-                    .font(theme::ui_font(iced::font::Weight::Semibold)),
-                form_layout
+                row![
+                    text(tr(lang, "import_sub"))
+                        .color(text_primary)
+                        .size(theme::TYPE_HEADING)
+                        .font(theme::ui_font(iced::font::Weight::Semibold)),
+                    Space::new().width(Length::Fill),
+                    source_btn("btn_import_clipboard", Message::ImportFromClipboard),
+                    source_btn("btn_import_file", Message::ImportLocalFile),
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
+                row![input, import_btn]
+                    .spacing(crate::ui::SP_12)
+                    .align_y(Alignment::Center),
+                text(tr(lang, "import_formats_hint"))
+                    .size(theme::TYPE_CAPTION)
+                    .color(theme::text_tertiary(theme)),
             ]
             .spacing(crate::ui::SP_12),
         )
@@ -348,23 +316,7 @@ pub fn render<'a>(
                                 let used = u.saturating_add(d);
                                 let caption =
                                     |s: String| text(s).color(text_muted).size(theme::TYPE_CAPTION);
-                                // Word order differs: "剩余 1 GB" vs "1 GB left".
-                                let labelled = |key: &'static str, bytes: u64| match lang {
-                                    Language::Zh => {
-                                        format!("{} {}", tr(lang, key), format_size(bytes))
-                                    }
-                                    Language::En => {
-                                        format!("{} {}", format_size(bytes), tr(lang, key))
-                                    }
-                                };
                                 if let Some(ratio) = traffic_usage_ratio(u, d, total) {
-                                    let bar_color = if ratio >= 0.9 {
-                                        theme::DANGER
-                                    } else if ratio >= 0.75 {
-                                        theme::WARNING
-                                    } else {
-                                        theme::accent(theme)
-                                    };
                                     let labels = row![
                                         caption(format!(
                                             "{} / {}",
@@ -372,55 +324,21 @@ pub fn render<'a>(
                                             format_size(total)
                                         )),
                                         Space::new().width(Length::Fill),
-                                        caption(labelled(
+                                        caption(labelled_size(
+                                            lang,
                                             "traffic_left",
                                             total.saturating_sub(used)
                                         )),
                                     ]
                                     .align_y(Alignment::Center);
-                                    // Simple fill bar without relying on ProgressBar private height API
-                                    let bar = container(
-                                        row![
-                                            container(Space::new())
-                                                .width(Length::FillPortion(
-                                                    (ratio * 1000.0).max(1.0) as u16
-                                                ))
-                                                .height(4.0)
-                                                .style(move |_t| container::Style {
-                                                    background: Some(iced::Background::Color(
-                                                        bar_color
-                                                    )),
-                                                    border: iced::Border {
-                                                        radius: theme::RADIUS_MICRO.into(),
-                                                        ..Default::default()
-                                                    },
-                                                    ..Default::default()
-                                                }),
-                                            container(Space::new())
-                                                .width(Length::FillPortion(
-                                                    ((1.0 - ratio) * 1000.0).max(1.0) as u16
-                                                ))
-                                                .height(4.0),
-                                        ]
-                                        .width(Length::Fill),
+                                    Some(
+                                        column![labels, crate::ui::usage_bar(ratio, theme)]
+                                            .spacing(6)
+                                            .width(Length::Fill)
+                                            .into(),
                                     )
-                                    .width(Length::Fill)
-                                    .padding(0)
-                                    .style(|t| {
-                                        container::Style {
-                                            background: Some(iced::Background::Color(
-                                                theme::border_color(t),
-                                            )),
-                                            border: iced::Border {
-                                                radius: theme::RADIUS_MICRO.into(),
-                                                ..Default::default()
-                                            },
-                                            ..Default::default()
-                                        }
-                                    });
-                                    Some(column![labels, bar].spacing(6).width(Length::Fill).into())
                                 } else {
-                                    Some(caption(labelled("traffic_used", used)).into())
+                                    Some(caption(labelled_size(lang, "traffic_used", used)).into())
                                 }
                             }
                             _ => None,
@@ -590,7 +508,7 @@ pub fn render<'a>(
             lang,
             Some(open_folder_btn.into()),
             theme,
-            is_compact,
+            false,
         );
 
         // Scroll the import form with the records. A fixed form plus a nested

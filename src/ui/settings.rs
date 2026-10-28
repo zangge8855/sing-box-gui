@@ -2,12 +2,37 @@ use crate::message::Message;
 use crate::state::{
     AppTheme, CoreInstallState, GuiConfig, Language, RuntimeSettingsDraft, UpdateStatus,
 };
+use crate::ui::i18n::tr;
 use crate::ui::page_header;
 use crate::ui::theme;
 use iced::widget::{
-    button, column, container, pick_list, responsive, row, scrollable, text, text_input, toggler,
+    Column, Space, button, column, container, pick_list, responsive, row, scrollable, text,
+    text_input, toggler,
 };
 use iced::{Alignment, Element, Length};
+
+/// Inline pickers and text fields share one width so their edges line up
+/// down a card; ports and timeouts take the narrow one.
+const CONTROL_W: f32 = 200.0;
+const NARROW_CONTROL_W: f32 = 110.0;
+
+fn field<'a>(
+    placeholder: &'a str,
+    value: &'a str,
+    on_input: impl Fn(String) -> Message + 'a,
+    invalid: bool,
+) -> text_input::TextInput<'a, Message> {
+    text_input(placeholder, value)
+        .on_input(on_input)
+        .on_submit(Message::SaveSettings)
+        .size(theme::TYPE_BODY)
+        .padding([8, 10])
+        .style(if invalid {
+            theme::input_field_error
+        } else {
+            theme::input_field
+        })
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn render<'a>(
@@ -23,325 +48,129 @@ pub fn render<'a>(
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
-    use crate::ui::i18n::tr;
-
     let theme_cloned = theme.clone();
 
     let main_content = responsive(move |size| {
-        let is_compact = size.width < crate::ui::PAGE_NARROW_W;
         let theme = &theme_cloned;
+        let text_primary = theme::text_primary(theme);
+        let text_muted = theme::text_muted(theme);
+        let danger = theme::danger_text(theme);
 
-        let make_toggle_row = move |label_key: &'static str, is_on: bool, msg: Message| {
-            let label_el: Element<'_, Message> = text(tr(lang, label_key))
-                .color(theme::text_primary(theme))
-                .size(theme::TYPE_SECTION)
-                .width(Length::Fill)
-                .into();
-
-            let switch_el: Element<'_, Message> = toggler(is_on)
+        // ── Building blocks: a settings row is a label (with optional help
+        // and error lines) on the left and its control on the right ────────
+        let label_block =
+            |key: &'static str, help: Option<&'static str>, error: Option<&'static str>| {
+                let mut col = column![
+                    text(tr(lang, key))
+                        .size(theme::TYPE_BODY)
+                        .color(text_primary)
+                ]
+                .spacing(3)
+                .width(Length::Fill);
+                if let Some(help) = help {
+                    col = col.push(
+                        text(tr(lang, help))
+                            .size(theme::TYPE_CAPTION)
+                            .color(text_muted),
+                    );
+                }
+                if let Some(error) = error {
+                    col = col.push(
+                        text(tr(lang, error))
+                            .size(theme::TYPE_CAPTION)
+                            .color(danger),
+                    );
+                }
+                col
+            };
+        let inline = |key: &'static str,
+                      help: Option<&'static str>,
+                      error: Option<&'static str>,
+                      control: Element<'a, Message>|
+         -> Element<'a, Message> {
+            row![label_block(key, help, error), control]
+                .spacing(crate::ui::SP_16)
+                .align_y(Alignment::Center)
+                .into()
+        };
+        // Long values (URLs, paths) get the full card width under the label.
+        let stacked = |key: &'static str,
+                       help: Option<&'static str>,
+                       error: Option<&'static str>,
+                       control: Element<'a, Message>|
+         -> Element<'a, Message> {
+            let mut col = label_block(key, help, None).push(control).spacing(6);
+            if let Some(error) = error {
+                col = col.push(
+                    text(tr(lang, error))
+                        .size(theme::TYPE_CAPTION)
+                        .color(danger),
+                );
+            }
+            col.into()
+        };
+        let switch = |on: bool, msg: Message| -> Element<'a, Message> {
+            toggler(on)
                 .on_toggle(move |_| msg.clone())
                 .size(20)
                 .style(theme::toggler_style)
-                .into();
-
-            let r: Element<'_, Message> = row![label_el, switch_el]
-                .align_y(Alignment::Center)
-                .spacing(20)
-                .width(Length::Fill)
-                .into();
-            r
+                .into()
         };
-
-        let text_primary = theme::text_primary(theme);
-        let text_muted = theme::text_muted(theme);
-        let has_pending_changes = draft.has_pending_changes(gui_config);
-        let pending_banner: Element<'_, Message> = if has_pending_changes {
-            container(
-                text(tr(lang, "settings_pending"))
-                    .size(theme::TYPE_CAPTION)
-                    .color(theme::warning_text(theme)),
-            )
-            .padding([8, 10])
-            .width(Length::Fill)
-            .style(|t| theme::tinted_banner(t, theme::WARNING))
-            .into()
-        } else {
-            row![].into()
-        };
-
-        // 1. System Integration Card (Left Column)
-        let mut sys_items: Vec<Element<'_, Message>> = vec![
-            text(tr(lang, "sys_integration"))
-                .color(text_primary)
-                .size(theme::TYPE_HEADING)
-                .font(theme::ui_font(iced::font::Weight::Semibold))
-                .into(),
-        ];
-        if draft.tun_mode {
-            sys_items.push(
-                container(
-                    text(tr(lang, "tun_admin_banner"))
-                        .size(theme::TYPE_CAPTION)
-                        .color(theme::warning_text(theme)),
-                )
-                .padding(10)
-                .width(Length::Fill)
-                .style(|t| theme::tinted_banner(t, theme::WARNING))
-                .into(),
-            );
-        }
-        for (key, on, msg, help) in [
-            (
-                "tun_mode_label",
-                draft.tun_mode,
-                Message::ToggleTun,
-                "help_tun_mode",
-            ),
-            (
-                "autostart_label",
-                draft.start_on_boot,
-                Message::ToggleAutostart,
-                "help_autostart",
-            ),
-            (
-                "close_core_on_exit_label",
-                draft.close_core_on_exit,
-                Message::ToggleCloseCoreOnExit,
-                "help_close_core",
-            ),
-            (
-                "auto_start_core_label",
-                draft.auto_start_core,
-                Message::ToggleAutoStartCore,
-                "help_auto_start_core",
-            ),
-            (
-                "auto_sys_proxy_label",
-                draft.auto_sys_proxy,
-                Message::ToggleAutoSysProxy,
-                "help_auto_sys_proxy",
-            ),
-            (
-                "tcp_fast_open_label",
-                draft.tcp_fast_open,
-                Message::ToggleTcpFastOpen,
-                "help_tcp_fast_open",
-            ),
-            (
-                "tcp_multipath_label",
-                draft.tcp_multipath,
-                Message::ToggleTcpMultipath,
-                "help_tcp_multipath",
-            ),
-            (
-                "disable_proxy_on_stop_label",
-                draft.disable_proxy_on_core_stop,
-                Message::ToggleDisableProxyOnCoreStop,
-                "help_disable_proxy_on_stop",
-            ),
-        ] {
-            let mut item_col = column![
-                make_toggle_row(key, on, msg),
-                text(tr(lang, help))
-                    .color(text_muted)
-                    .size(theme::TYPE_CAPTION)
-            ]
-            .spacing(4);
-            // Surface the autostart apply failure inline like other field
-            // errors — the toast alone disappears after a few seconds.
-            if key == "autostart_label"
-                && let Some(error_key) = errors.get("autostart")
-            {
-                item_col = item_col.push(
-                    text(tr(lang, error_key))
-                        .size(theme::TYPE_CAPTION)
-                        .color(theme::danger_text(theme)),
-                );
+        let small_btn = |key: &'static str, msg: Option<Message>, primary: bool| {
+            let mut b = button(text(tr(lang, key)).size(theme::TYPE_BTN_SM))
+                .padding(theme::BTN_PAD_SM)
+                .style(if primary {
+                    theme::button_primary
+                } else {
+                    theme::button_secondary
+                });
+            if let Some(msg) = msg {
+                b = b.on_press(msg);
             }
-            sys_items.push(item_col.into());
-        }
-        let mut sys_col = column![].spacing(12);
-        for item in sys_items {
-            sys_col = sys_col.push(item);
-        }
-        let settings_card = container(sys_col)
-            .padding(theme::CARD_PAD)
-            .width(Length::Fill)
-            .style(theme::card_bg);
-
-        // 2. Network & DNS Settings Card (Middle Column)
-        let mixed_port_result = crate::parse_runtime_port(&draft.mixed_port);
-        let api_port_result = crate::parse_runtime_port(&draft.api_port);
-        let port_conflict = matches!(
-            (&mixed_port_result, &api_port_result),
-            (Ok(mixed), Ok(api)) if mixed == api
-        );
-        let mixed_port_error = if port_conflict {
-            Some("port_conflict_error")
-        } else {
-            mixed_port_result.as_ref().err().copied()
+            b
         };
-        let api_port_error = if port_conflict {
-            Some("port_conflict_error")
-        } else {
-            api_port_result.as_ref().err().copied()
+        let section = |title_key: &'static str, rows: Vec<Element<'a, Message>>| {
+            let mut col = Column::new().width(Length::Fill).push(
+                container(
+                    text(tr(lang, title_key))
+                        .size(theme::TYPE_HEADING)
+                        .font(theme::ui_font(iced::font::Weight::Semibold))
+                        .color(text_primary),
+                )
+                .padding(iced::Padding {
+                    bottom: 4.0,
+                    ..Default::default()
+                }),
+            );
+            for (i, row_el) in rows.into_iter().enumerate() {
+                if i > 0 {
+                    col = col.push(
+                        container(Space::new())
+                            .width(Length::Fill)
+                            .height(1)
+                            .style(theme::hairline),
+                    );
+                }
+                col = col.push(container(row_el).padding([12, 0]).width(Length::Fill));
+            }
+            container(col)
+                .padding([16.0, theme::CARD_PAD])
+                .width(Length::Fill)
+                .style(theme::card_bg)
         };
-
-        let mixed_port_input = text_input("2080", &draft.mixed_port)
-            .on_input(Message::MixedPortChanged)
-            .on_submit(Message::SaveSettings)
-            .size(theme::TYPE_BODY)
-            .padding(10)
-            .style(if mixed_port_error.is_none() {
-                theme::input_field
-            } else {
-                theme::input_field_error
-            });
-
-        let api_port_input = text_input("9090", &draft.api_port)
-            .on_input(Message::ApiPortChanged)
-            .on_submit(Message::SaveSettings)
-            .size(theme::TYPE_BODY)
-            .padding(10)
-            .style(if api_port_error.is_none() {
-                theme::input_field
-            } else {
-                theme::input_field_error
-            });
-
-        let mut mixed_col = column![
-            text(tr(lang, "mixed_port_label"))
-                .color(text_muted)
-                .size(theme::TYPE_BTN_SM),
-            mixed_port_input.width(Length::Fill)
-        ]
-        .spacing(crate::ui::SP_8)
-        .width(Length::FillPortion(1));
-
-        if let Some(key) = mixed_port_error {
-            mixed_col = mixed_col.push(
-                text(tr(lang, key))
-                    .size(theme::TYPE_CAPTION)
-                    .color(theme::danger_text(theme)),
-            );
+        // A macro, not a closure: each picker has its own option type.
+        macro_rules! picker_style {
+            ($picker:expr) => {
+                $picker
+                    .width(Length::Fixed(CONTROL_W))
+                    .padding([7, 10])
+                    .text_size(theme::TYPE_BODY)
+                    .style(theme::pick_list)
+                    .menu_style(theme::pick_list_menu)
+            };
         }
 
-        let mut api_col = column![
-            text(tr(lang, "api_port_label"))
-                .color(text_muted)
-                .size(theme::TYPE_BTN_SM),
-            api_port_input.width(Length::Fill)
-        ]
-        .spacing(crate::ui::SP_8)
-        .width(Length::FillPortion(1));
-
-        if let Some(key) = api_port_error {
-            api_col = api_col.push(
-                text(tr(lang, key))
-                    .size(theme::TYPE_CAPTION)
-                    .color(theme::danger_text(theme)),
-            );
-        }
-
-        let ports_row = row![mixed_col, api_col]
-            .spacing(theme::GRID_GAP)
-            .width(Length::Fill);
-
-        let dns_local_error = (!crate::is_valid_dns_server_address(draft.dns_server_local.trim()))
-            .then_some("invalid_dns_server");
-        let dns_remote_error =
-            (!crate::is_valid_dns_server_address(draft.dns_server_remote.trim()))
-                .then_some("invalid_dns_server");
-
-        let dns_local_input = text_input("223.5.5.5", &draft.dns_server_local)
-            .on_input(Message::DnsLocalChanged)
-            .on_submit(Message::SaveSettings)
-            .size(theme::TYPE_BODY)
-            .padding(10)
-            .style(if dns_local_error.is_some() {
-                theme::input_field_error
-            } else {
-                theme::input_field
-            });
-
-        let dns_remote_input = text_input("8.8.8.8", &draft.dns_server_remote)
-            .on_input(Message::DnsRemoteChanged)
-            .on_submit(Message::SaveSettings)
-            .size(theme::TYPE_BODY)
-            .padding(10)
-            .style(if dns_remote_error.is_some() {
-                theme::input_field_error
-            } else {
-                theme::input_field
-            });
-
-        let mut dns_local_col = column![
-            text(tr(lang, "dns_local"))
-                .color(text_muted)
-                .size(theme::TYPE_BTN_SM),
-            dns_local_input.width(Length::Fill)
-        ]
-        .spacing(crate::ui::SP_8)
-        .width(Length::FillPortion(1));
-        if let Some(key) = dns_local_error {
-            dns_local_col = dns_local_col.push(
-                text(tr(lang, key))
-                    .size(theme::TYPE_CAPTION)
-                    .color(theme::danger_text(theme)),
-            );
-        }
-
-        let mut dns_remote_col = column![
-            text(tr(lang, "dns_remote"))
-                .color(text_muted)
-                .size(theme::TYPE_BTN_SM),
-            dns_remote_input.width(Length::Fill)
-        ]
-        .spacing(crate::ui::SP_8)
-        .width(Length::FillPortion(1));
-        if let Some(key) = dns_remote_error {
-            dns_remote_col = dns_remote_col.push(
-                text(tr(lang, key))
-                    .size(theme::TYPE_CAPTION)
-                    .color(theme::danger_text(theme)),
-            );
-        }
-
-        let dns_row = row![dns_local_col, dns_remote_col]
-            .spacing(theme::GRID_GAP)
-            .width(Length::Fill);
-
-        let network_dns_card = container(
-            column![
-                text(tr(lang, "ports_config"))
-                    .color(text_primary)
-                    .size(theme::TYPE_HEADING)
-                    .font(theme::ui_font(iced::font::Weight::Semibold)),
-                ports_row,
-                text(tr(lang, "dns_servers"))
-                    .color(text_primary)
-                    .size(theme::TYPE_HEADING)
-                    .font(theme::ui_font(iced::font::Weight::Semibold)),
-                dns_row,
-                column![
-                    make_toggle_row("fake_ip_label", draft.fake_ip, Message::ToggleFakeIp),
-                    text(tr(lang, "help_fake_ip"))
-                        .color(text_muted)
-                        .size(theme::TYPE_CAPTION)
-                ]
-                .spacing(4),
-            ]
-            .spacing(crate::ui::SP_20),
-        )
-        .padding(theme::CARD_PAD)
-        .width(Length::Fill)
-        .style(theme::card_bg);
-
-        // 3. App & Core Preferences Card (Right Column)
-        let lang_label = text(tr(lang, "app_language"))
-            .color(text_muted)
-            .size(theme::TYPE_SECTION);
-
+        // ── General: how the app itself behaves ───────────────────────────
         let lang_options = vec![
             LanguageOption {
                 lang: Language::Zh,
@@ -352,24 +181,13 @@ pub fn render<'a>(
                 label: "English",
             },
         ];
-
-        let selected_lang_opt = lang_options
+        let selected_lang = lang_options
             .iter()
             .find(|o| o.lang == gui_config.language)
             .cloned();
-
-        let lang_selector = pick_list(lang_options, selected_lang_opt, move |opt| {
+        let lang_picker = picker_style!(pick_list(lang_options, selected_lang, |opt| {
             Message::SetLanguage(opt.lang)
-        })
-        .width(Length::Fill)
-        .padding(8)
-        .text_size(theme::TYPE_BODY)
-        .style(theme::pick_list)
-        .menu_style(theme::pick_list_menu);
-
-        let theme_label = text(tr(lang, "app_theme"))
-            .color(text_muted)
-            .size(theme::TYPE_SECTION);
+        }));
 
         let theme_options = vec![
             ThemeOption {
@@ -385,57 +203,14 @@ pub fn render<'a>(
                 label: tr(lang, "theme_light"),
             },
         ];
-
-        let selected_theme_opt = theme_options
+        let selected_theme = theme_options
             .iter()
             .find(|o| o.theme == gui_config.theme)
             .cloned();
-
-        let theme_selector = pick_list(theme_options, selected_theme_opt, move |opt| {
+        let theme_picker = picker_style!(pick_list(theme_options, selected_theme, |opt| {
             Message::SetTheme(opt.theme)
-        })
-        .width(Length::Fill)
-        .padding(8)
-        .text_size(theme::TYPE_BODY)
-        .style(theme::pick_list)
-        .menu_style(theme::pick_list_menu);
+        }));
 
-        let app_prefs_content: Element<'_, Message> = if is_compact {
-            column![
-                column![lang_label, lang_selector].spacing(8),
-                column![theme_label, theme_selector].spacing(8)
-            ]
-            .spacing(theme::GRID_GAP)
-            .into()
-        } else {
-            row![
-                column![lang_label, lang_selector]
-                    .spacing(crate::ui::SP_8)
-                    .width(Length::FillPortion(1)),
-                column![theme_label, theme_selector]
-                    .spacing(crate::ui::SP_8)
-                    .width(Length::FillPortion(1))
-            ]
-            .spacing(theme::GRID_GAP)
-            .width(Length::Fill)
-            .into()
-        };
-
-        let app_prefs_card = container(
-            column![
-                text(tr(lang, "appearance_settings"))
-                    .color(text_primary)
-                    .size(theme::TYPE_HEADING)
-                    .font(theme::ui_font(iced::font::Weight::Semibold)),
-                app_prefs_content
-            ]
-            .spacing(crate::ui::SP_12),
-        )
-        .padding(theme::CARD_PAD)
-        .width(Length::Fill)
-        .style(theme::card_bg);
-
-        // Core Management Card
         let interval_options = vec![
             IntervalOption {
                 hours: 0,
@@ -459,511 +234,497 @@ pub fn render<'a>(
             .find(|o| o.hours == draft.auto_update_interval_hours)
             .cloned()
             .or_else(|| interval_options.first().cloned());
-        let interval_picker = pick_list(interval_options, selected_interval, |opt| {
-            Message::AutoUpdateIntervalChanged(opt.hours)
-        })
-        .width(Length::Fill)
-        .padding(8)
-        .text_size(theme::TYPE_BODY)
-        .style(theme::pick_list)
-        .menu_style(theme::pick_list_menu);
+        let interval_picker =
+            picker_style!(pick_list(interval_options, selected_interval, |opt| {
+                Message::AutoUpdateIntervalChanged(opt.hours)
+            },));
 
-        let auto_update_block = column![
-            text(tr(lang, "auto_update_interval"))
-                .color(text_muted)
-                .size(theme::TYPE_BTN_SM),
-            text(tr(lang, "help_auto_update"))
-                .color(text_muted)
-                .size(theme::TYPE_CAPTION),
-            interval_picker,
-        ]
-        .spacing(crate::ui::SP_8)
-        .width(Length::Fill);
-
-        let version_label = if let Some(v) = core_version {
-            format!("{}: {}", tr(lang, "core_version_label"), v)
-        } else if core_installed {
-            format!(
-                " (v{}{}",
-                crate::core::CORE_VERSION,
-                tr(lang, "core_ver_stable")
-            )
-        } else {
-            String::new()
-        };
-
-        let core_downloader: Element<'_, Message> = if core_installed {
-            let reinstall = button(text(tr(lang, "btn_reinstall_core")).size(theme::TYPE_BTN_SM))
-                .padding(theme::BTN_PAD_SM)
-                .style(theme::button_secondary)
-                .on_press(Message::ForceCoreDownload);
-            column![
-                row![
-                    text(tr(lang, "core_installed_status"))
-                        .color(theme::success_text(theme))
-                        .size(theme::TYPE_SECTION)
-                        .width(Length::Fill),
-                    text(version_label)
-                        .color(text_muted)
-                        .size(theme::TYPE_CAPTION)
-                ]
-                .width(Length::Fill)
-                .spacing(crate::ui::SP_8)
-                .align_y(Alignment::Center),
-                text(tr(lang, "help_reinstall_core"))
-                    .color(text_muted)
-                    .size(theme::TYPE_CAPTION),
-                reinstall,
-            ]
-            .spacing(crate::ui::SP_8)
-            .width(Length::Fill)
-            .into()
-        } else {
-            let btn = button(
-                text(tr(lang, "btn_download_core"))
-                    .size(theme::TYPE_BTN_SM)
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center),
-            )
-            .padding(theme::BTN_PAD_SM)
-            .width(Length::Fill)
-            .style(theme::button_primary)
-            .on_press(Message::TriggerCoreDownload);
-
-            row![
-                text(tr(lang, "core_not_found"))
-                    .color(theme::danger_text(theme))
-                    .size(theme::TYPE_SECTION)
-                    .width(Length::Fill),
-                btn
-            ]
-            .width(Length::Fill)
-            .spacing(crate::ui::SP_12)
-            .align_y(Alignment::Center)
-            .into()
-        };
-
-        let install_status_row: Element<'_, Message> = match install_state {
-            CoreInstallState::Idle => row![].into(),
-            CoreInstallState::Downloading => {
-                crate::ui::loading_row(tr(lang, "core_downloading"), theme)
-            }
-            CoreInstallState::Verifying => {
-                crate::ui::loading_row(tr(lang, "core_verifying"), theme)
-            }
-            CoreInstallState::Extracting => {
-                crate::ui::loading_row(tr(lang, "core_extracting"), theme)
-            }
-            CoreInstallState::Installing => {
-                crate::ui::loading_row(tr(lang, "core_installing"), theme)
-            }
-            CoreInstallState::Installed => text(tr(lang, "core_install_success"))
-                .color(theme::success_text(theme))
+        let check_btn = || small_btn("btn_check_update", Some(Message::CheckUpdate), false);
+        let current_version =
+            tr(lang, "app_version_current").replace("{}", env!("CARGO_PKG_VERSION"));
+        let caption = |s: String, color| text(s).size(theme::TYPE_CAPTION).color(color);
+        let (update_status_el, update_control): (
+            Element<'a, Message>,
+            Option<Element<'a, Message>>,
+        ) = match update_status {
+            UpdateStatus::NotChecked => (
+                caption(
+                    format!("{current_version} · {}", tr(lang, "status_not_checked")),
+                    text_muted,
+                )
                 .into(),
-            CoreInstallState::Error(error) => column![
-                text(tr(lang, "core_install_failed"))
-                    .color(theme::danger_text(theme))
-                    .size(theme::TYPE_SECTION),
-                text(error)
-                    .color(theme::danger_text(theme))
-                    .size(theme::TYPE_CAPTION),
-                button(text(tr(lang, "btn_retry_core")).size(theme::TYPE_BTN_SM))
-                    .padding(theme::BTN_PAD_SM)
-                    .style(theme::button_secondary)
-                    // An error can come from a forced reinstall while the old
-                    // binary is still present; retry must not short-circuit on
-                    // the existing destination.
-                    .on_press(Message::ForceCoreDownload),
+                Some(check_btn().into()),
+            ),
+            UpdateStatus::Checking => (
+                crate::ui::loading_row(tr(lang, "status_checking"), theme),
+                None,
+            ),
+            UpdateStatus::Downloading { tag } | UpdateStatus::Installing { tag } => {
+                let key = if matches!(update_status, UpdateStatus::Downloading { .. }) {
+                    "status_downloading_update"
+                } else {
+                    "status_installing_update"
+                };
+                (
+                    row![
+                        crate::ui::loading_row(tr(lang, key), theme),
+                        caption(tag.clone(), theme::warning_text(theme)),
+                    ]
+                    .spacing(crate::ui::SP_8)
+                    .align_y(Alignment::Center)
+                    .into(),
+                    None,
+                )
+            }
+            UpdateStatus::UpToDate => (
+                caption(
+                    format!("{current_version} · {}", tr(lang, "status_uptodate")),
+                    theme::success_text(theme),
+                )
+                .into(),
+                Some(check_btn().into()),
+            ),
+            UpdateStatus::NewVersion {
+                tag,
+                download_url,
+                sha256,
+                size,
+            } => {
+                let control = if let (Some(url), Some(sha256), Some(size)) =
+                    (download_url.clone(), sha256.clone(), *size)
+                {
+                    small_btn(
+                        "btn_download_install",
+                        Some(Message::DownloadAppUpdate {
+                            tag: tag.clone(),
+                            url,
+                            sha256,
+                            size,
+                        }),
+                        true,
+                    )
+                } else {
+                    small_btn(
+                        "btn_view_release_on_github",
+                        Some(Message::OpenUrl(format!(
+                            "https://github.com/zangge8855/sing-box-gui/releases/tag/{tag}"
+                        ))),
+                        false,
+                    )
+                };
+                let missing_key = if download_url.is_none() {
+                    Some("update_asset_missing")
+                } else if sha256.is_none() {
+                    Some("update_digest_missing")
+                } else if size.is_none() {
+                    Some("update_size_missing")
+                } else {
+                    None
+                };
+                let mut col = column![caption(
+                    format!(
+                        "{}: {tag} · {current_version}",
+                        tr(lang, "status_new_version")
+                    ),
+                    theme::warning_text(theme),
+                )]
+                .spacing(3);
+                if let Some(key) = missing_key {
+                    col = col.push(caption(tr(lang, key).to_string(), danger));
+                }
+                (col.into(), Some(control.into()))
+            }
+            UpdateStatus::Error(err) => (
+                column![
+                    caption(tr(lang, "status_check_failed").to_string(), danger),
+                    caption(err.clone(), text_muted),
+                ]
+                .spacing(3)
+                .into(),
+                Some(check_btn().into()),
+            ),
+        };
+        let mut update_row = row![
+            column![
+                text(tr(lang, "app_update"))
+                    .size(theme::TYPE_BODY)
+                    .color(text_primary),
+                update_status_el,
             ]
-            .spacing(crate::ui::SP_8)
-            .into(),
+            .spacing(3)
+            .width(Length::Fill)
+        ]
+        .spacing(crate::ui::SP_16)
+        .align_y(Alignment::Center);
+        if let Some(control) = update_control {
+            update_row = update_row.push(control);
+        }
+
+        let general = section(
+            "settings_general",
+            vec![
+                inline("app_language", None, None, lang_picker.into()),
+                inline("app_theme", None, None, theme_picker.into()),
+                inline(
+                    "autostart_label",
+                    Some("help_autostart"),
+                    errors.get("autostart").copied(),
+                    switch(draft.start_on_boot, Message::ToggleAutostart),
+                ),
+                inline(
+                    "auto_start_core_label",
+                    Some("help_auto_start_core"),
+                    None,
+                    switch(draft.auto_start_core, Message::ToggleAutoStartCore),
+                ),
+                inline(
+                    "close_core_on_exit_label",
+                    Some("help_close_core"),
+                    None,
+                    switch(draft.close_core_on_exit, Message::ToggleCloseCoreOnExit),
+                ),
+                inline(
+                    "auto_update_interval",
+                    Some("help_auto_update"),
+                    None,
+                    interval_picker.into(),
+                ),
+                update_row.into(),
+            ],
+        );
+
+        // ── Proxy: how traffic reaches the core ───────────────────────────
+        let mixed_port_result = crate::parse_runtime_port(&draft.mixed_port);
+        let api_port_result = crate::parse_runtime_port(&draft.api_port);
+        let port_conflict = matches!(
+            (&mixed_port_result, &api_port_result),
+            (Ok(mixed), Ok(api)) if mixed == api
+        );
+        let mixed_port_error = if port_conflict {
+            Some("port_conflict_error")
+        } else {
+            mixed_port_result.as_ref().err().copied()
+        };
+        let api_port_error = if port_conflict {
+            Some("port_conflict_error")
+        } else {
+            api_port_result.as_ref().err().copied()
         };
 
+        let mut tun_row = column![inline(
+            "tun_mode_label",
+            Some("help_tun_mode"),
+            None,
+            switch(draft.tun_mode, Message::ToggleTun),
+        )]
+        .spacing(10);
+        if draft.tun_mode {
+            tun_row = tun_row.push(
+                container(
+                    text(tr(lang, "tun_admin_banner"))
+                        .size(theme::TYPE_CAPTION)
+                        .color(theme::warning_text(theme)),
+                )
+                .padding([8, 10])
+                .width(Length::Fill)
+                .style(|t| theme::tinted_banner(t, theme::WARNING)),
+            );
+        }
+
+        let proxy = section(
+            "settings_proxy",
+            vec![
+                tun_row.into(),
+                inline(
+                    "auto_sys_proxy_label",
+                    Some("help_auto_sys_proxy"),
+                    None,
+                    switch(draft.auto_sys_proxy, Message::ToggleAutoSysProxy),
+                ),
+                inline(
+                    "disable_proxy_on_stop_label",
+                    Some("help_disable_proxy_on_stop"),
+                    None,
+                    switch(
+                        draft.disable_proxy_on_core_stop,
+                        Message::ToggleDisableProxyOnCoreStop,
+                    ),
+                ),
+                inline(
+                    "mixed_port_label",
+                    Some("help_mixed_port"),
+                    mixed_port_error,
+                    field(
+                        "2080",
+                        &draft.mixed_port,
+                        Message::MixedPortChanged,
+                        mixed_port_error.is_some(),
+                    )
+                    .width(Length::Fixed(NARROW_CONTROL_W))
+                    .into(),
+                ),
+                inline(
+                    "api_port_label",
+                    Some("help_api_port"),
+                    api_port_error,
+                    field(
+                        "9090",
+                        &draft.api_port,
+                        Message::ApiPortChanged,
+                        api_port_error.is_some(),
+                    )
+                    .width(Length::Fixed(NARROW_CONTROL_W))
+                    .into(),
+                ),
+            ],
+        );
+
+        // ── DNS ───────────────────────────────────────────────────────────
+        let dns_local_error = (!crate::is_valid_dns_server_address(draft.dns_server_local.trim()))
+            .then_some("invalid_dns_server");
+        let dns_remote_error =
+            (!crate::is_valid_dns_server_address(draft.dns_server_remote.trim()))
+                .then_some("invalid_dns_server");
+        let dns = section(
+            "dns_servers",
+            vec![
+                inline(
+                    "dns_local",
+                    Some("help_dns_local"),
+                    dns_local_error,
+                    field(
+                        "223.5.5.5",
+                        &draft.dns_server_local,
+                        Message::DnsLocalChanged,
+                        dns_local_error.is_some(),
+                    )
+                    .width(Length::Fixed(CONTROL_W))
+                    .into(),
+                ),
+                inline(
+                    "dns_remote",
+                    Some("help_dns_remote"),
+                    dns_remote_error,
+                    field(
+                        "8.8.8.8",
+                        &draft.dns_server_remote,
+                        Message::DnsRemoteChanged,
+                        dns_remote_error.is_some(),
+                    )
+                    .width(Length::Fixed(CONTROL_W))
+                    .into(),
+                ),
+                inline(
+                    "fake_ip_label",
+                    Some("help_fake_ip"),
+                    None,
+                    switch(draft.fake_ip, Message::ToggleFakeIp),
+                ),
+            ],
+        );
+
+        // ── Advanced: transport tweaks and latency testing ────────────────
         let latency_url_error = (!url::Url::parse(draft.latency_test_url.trim())
             .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some()))
         .then_some("invalid_latency_url");
         let latency_timeout_error = crate::parse_latency_timeout(&draft.latency_test_timeout_ms)
             .err()
             .map(|_| "invalid_latency_timeout");
-
-        let latency_url_input = text_input(
-            "http://cp.cloudflare.com/generate_204",
-            &draft.latency_test_url,
-        )
-        .on_input(Message::LatencyTestUrlChanged)
-        .on_submit(Message::SaveSettings)
-        .size(theme::TYPE_BODY)
-        .padding(10)
-        .style(if latency_url_error.is_some() {
-            theme::input_field_error
-        } else {
-            theme::input_field
-        });
-
-        let latency_timeout_input = text_input("2000", &draft.latency_test_timeout_ms)
-            .on_input(Message::LatencyTestTimeoutChanged)
-            .on_submit(Message::SaveSettings)
-            .size(theme::TYPE_BODY)
-            .padding(10)
-            .style(if latency_timeout_error.is_some() {
-                theme::input_field_error
-            } else {
-                theme::input_field
-            });
-
-        let mut latency_block = column![
-            text(tr(lang, "latency_test_url_label"))
-                .color(text_muted)
-                .size(theme::TYPE_BTN_SM),
-            text(tr(lang, "help_latency_test"))
-                .color(text_muted)
-                .size(theme::TYPE_CAPTION),
-            latency_url_input.width(Length::Fill),
-        ]
-        .spacing(crate::ui::SP_8)
-        .width(Length::Fill);
-        if let Some(key) = latency_url_error {
-            latency_block = latency_block.push(
-                text(tr(lang, key))
-                    .size(theme::TYPE_CAPTION)
-                    .color(theme::danger_text(theme)),
-            );
-        }
-        latency_block = latency_block.push(
-            text(tr(lang, "latency_test_timeout_label"))
-                .color(text_muted)
-                .size(theme::TYPE_BTN_SM),
+        let advanced = section(
+            "settings_advanced",
+            vec![
+                inline(
+                    "tcp_fast_open_label",
+                    Some("help_tcp_fast_open"),
+                    None,
+                    switch(draft.tcp_fast_open, Message::ToggleTcpFastOpen),
+                ),
+                inline(
+                    "tcp_multipath_label",
+                    Some("help_tcp_multipath"),
+                    None,
+                    switch(draft.tcp_multipath, Message::ToggleTcpMultipath),
+                ),
+                stacked(
+                    "latency_test_url_label",
+                    Some("help_latency_test"),
+                    latency_url_error,
+                    field(
+                        "http://cp.cloudflare.com/generate_204",
+                        &draft.latency_test_url,
+                        Message::LatencyTestUrlChanged,
+                        latency_url_error.is_some(),
+                    )
+                    .width(Length::Fill)
+                    .into(),
+                ),
+                inline(
+                    "latency_test_timeout_label",
+                    None,
+                    latency_timeout_error,
+                    field(
+                        "2000",
+                        &draft.latency_test_timeout_ms,
+                        Message::LatencyTestTimeoutChanged,
+                        latency_timeout_error.is_some(),
+                    )
+                    .width(Length::Fixed(NARROW_CONTROL_W))
+                    .into(),
+                ),
+            ],
         );
-        latency_block = latency_block.push(latency_timeout_input.width(Length::Fill));
-        if let Some(key) = latency_timeout_error {
-            latency_block = latency_block.push(
-                text(tr(lang, key))
-                    .size(theme::TYPE_CAPTION)
-                    .color(theme::danger_text(theme)),
-            );
+
+        // ── Core: the managed sing-box binary ─────────────────────────────
+        let version = core_version
+            .map(str::to_string)
+            .or_else(|| core_installed.then(|| crate::core::CORE_VERSION.to_string()));
+        let mut core_state_line = row![if core_installed {
+            caption(
+                tr(lang, "core_status_installed").to_string(),
+                theme::success_text(theme),
+            )
+        } else {
+            caption(tr(lang, "core_status_missing").to_string(), danger)
+        }]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        if let Some(version) = version {
+            core_state_line = core_state_line.push(caption(
+                format!("· {} {version}", tr(lang, "core_version_label")),
+                text_muted,
+            ));
         }
-        let latency_card = container(
-            column![
-                text(tr(lang, "latency_test_settings"))
-                    .color(text_primary)
-                    .size(theme::TYPE_HEADING)
-                    .font(theme::ui_font(iced::font::Weight::Semibold)),
-                latency_block,
+        let core_busy = matches!(
+            install_state,
+            CoreInstallState::Downloading
+                | CoreInstallState::Verifying
+                | CoreInstallState::Extracting
+                | CoreInstallState::Installing
+        );
+        let core_action = if core_installed {
+            small_btn(
+                "btn_reinstall_core",
+                (!core_busy).then_some(Message::ForceCoreDownload),
+                false,
+            )
+        } else {
+            small_btn(
+                "btn_download_core",
+                (!core_busy).then_some(Message::TriggerCoreDownload),
+                true,
+            )
+        };
+        let mut core_status = column![
+            row![
+                column![
+                    text(tr(lang, "singbox_core"))
+                        .size(theme::TYPE_BODY)
+                        .color(text_primary),
+                    core_state_line,
+                ]
+                .spacing(3)
+                .width(Length::Fill),
+                core_action,
             ]
-            .spacing(crate::ui::SP_12),
-        )
-        .padding(theme::CARD_PAD)
-        .width(Length::Fill)
-        .style(theme::card_bg);
-        let auto_update_card = container(auto_update_block)
-            .padding(theme::CARD_PAD)
-            .width(Length::Fill)
-            .style(theme::card_bg);
+            .spacing(crate::ui::SP_16)
+            .align_y(Alignment::Center)
+        ]
+        .spacing(10);
+        let install_line: Option<Element<'a, Message>> = match install_state {
+            CoreInstallState::Idle => None,
+            CoreInstallState::Downloading => {
+                Some(crate::ui::loading_row(tr(lang, "core_downloading"), theme))
+            }
+            CoreInstallState::Verifying => {
+                Some(crate::ui::loading_row(tr(lang, "core_verifying"), theme))
+            }
+            CoreInstallState::Extracting => {
+                Some(crate::ui::loading_row(tr(lang, "core_extracting"), theme))
+            }
+            CoreInstallState::Installing => {
+                Some(crate::ui::loading_row(tr(lang, "core_installing"), theme))
+            }
+            CoreInstallState::Installed => Some(
+                caption(
+                    tr(lang, "core_install_success").to_string(),
+                    theme::success_text(theme),
+                )
+                .into(),
+            ),
+            CoreInstallState::Error(error) => Some(
+                row![
+                    column![
+                        caption(tr(lang, "core_install_failed").to_string(), danger),
+                        caption(error.clone(), text_muted),
+                    ]
+                    .spacing(3)
+                    .width(Length::Fill),
+                    // An error can come from a forced reinstall while the old
+                    // binary is still present; retry must not short-circuit on
+                    // the existing destination.
+                    small_btn("btn_retry_core", Some(Message::ForceCoreDownload), false),
+                ]
+                .spacing(crate::ui::SP_16)
+                .align_y(Alignment::Center)
+                .into(),
+            ),
+        };
+        if let Some(line) = install_line {
+            core_status = core_status.push(line);
+        }
 
-        let open_dir_btn = button(
-            text(tr(lang, "btn_open_data_dir"))
-                .size(theme::TYPE_BTN_SM)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        )
-        .padding(theme::BTN_PAD_MD)
-        .width(Length::Fill)
-        .style(theme::button_secondary)
-        .on_press(Message::OpenDataDir);
-
-        let core_path_input = text_input(tr(lang, "placeholder_core_path"), &draft.core_path)
-            .on_input(Message::CorePathChanged)
-            .on_submit(Message::SaveSettings)
-            .size(theme::TYPE_BODY)
-            .padding(10)
-            .style(if errors.contains_key("core_path") {
-                theme::input_field_error
-            } else {
-                theme::input_field
-            });
-
-        let clear_core_path_btn =
-            button(text(tr(lang, "btn_clear_core_path")).size(theme::TYPE_BTN_SM))
-                .padding(theme::BTN_PAD_MD)
-                .style(theme::button_secondary)
-                .on_press(Message::ClearCorePath);
-
-        let core_path_row = column![
-            text(tr(lang, "core_path_label"))
-                .color(text_muted)
-                .size(theme::TYPE_BTN_SM),
-            text(tr(lang, "help_core_path"))
-                .color(text_muted)
-                .size(theme::TYPE_CAPTION),
-            core_path_input.width(Length::Fill),
-            clear_core_path_btn,
+        let core_path_error = errors.get("core_path").copied();
+        let core_path_control = row![
+            field(
+                tr(lang, "placeholder_core_path"),
+                &draft.core_path,
+                Message::CorePathChanged,
+                core_path_error.is_some(),
+            )
+            .width(Length::Fill),
+            small_btn("btn_clear_core_path", Some(Message::ClearCorePath), false),
         ]
         .spacing(crate::ui::SP_8)
-        .width(Length::Fill);
-        let core_path_row = if let Some(key) = errors.get("core_path") {
-            core_path_row.push(
-                text(tr(lang, key))
-                    .size(theme::TYPE_CAPTION)
-                    .color(theme::danger_text(theme)),
-            )
-        } else {
-            core_path_row
-        };
+        .align_y(Alignment::Center);
 
-        let mut core_mgmt_column = column![
-            text(tr(lang, "core_components"))
-                .color(text_primary)
-                .size(theme::TYPE_HEADING)
-                .font(theme::ui_font(iced::font::Weight::Semibold)),
-            core_downloader,
-            core_path_row,
-            open_dir_btn,
-        ]
-        .spacing(crate::ui::SP_12);
+        let core = section(
+            "settings_core",
+            vec![
+                core_status.into(),
+                stacked(
+                    "core_path_label",
+                    Some("help_core_path"),
+                    core_path_error,
+                    core_path_control.into(),
+                ),
+                inline(
+                    "data_dir_label",
+                    Some("help_data_dir"),
+                    None,
+                    small_btn("btn_open", Some(Message::OpenDataDir), false).into(),
+                ),
+            ],
+        );
 
-        if !matches!(install_state, CoreInstallState::Idle) {
-            core_mgmt_column = core_mgmt_column.push(install_status_row);
-        }
-
-        let core_mgmt_card = container(core_mgmt_column)
-            .padding(theme::CARD_PAD)
-            .width(Length::Fill)
-            .style(theme::card_bg);
-
-        let app_update_card = {
-            let update_info: Element<'_, Message> = match update_status {
-                UpdateStatus::NotChecked => {
-                    let btn: Element<'_, Message> =
-                        button(text(tr(lang, "btn_check_update")).size(theme::TYPE_BTN_SM))
-                            .padding(theme::BTN_PAD_SM)
-                            .style(theme::button_secondary)
-                            .on_press(Message::CheckUpdate)
-                            .into();
-                    row![
-                        text(tr(lang, "status_not_checked"))
-                            .color(text_muted)
-                            .size(theme::TYPE_SECTION)
-                            .width(Length::Fill),
-                        btn
-                    ]
-                    .width(Length::Fill)
-                    .align_y(Alignment::Center)
-                    .into()
-                }
-                UpdateStatus::Checking => row![
-                    text(tr(lang, "status_checking"))
-                        .color(text_muted)
-                        .size(theme::TYPE_SECTION)
-                        .width(Length::Fill)
-                ]
-                .width(Length::Fill)
-                .align_y(Alignment::Center)
-                .into(),
-                UpdateStatus::Downloading { tag } => row![
-                    container(crate::ui::loading_row(
-                        tr(lang, "status_downloading_update"),
-                        theme,
-                    ))
-                    .width(Length::Fill),
-                    text(tag.clone())
-                        .color(theme::warning_text(theme))
-                        .size(theme::TYPE_CAPTION),
-                ]
-                .width(Length::Fill)
-                .spacing(crate::ui::SP_12)
-                .align_y(Alignment::Center)
-                .into(),
-                UpdateStatus::Installing { tag } => row![
-                    container(crate::ui::loading_row(
-                        tr(lang, "status_installing_update"),
-                        theme,
-                    ))
-                    .width(Length::Fill),
-                    text(tag.clone())
-                        .color(theme::warning_text(theme))
-                        .size(theme::TYPE_CAPTION),
-                ]
-                .width(Length::Fill)
-                .spacing(crate::ui::SP_12)
-                .align_y(Alignment::Center)
-                .into(),
-                UpdateStatus::UpToDate => {
-                    let btn: Element<'_, Message> =
-                        button(text(tr(lang, "btn_check_update")).size(theme::TYPE_BTN_SM))
-                            .padding(theme::BTN_PAD_SM)
-                            .style(theme::button_secondary)
-                            .on_press(Message::CheckUpdate)
-                            .into();
-                    row![
-                        text(tr(lang, "status_uptodate"))
-                            .color(theme::success_text(theme))
-                            .size(theme::TYPE_SECTION)
-                            .width(Length::Fill),
-                        btn
-                    ]
-                    .width(Length::Fill)
-                    .align_y(Alignment::Center)
-                    .into()
-                }
-                UpdateStatus::NewVersion {
-                    tag,
-                    download_url,
-                    sha256,
-                    size,
-                } => {
-                    let install_btn: Element<'_, Message> =
-                        if let (Some(url), Some(sha256), Some(size)) =
-                            (download_url.clone(), sha256.clone(), *size)
-                        {
-                            button(text(tr(lang, "btn_download_install")).size(theme::TYPE_BTN_SM))
-                                .padding(theme::BTN_PAD_SM)
-                                .style(theme::button_primary)
-                                .on_press(Message::DownloadAppUpdate {
-                                    tag: tag.clone(),
-                                    url,
-                                    sha256,
-                                    size,
-                                })
-                                .into()
-                        } else {
-                            button(
-                                text(tr(lang, "btn_view_release_on_github"))
-                                    .size(theme::TYPE_BTN_SM),
-                            )
-                            .padding(theme::BTN_PAD_SM)
-                            .style(theme::button_secondary)
-                            .on_press(Message::OpenUrl(format!(
-                                "https://github.com/zangge8855/sing-box-gui/releases/tag/{}",
-                                tag
-                            )))
-                            .into()
-                        };
-                    let status_row = row![
-                        column![
-                            text(format!("{}: {}", tr(lang, "status_new_version"), tag))
-                                .color(theme::warning_text(theme))
-                                .size(theme::TYPE_SECTION),
-                            text(tr(lang, "help_new_version"))
-                                .color(text_muted)
-                                .size(theme::TYPE_CAPTION)
-                        ]
-                        .spacing(4)
-                        .width(Length::Fill),
-                        install_btn
-                    ]
-                    .width(Length::Fill)
-                    .align_y(Alignment::Center);
-                    let missing_key = if download_url.is_none() {
-                        Some("update_asset_missing")
-                    } else if sha256.is_none() {
-                        Some("update_digest_missing")
-                    } else if size.is_none() {
-                        Some("update_size_missing")
-                    } else {
-                        None
-                    };
-                    if let Some(key) = missing_key {
-                        column![
-                            status_row,
-                            text(tr(lang, key))
-                                .color(theme::danger_text(theme))
-                                .size(theme::TYPE_CAPTION)
-                        ]
-                        .spacing(crate::ui::SP_8)
-                        .width(Length::Fill)
-                        .into()
-                    } else {
-                        status_row.into()
-                    }
-                }
-                UpdateStatus::Error(err) => {
-                    let btn: Element<'_, Message> =
-                        button(text(tr(lang, "btn_check_update")).size(theme::TYPE_BTN_SM))
-                            .padding(theme::BTN_PAD_SM)
-                            .style(theme::button_secondary)
-                            .on_press(Message::CheckUpdate)
-                            .into();
-                    column![
-                        row![
-                            text(tr(lang, "status_check_failed"))
-                                .color(theme::danger_text(theme))
-                                .size(theme::TYPE_SECTION)
-                                .width(Length::Fill),
-                            btn
-                        ]
-                        .width(Length::Fill)
-                        .align_y(Alignment::Center),
-                        text(err.clone())
-                            .color(theme::danger_text(theme))
-                            .size(theme::TYPE_CAPTION)
-                    ]
-                    .spacing(crate::ui::SP_8)
-                    .width(Length::Fill)
-                    .into()
-                }
-            };
-
-            container(
-                column![
-                    text(tr(lang, "app_update"))
-                        .color(text_muted)
-                        .size(theme::TYPE_SECTION),
-                    update_info
-                ]
-                .spacing(crate::ui::SP_12),
-            )
-            .padding(theme::CARD_PAD)
-            .width(Length::Fill)
-            .style(theme::card_bg)
-        };
-
-        // Independent columns keep related cards together without leaving
-        // row-sized holes below a shorter group of settings.
-        let main_row_layout: Element<'_, Message> = if size.width < crate::ui::SETTINGS_2COL_W {
-            column![
-                app_prefs_card,
-                settings_card,
-                network_dns_card,
-                latency_card,
-                core_mgmt_card,
-                auto_update_card,
-                app_update_card,
-            ]
-            .spacing(20)
-            .width(Length::Fill)
-            .into()
-        } else if size.width < crate::ui::SETTINGS_3COL_W {
+        // Two balanced columns once each row has room for a label beside its
+        // control; one column (Windows-settings style) below that.
+        let sections: Element<'_, Message> = if size.width >= crate::ui::SETTINGS_2COL_W {
             row![
-                column![app_prefs_card, settings_card, auto_update_card]
-                    .spacing(20)
+                column![general, proxy]
+                    .spacing(theme::GRID_GAP)
                     .width(Length::FillPortion(1)),
-                column![
-                    network_dns_card,
-                    latency_card,
-                    core_mgmt_card,
-                    app_update_card
-                ]
-                .spacing(20)
-                .width(Length::FillPortion(1)),
+                column![dns, advanced, core]
+                    .spacing(theme::GRID_GAP)
+                    .width(Length::FillPortion(1)),
             ]
-            .spacing(20)
+            .spacing(theme::GRID_GAP)
             .width(Length::Fill)
             .into()
         } else {
-            row![
-                column![settings_card, auto_update_card]
-                    .spacing(20)
-                    .width(Length::FillPortion(1)),
-                column![network_dns_card, latency_card]
-                    .spacing(20)
-                    .width(Length::FillPortion(1)),
-                column![app_prefs_card, core_mgmt_card, app_update_card]
-                    .spacing(20)
-                    .width(Length::FillPortion(1))
-            ]
-            .spacing(20)
-            .width(Length::Fill)
-            .into()
+            column![general, proxy, dns, advanced, core]
+                .spacing(theme::GRID_GAP)
+                .width(Length::Fill)
+                .into()
         };
 
         // Collapsible config preview — avoids nested scroll fight when collapsed
@@ -973,64 +734,64 @@ pub fn render<'a>(
             } else {
                 tr(lang, "btn_show_preview")
             })
-            .size(theme::TYPE_BTN_MD),
+            .size(theme::TYPE_BTN_SM),
         )
-        .padding(theme::BTN_PAD_MD)
+        .padding(theme::BTN_PAD_SM)
         .style(theme::button_secondary)
         .on_press(Message::ToggleConfigPreview);
-
-        let preview_card: Element<'_, Message> = if config_preview_expanded {
-            let preview_json = config_preview.unwrap_or("...");
-            container(
-                column![
-                    row![
-                        text(tr(lang, "core_config_preview"))
-                            .color(text_muted)
-                            .size(theme::TYPE_SECTION)
-                            .width(Length::Fill),
-                        preview_toggle,
-                    ]
-                    .align_y(Alignment::Center),
-                    container(
-                        scrollable(
-                            text(preview_json)
-                                .font(theme::mono_font())
-                                .size(theme::TYPE_MONO)
-                                .color(text_primary)
-                        )
-                        .style(theme::scrollbar_style)
-                        .height(Length::Fixed((size.height - 320.0).clamp(120.0, 280.0)))
-                        .width(Length::Fill)
+        let preview_header = row![
+            column![
+                text(tr(lang, "core_config_preview"))
+                    .size(theme::TYPE_BODY)
+                    .color(text_primary),
+                text(tr(lang, "help_config_preview"))
+                    .size(theme::TYPE_CAPTION)
+                    .color(text_muted),
+            ]
+            .spacing(3)
+            .width(Length::Fill),
+            preview_toggle,
+        ]
+        .spacing(crate::ui::SP_16)
+        .align_y(Alignment::Center);
+        let mut preview_col = column![preview_header].spacing(crate::ui::SP_12);
+        if config_preview_expanded {
+            preview_col = preview_col.push(
+                container(
+                    scrollable(
+                        text(config_preview.unwrap_or("..."))
+                            .font(theme::mono_font())
+                            .size(theme::TYPE_MONO)
+                            .color(text_primary),
                     )
-                    .padding(theme::CARD_PAD_DENSE)
-                    .style(theme::console_bg)
-                ]
-                .spacing(crate::ui::SP_12),
-            )
-            .padding(theme::CARD_PAD)
+                    .style(theme::scrollbar_style)
+                    .height(Length::Fixed((size.height - 320.0).clamp(120.0, 280.0)))
+                    .width(Length::Fill),
+                )
+                .padding(theme::CARD_PAD_DENSE)
+                .style(theme::console_bg),
+            );
+        }
+        let preview_card = container(preview_col)
+            .padding([16.0, theme::CARD_PAD])
             .width(Length::Fill)
-            .style(theme::card_bg)
-            .into()
-        } else {
-            container(
-                row![
-                    text(tr(lang, "core_config_preview"))
-                        .color(text_muted)
-                        .size(theme::TYPE_SECTION)
-                        .width(Length::Fill),
-                    preview_toggle,
-                ]
-                .align_y(Alignment::Center),
-            )
-            .padding(theme::CARD_PAD)
-            .width(Length::Fill)
-            .style(theme::card_bg)
-            .into()
-        };
+            .style(theme::card_bg);
 
-        let content_col = column![pending_banner, main_row_layout, preview_card]
-            .spacing(crate::ui::SP_20)
-            .width(Length::Fill);
+        let has_pending_changes = draft.has_pending_changes(gui_config);
+        let mut content_col = column![].spacing(theme::GRID_GAP).width(Length::Fill);
+        if has_pending_changes {
+            content_col = content_col.push(
+                container(
+                    text(tr(lang, "settings_pending"))
+                        .size(theme::TYPE_CAPTION)
+                        .color(theme::warning_text(theme)),
+                )
+                .padding([8, 10])
+                .width(Length::Fill)
+                .style(|t| theme::tinted_banner(t, theme::WARNING)),
+            );
+        }
+        content_col = content_col.push(sections).push(preview_card);
 
         // Save only lights up when there is something to save, and a way
         // back sits beside it. Header buttons share the medium size.
@@ -1049,13 +810,7 @@ pub fn render<'a>(
         }
         header_actions = header_actions.push(save_btn);
 
-        let header = page_header(
-            "settings",
-            lang,
-            Some(header_actions.into()),
-            theme,
-            is_compact,
-        );
+        let header = page_header("settings", lang, Some(header_actions.into()), theme, false);
         crate::ui::page_shell_with_pad(
             header,
             content_col.into(),

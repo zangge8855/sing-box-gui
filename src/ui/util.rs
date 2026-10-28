@@ -54,6 +54,14 @@ pub fn format_traffic_usage_lang(lang: Language, upload: u64, download: u64, tot
     }
 }
 
+/// "剩余 1 GB" vs "1 GB left": the label leads in Chinese and trails in English.
+pub fn labelled_size(lang: Language, key: &'static str, bytes: u64) -> String {
+    match lang {
+        Language::Zh => format!("{} {}", tr(lang, key), format_size(bytes)),
+        Language::En => format!("{} {}", format_size(bytes), tr(lang, key)),
+    }
+}
+
 /// Usage ratio 0.0–1.0 when total is known; None if total is 0.
 pub fn traffic_usage_ratio(upload: u64, download: u64, total: u64) -> Option<f32> {
     if total == 0 {
