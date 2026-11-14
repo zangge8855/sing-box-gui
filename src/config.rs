@@ -630,70 +630,8 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
             }
         }
         "ssr" => {
-            let body = link
-                .trim_start_matches("ssr://")
-                .split('#')
-                .next()
-                .unwrap_or_default();
-            let decoded = decode_base64_padded(body)?;
-            let (server_part, query_part) = if let Some((s, q)) = decoded.split_once("/?") {
-                (s, q)
-            } else if let Some((s, q)) = decoded.split_once('?') {
-                (s.trim_end_matches('/'), q)
-            } else {
-                (decoded.trim_end_matches('/'), "")
-            };
-            let (server, rest) = if server_part.starts_with('[') {
-                let (ipv6, rest) = server_part.split_once("]:")?;
-                (ipv6.trim_start_matches('[').to_string(), rest)
-            } else {
-                let (host, rest) = server_part.split_once(':')?;
-                (host.to_string(), rest)
-            };
-            let parts: Vec<&str> = rest.splitn(5, ':').collect();
-            if parts.len() != 5 {
-                return None;
-            }
-            let port = parts[0].parse::<u16>().ok()?;
-            let protocol = parts[1];
-            let method = parts[2];
-            let obfs = parts[3];
-            let password = decode_base64_padded(parts[4])?;
-            if server.is_empty() || method.is_empty() || password.is_empty() {
-                return None;
-            }
-
-            insert_yaml_string(&mut map, "type", "ssr");
-            insert_yaml_string(&mut map, "server", &server);
-            map.insert(
-                serde_yaml::Value::String("port".to_string()),
-                serde_yaml::Value::Number(port.into()),
-            );
-            insert_yaml_string(&mut map, "cipher", method);
-            insert_yaml_string(&mut map, "password", &password);
-            insert_yaml_string(&mut map, "protocol", protocol);
-            insert_yaml_string(&mut map, "obfs", obfs);
-
-            for (key, value) in url::form_urlencoded::parse(query_part.as_bytes()) {
-                match key.as_ref() {
-                    "remarks" => {
-                        if let Some(remarks) = decode_base64_padded(value.as_ref()) {
-                            insert_yaml_string(&mut map, "name", &remarks);
-                        }
-                    }
-                    "obfsparam" => {
-                        if let Some(param) = decode_base64_padded(value.as_ref()) {
-                            insert_yaml_string(&mut map, "obfs-param", &param);
-                        }
-                    }
-                    "protoparam" => {
-                        if let Some(param) = decode_base64_padded(value.as_ref()) {
-                            insert_yaml_string(&mut map, "protocol-param", &param);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            // ShadowsocksR was deprecated and removed in sing-box 1.6.0.
+            return None;
         }
         "vmess" => {
             map.insert(
@@ -1288,6 +1226,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 );
             }
 
+            let mut udp_over_stream = false;
             for (k, v) in url.query_pairs() {
                 match k.as_ref() {
                     "sni" | "peer" | "servername" => {
@@ -1312,11 +1251,16 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                             serde_yaml::Value::Bool(true),
                         );
                     }
-                    "udp_over_stream" if parse_query_bool(v.as_ref()) => {
-                        map.insert(
-                            serde_yaml::Value::String("udp_over_stream".to_string()),
-                            serde_yaml::Value::Bool(true),
-                        );
+                    "udp_over_stream" | "udp-over-stream" => {
+                        udp_over_stream = parse_query_bool(v.as_ref());
+                        if udp_over_stream {
+                            map.insert(
+                                serde_yaml::Value::String("udp_over_stream".to_string()),
+                                serde_yaml::Value::Bool(true),
+                            );
+                        } else {
+                            map.remove(serde_yaml::Value::String("udp_over_stream".to_string()));
+                        }
                     }
                     "insecure" | "allowInsecure" | "skipCertVerify" | "skip-cert-verify"
                         if parse_query_bool(v.as_ref()) =>
@@ -1328,6 +1272,10 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     }
                     _ => {}
                 }
+            }
+            if udp_over_stream {
+                // sing-box rejects TUIC outbounds that set both udp_over_stream and udp_relay_mode.
+                map.remove(serde_yaml::Value::String("udp_relay_mode".to_string()));
             }
         }
         "anytls" => {
@@ -1624,6 +1572,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
 fn canonical_clash_proxy_type(node_type: &str) -> String {
     match node_type.trim().to_ascii_lowercase().as_str() {
         "shadowsocks" => "ss".to_string(),
+        "shadowsocksr" => "ssr".to_string(),
         "hy2" => "hysteria2".to_string(),
         "shadow-tls" | "shadow_tls" => "shadowtls".to_string(),
         "wg" => "wireguard".to_string(),
@@ -1634,8 +1583,7 @@ fn canonical_clash_proxy_type(node_type: &str) -> String {
 fn is_supported_clash_proxy_type(node_type: &str) -> bool {
     matches!(
         node_type,
-        "ss" | "ssr"
-            | "vmess"
+        "ss" | "vmess"
             | "vless"
             | "trojan"
             | "hysteria"
@@ -1656,7 +1604,7 @@ fn clash_proxy_has_required_credentials(map: &serde_yaml::Mapping, node_type: &s
     let non_empty =
         |keys: &[&str]| yaml_string_any(map, keys).is_some_and(|value| !value.trim().is_empty());
     match node_type {
-        "ss" | "ssr" => non_empty(&["cipher"]) && non_empty(&["password"]),
+        "ss" => non_empty(&["cipher"]) && non_empty(&["password"]),
         "vmess" | "vless" => non_empty(&["uuid"]),
         "trojan" | "hysteria2" | "anytls" => non_empty(&["password"]),
         "hysteria" => non_empty(&["auth-str", "auth_str", "password"]),
@@ -1913,10 +1861,32 @@ fn extract_clash_endpoint(map: &serde_yaml::Mapping, node_type: &str) -> Option<
     Some((server, port_u64 as u16))
 }
 
+fn is_ssr_only_share_links(content: &str) -> bool {
+    let mut saw_ssr = false;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((scheme, _)) = line.split_once("://") else {
+            return false;
+        };
+        if scheme.eq_ignore_ascii_case("ssr") {
+            saw_ssr = true;
+        } else {
+            return false;
+        }
+    }
+    saw_ssr
+}
+
 pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
     let key_name = serde_yaml::Value::String("name".into());
     let key_type = serde_yaml::Value::String("type".into());
     let normalized = normalize_profile_content(content);
+    if is_ssr_only_share_links(&normalized) {
+        return Ok(Vec::new());
+    }
     let val: serde_yaml::Value =
         serde_yaml::from_str(&normalized).map_err(|e| format!("YAML parsing failed: {}", e))?;
 
@@ -2034,6 +2004,7 @@ pub fn parse_native_json_nodes(json_content: &str) -> Result<Vec<ProxyNode>, Str
                 || node_type == "dns"
                 || node_type == "block"
                 || node_type == "urltest"
+                || is_removed_ssr_type(&node_type)
             {
                 continue;
             }
@@ -2125,7 +2096,7 @@ pub fn validate_profile_content(content: &str) -> Result<(), String> {
     let normalized = normalize_profile_content(content);
     let trimmed = strip_bom_trimmed(&normalized);
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        let value: serde_json::Value =
+        let mut value: serde_json::Value =
             serde_json::from_str(trimmed).map_err(|e| format!("Invalid JSON structure: {}", e))?;
         let object = value
             .as_object()
@@ -2139,6 +2110,14 @@ pub fn validate_profile_content(content: &str) -> Result<(), String> {
         if !has_outbounds && !has_endpoints {
             return Err(
                 "Native sing-box JSON must contain an 'outbounds' or 'endpoints' array".to_string(),
+            );
+        }
+        if strip_unsupported_shadowsocksr_outbounds(&mut value) > 0
+            && !has_usable_proxy_node(&value)
+        {
+            return Err(
+                "Native sing-box JSON contains only unsupported ShadowsocksR (shadowsocksr) outbounds, which were removed in sing-box 1.6.0."
+                    .to_string(),
             );
         }
         Ok(())
@@ -2759,13 +2738,17 @@ pub fn convert_clash_to_singbox(
     let key_plugin = serde_yaml::Value::String("plugin".into());
     let key_plugin_opts = serde_yaml::Value::String("plugin-opts".into());
     let key_plugin_opts_raw = serde_yaml::Value::String("plugin-opts-raw".into());
-    let key_protocol = serde_yaml::Value::String("protocol".into());
-    let key_protocol_param = serde_yaml::Value::String("protocol-param".into());
     let key_reality_opts = serde_yaml::Value::String("reality-opts".into());
     let key_skip_cert_verify = serde_yaml::Value::String("skip-cert-verify".into());
     let key_type = serde_yaml::Value::String("type".into());
     let key_uuid = serde_yaml::Value::String("uuid".into());
     let normalized = normalize_profile_content(yaml_content);
+    if is_ssr_only_share_links(&normalized) {
+        return Err(
+            "No supported proxy nodes could be converted. Unsupported proxy types: ssr. ShadowsocksR was removed in sing-box 1.6.0."
+                .to_string(),
+        );
+    }
     let yaml: serde_yaml::Value =
         serde_yaml::from_str(&normalized).map_err(|e| format!("YAML parsing failed: {}", e))?;
 
@@ -2861,50 +2844,6 @@ pub fn convert_clash_to_singbox(
 
                 if !has_plugin && let Some(multiplex) = extract_multiplex_block(map) {
                     outbound.insert("multiplex".to_string(), multiplex);
-                }
-            }
-            "ssr" => {
-                outbound.insert("type".to_string(), json!("shadowsocksr"));
-                outbound.insert("server".to_string(), json!(server));
-                outbound.insert("server_port".to_string(), json!(port));
-
-                let method = map
-                    .get(&key_cipher)
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
-                let password = map
-                    .get(&key_password)
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
-                if method.is_empty() || password.is_empty() {
-                    continue;
-                }
-                outbound.insert("method".to_string(), json!(method));
-                outbound.insert("password".to_string(), json!(password));
-
-                if let Some(protocol) = map
-                    .get(&key_protocol)
-                    .and_then(|value| value.as_str())
-                    .filter(|value| !value.is_empty())
-                {
-                    outbound.insert("protocol".to_string(), json!(protocol));
-                }
-                if let Some(param) = map
-                    .get(&key_protocol_param)
-                    .and_then(|value| value.as_str())
-                    .filter(|value| !value.is_empty())
-                {
-                    outbound.insert("protocol_param".to_string(), json!(param));
-                }
-                if let Some(obfs) =
-                    yaml_string_any(map, &["obfs"]).filter(|value| !value.is_empty())
-                {
-                    outbound.insert("obfs".to_string(), json!(obfs));
-                }
-                if let Some(param) = yaml_string_any(map, &["obfs-param", "obfs_param"])
-                    .filter(|value| !value.is_empty())
-                {
-                    outbound.insert("obfs_param".to_string(), json!(param));
                 }
             }
             "vmess" => {
@@ -3238,13 +3177,16 @@ pub fn convert_clash_to_singbox(
                 )
                 .unwrap_or("cubic");
                 outbound.insert("congestion_control".to_string(), json!(congestion));
-                if let Some(mode) = yaml_string_any(map, &["udp_relay_mode", "udp-relay-mode"])
-                    .filter(|value| !value.is_empty())
+                let udp_over_stream =
+                    yaml_bool_any(map, &["udp_over_stream", "udp-over-stream"]).unwrap_or(false);
+                if udp_over_stream {
+                    // sing-box rejects TUIC outbounds that set both udp_over_stream and udp_relay_mode.
+                    outbound.insert("udp_over_stream".to_string(), json!(true));
+                } else if let Some(mode) =
+                    yaml_string_any(map, &["udp_relay_mode", "udp-relay-mode"])
+                        .filter(|value| !value.is_empty())
                 {
                     outbound.insert("udp_relay_mode".to_string(), json!(mode));
-                }
-                if yaml_bool_any(map, &["udp_over_stream", "udp-over-stream"]).unwrap_or(false) {
-                    outbound.insert("udp_over_stream".to_string(), json!(true));
                 }
                 if yaml_bool_any(
                     map,
@@ -3985,12 +3927,306 @@ fn profile_cache_db_path(config: &serde_json::Value) -> String {
         .to_string()
 }
 
+fn is_removed_ssr_type(node_type: &str) -> bool {
+    let lower = node_type.trim();
+    lower.eq_ignore_ascii_case("shadowsocksr") || lower.eq_ignore_ascii_case("ssr")
+}
+
+fn has_usable_proxy_node(config: &serde_json::Value) -> bool {
+    let has_proxy_outbound = config
+        .get("outbounds")
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| {
+            arr.iter().any(|ob| {
+                let typ = ob.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                !typ.is_empty()
+                    && !matches!(
+                        typ.to_ascii_lowercase().as_str(),
+                        "selector" | "urltest" | "direct" | "block" | "dns"
+                    )
+            })
+        });
+    let has_endpoint = config
+        .get("endpoints")
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| !arr.is_empty());
+    has_proxy_outbound || has_endpoint
+}
+
+/// Remove deprecated/removed `shadowsocksr` outbounds and safely clean up any
+/// references in selectors, urltests, chained detours, routes, and DNS config.
+/// Returns the number of `shadowsocksr` / `ssr` outbounds stripped.
+fn strip_unsupported_shadowsocksr_outbounds(config: &mut serde_json::Value) -> usize {
+    let has_ssr = config
+        .get("outbounds")
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| {
+            arr.iter().any(|ob| {
+                ob.get("type")
+                    .and_then(|t| t.as_str())
+                    .is_some_and(is_removed_ssr_type)
+            })
+        });
+    if !has_ssr {
+        return 0;
+    }
+
+    let mut removed_tags = BTreeSet::new();
+    let mut removed_ssr_count = 0usize;
+
+    if let Some(outbounds) = config.get_mut("outbounds").and_then(|v| v.as_array_mut()) {
+        let mut kept = Vec::with_capacity(outbounds.len());
+        for ob in outbounds.drain(..) {
+            let is_ssr = ob
+                .get("type")
+                .and_then(|t| t.as_str())
+                .is_some_and(is_removed_ssr_type);
+            if is_ssr {
+                removed_ssr_count += 1;
+                if let Some(tag) = ob
+                    .get("tag")
+                    .and_then(|t| t.as_str())
+                    .filter(|t| !t.is_empty())
+                {
+                    removed_tags.insert(tag.to_string());
+                }
+            } else {
+                kept.push(ob);
+            }
+        }
+        *outbounds = kept;
+    }
+
+    // Cascade cleanup: strip empty selector/urltest groups and any outbound or
+    // endpoint whose upstream `detour` pointed to a stripped outbound.
+    loop {
+        let mut newly_removed = false;
+
+        if let Some(outbounds) = config.get_mut("outbounds").and_then(|v| v.as_array_mut()) {
+            let mut next_outbounds = Vec::with_capacity(outbounds.len());
+            for mut ob in outbounds.drain(..) {
+                let Some(obj) = ob.as_object_mut() else {
+                    next_outbounds.push(ob);
+                    continue;
+                };
+                let tag = obj
+                    .get("tag")
+                    .and_then(|v| v.as_str())
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_string);
+                let detour_removed = obj
+                    .get("detour")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|d| removed_tags.contains(d));
+                if detour_removed {
+                    if let Some(t) = tag {
+                        removed_tags.insert(t);
+                    }
+                    newly_removed = true;
+                    continue;
+                }
+
+                let is_selector = obj.get("type").and_then(|v| v.as_str()) == Some("selector");
+                let is_group =
+                    is_selector || obj.get("type").and_then(|v| v.as_str()) == Some("urltest");
+                if is_group {
+                    let first_valid = if let Some(members) =
+                        obj.get_mut("outbounds").and_then(|v| v.as_array_mut())
+                    {
+                        members.retain(|m| m.as_str().is_none_or(|s| !removed_tags.contains(s)));
+                        if members.is_empty() {
+                            if let Some(t) = tag {
+                                removed_tags.insert(t);
+                            }
+                            newly_removed = true;
+                            continue;
+                        }
+                        members.iter().find_map(|m| m.as_str()).map(str::to_string)
+                    } else {
+                        None
+                    };
+                    if is_selector
+                        && obj
+                            .get("default")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|default_tag| removed_tags.contains(default_tag))
+                    {
+                        if let Some(first_valid) = first_valid {
+                            obj.insert("default".to_string(), json!(first_valid));
+                        } else {
+                            obj.remove("default");
+                        }
+                    }
+                }
+                next_outbounds.push(ob);
+            }
+            *outbounds = next_outbounds;
+        }
+
+        if let Some(endpoints) = config.get_mut("endpoints").and_then(|v| v.as_array_mut()) {
+            let mut next_endpoints = Vec::with_capacity(endpoints.len());
+            for ep in endpoints.drain(..) {
+                let detour_removed = ep
+                    .get("detour")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|d| removed_tags.contains(d));
+                if detour_removed {
+                    if let Some(t) = ep
+                        .get("tag")
+                        .and_then(|v| v.as_str())
+                        .filter(|t| !t.is_empty())
+                    {
+                        removed_tags.insert(t.to_string());
+                    }
+                    newly_removed = true;
+                    continue;
+                }
+                next_endpoints.push(ep);
+            }
+            *endpoints = next_endpoints;
+        }
+
+        if !newly_removed {
+            break;
+        }
+    }
+
+    if removed_tags.is_empty() {
+        return removed_ssr_count;
+    }
+
+    let remaining_outbounds = config
+        .get("outbounds")
+        .and_then(|v| v.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let fallback_proxy = remaining_outbounds
+        .iter()
+        .find_map(|o| {
+            let typ = o.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let tag = o
+                .get("tag")
+                .and_then(|t| t.as_str())
+                .filter(|t| !t.is_empty())?;
+            (matches!(typ, "selector" | "urltest") && tag.eq_ignore_ascii_case("proxy"))
+                .then(|| tag.to_string())
+        })
+        .or_else(|| {
+            remaining_outbounds.iter().find_map(|o| {
+                let typ = o.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                let tag = o
+                    .get("tag")
+                    .and_then(|t| t.as_str())
+                    .filter(|t| !t.is_empty())?;
+                matches!(typ, "selector" | "urltest").then(|| tag.to_string())
+            })
+        })
+        .or_else(|| {
+            remaining_outbounds.iter().find_map(|o| {
+                let typ = o.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                let tag = o
+                    .get("tag")
+                    .and_then(|t| t.as_str())
+                    .filter(|t| !t.is_empty())?;
+                (!matches!(typ, "selector" | "urltest" | "direct" | "block" | "dns"))
+                    .then(|| tag.to_string())
+            })
+        });
+    let existing_direct = remaining_outbounds.iter().find_map(|o| {
+        let typ = o.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let tag = o
+            .get("tag")
+            .and_then(|t| t.as_str())
+            .filter(|t| !t.is_empty())?;
+        (typ == "direct").then(|| tag.to_string())
+    });
+
+    if let Some(route_obj) = config.get_mut("route").and_then(|v| v.as_object_mut()) {
+        if let Some(rules) = route_obj.get_mut("rules").and_then(|v| v.as_array_mut()) {
+            rules.retain(|rule| {
+                rule.get("outbound")
+                    .and_then(|v| v.as_str())
+                    .is_none_or(|o| !removed_tags.contains(o))
+            });
+        }
+        if route_obj
+            .get("final")
+            .and_then(|v| v.as_str())
+            .is_some_and(|f| removed_tags.contains(f))
+        {
+            if let Some(fallback) = fallback_proxy.as_ref().or(existing_direct.as_ref()) {
+                route_obj.insert("final".to_string(), json!(fallback));
+            } else {
+                route_obj.remove("final");
+            }
+        }
+    }
+
+    if let Some(dns_obj) = config.get_mut("dns").and_then(|v| v.as_object_mut()) {
+        if let Some(servers) = dns_obj.get_mut("servers").and_then(|v| v.as_array_mut()) {
+            for server in servers {
+                let Some(srv_obj) = server.as_object_mut() else {
+                    continue;
+                };
+                if srv_obj
+                    .get("detour")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|d| removed_tags.contains(d))
+                {
+                    if let Some(fallback) = fallback_proxy.as_deref() {
+                        srv_obj.insert("detour".to_string(), json!(fallback));
+                    } else {
+                        srv_obj.remove("detour");
+                    }
+                }
+            }
+        }
+        if let Some(rules) = dns_obj.get_mut("rules").and_then(|v| v.as_array_mut()) {
+            rules.retain(|rule| {
+                rule.get("outbound")
+                    .and_then(|v| v.as_str())
+                    .is_none_or(|o| !removed_tags.contains(o))
+            });
+        }
+    }
+
+    removed_ssr_count
+}
+
+/// Omit conflicting `udp_relay_mode` on TUIC outbounds when `udp_over_stream` is `true`.
+fn sanitize_tuic_outbounds(config: &mut serde_json::Value) {
+    let Some(outbounds) = config.get_mut("outbounds").and_then(|v| v.as_array_mut()) else {
+        return;
+    };
+    for outbound in outbounds {
+        let Some(obj) = outbound.as_object_mut() else {
+            continue;
+        };
+        let is_tuic = obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|t| t.eq_ignore_ascii_case("tuic"));
+        let udp_over_stream = obj
+            .get("udp_over_stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if is_tuic && udp_over_stream {
+            obj.remove("udp_relay_mode");
+        }
+    }
+}
+
 /// Apply in-app startup mitigations to a generated sing-box config:
+/// - strip removed `shadowsocksr` outbounds and dangling references
+/// - omit conflicting `udp_relay_mode` on TUIC outbounds with `udp_over_stream: true`
 /// - rewrite broken remote rule-set proxy URLs
 /// - set `download_detour` to a **real** direct outbound tag (profiles often use `DIRECT`)
 /// - pin an isolated per-profile `cache_file.path` under the app data directory
 /// - enable `store_fakeip` when a Fake-IP DNS server is configured
 pub fn mitigate_run_config(config: &mut serde_json::Value) {
+    strip_unsupported_shadowsocksr_outbounds(config);
+    sanitize_tuic_outbounds(config);
+
     // Resolve / inject direct outbound first so rule-set detours reference a real tag.
     let direct_tag = ensure_direct_outbound_tag(config);
     let outbound_tags = collect_outbound_tags(config);
@@ -4118,6 +4354,18 @@ pub fn merge_native_json_profile(
     let normalized = normalize_profile_content(json_content);
     let mut config: serde_json::Value = serde_json::from_str(strip_bom_trimmed(&normalized))
         .map_err(|e| format!("Invalid native Sing-Box JSON: {}", e))?;
+
+    if !config.is_object() {
+        return Err("Native Sing-Box JSON must be a JSON object".to_string());
+    }
+    if strip_unsupported_shadowsocksr_outbounds(&mut config) > 0 && !has_usable_proxy_node(&config)
+    {
+        return Err(
+            "No supported proxy nodes remain after removing unsupported ShadowsocksR (shadowsocksr) outbounds, which were removed in sing-box 1.6.0."
+                .to_string(),
+        );
+    }
+    sanitize_tuic_outbounds(&mut config);
 
     let config_obj = config
         .as_object_mut()
@@ -5103,8 +5351,11 @@ proxies:
     }
 
     #[test]
-    fn shadowsocksr_link_preserves_protocol_and_obfuscation() {
-        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    fn shadowsocksr_links_and_clash_nodes_are_filtered_cleanly() {
+        use base64::{
+            Engine as _,
+            engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+        };
 
         let password = URL_SAFE_NO_PAD.encode("secret");
         let remarks = URL_SAFE_NO_PAD.encode("SSR 香港");
@@ -5113,21 +5364,81 @@ proxies:
         let payload = format!(
             "server.example.com:443:auth_aes128_md5:aes-256-cfb:tls1.2_ticket_auth:{password}/?remarks={remarks}&obfsparam={obfs_param}&protoparam={protocol_param}"
         );
-        let link = format!("ssr://{}", URL_SAFE_NO_PAD.encode(payload));
-        let normalized = normalize_profile_content(&link);
-        let config = convert_clash_to_singbox(&normalized, &GuiConfig::default()).unwrap();
-        let outbound = config["outbounds"]
+        let ssr_link = format!("ssr://{}", URL_SAFE_NO_PAD.encode(payload));
+
+        // SSR-only share link subscription (plain and base64) is rejected cleanly.
+        assert!(validate_profile_content(&ssr_link).is_err());
+        let ssr_err = convert_clash_to_singbox(&ssr_link, &GuiConfig::default()).unwrap_err();
+        assert!(ssr_err.contains("ssr"), "ssr_err={ssr_err}");
+        let encoded_ssr_only = STANDARD.encode(&ssr_link);
+        assert!(validate_profile_content(&encoded_ssr_only).is_err());
+        assert!(convert_clash_to_singbox(&encoded_ssr_only, &GuiConfig::default()).is_err());
+
+        // Mixed subscription keeps valid nodes alongside ssr:// without emitting shadowsocksr.
+        let mixed =
+            format!("{ssr_link}\nss://YWVzLTEyOC1nY206dGVzdHBhc3M=@1.2.3.4:8388#Valid-SS\n");
+        for input in [mixed.clone(), STANDARD.encode(&mixed)] {
+            assert!(validate_profile_content(&input).is_ok());
+            let nodes = parse_clash_yaml_nodes(&input).unwrap();
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(nodes[0].name, "Valid-SS");
+
+            let config = convert_clash_to_singbox(&input, &GuiConfig::default()).unwrap();
+            let outbounds = config["outbounds"].as_array().unwrap();
+            assert!(!outbounds.iter().any(|o| o["type"] == "shadowsocksr"));
+            assert!(outbounds.iter().any(|o| o["tag"] == "Valid-SS"));
+        }
+
+        // Clash YAML with type: ssr / type: shadowsocksr skips SSR and preserves valid nodes.
+        let clash_mixed = r#"
+proxies:
+  - name: SSR-Node
+    type: ssr
+    server: ssr.example.com
+    port: 443
+    cipher: aes-256-cfb
+    password: secret
+    protocol: origin
+    obfs: plain
+  - name: SSR-FullName
+    type: shadowsocksr
+    server: ssr2.example.com
+    port: 443
+    cipher: aes-256-cfb
+    password: secret
+  - name: SS-Node
+    type: ss
+    server: ss.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: secret
+"#;
+        let nodes = parse_clash_yaml_nodes(clash_mixed).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "SS-Node");
+        let config = convert_clash_to_singbox(clash_mixed, &GuiConfig::default()).unwrap();
+        let outbounds = config["outbounds"].as_array().unwrap();
+        assert!(!outbounds.iter().any(|o| o["type"] == "shadowsocksr"));
+        let selector_members = outbounds.iter().find(|o| o["tag"] == "Proxy").unwrap()["outbounds"]
             .as_array()
-            .unwrap()
-            .iter()
-            .find(|outbound| outbound["type"] == "shadowsocksr")
             .unwrap();
-        assert_eq!(outbound["tag"], "SSR 香港");
-        assert_eq!(outbound["method"], "aes-256-cfb");
-        assert_eq!(outbound["protocol"], "auth_aes128_md5");
-        assert_eq!(outbound["protocol_param"], "42:token");
-        assert_eq!(outbound["obfs"], "tls1.2_ticket_auth");
-        assert_eq!(outbound["obfs_param"], "cdn.example.com");
+        assert!(selector_members.iter().any(|v| v == "SS-Node"));
+        assert!(!selector_members.iter().any(|v| v == "SSR-Node"));
+        assert!(!selector_members.iter().any(|v| v == "SSR-FullName"));
+
+        // Clash YAML with ONLY SSR nodes fails cleanly.
+        let clash_ssr_only = r#"
+proxies:
+  - name: SSR-Only
+    type: ssr
+    server: ssr.example.com
+    port: 443
+    cipher: aes-256-cfb
+    password: secret
+"#;
+        assert!(validate_profile_content(clash_ssr_only).is_err());
+        let err = convert_clash_to_singbox(clash_ssr_only, &GuiConfig::default()).unwrap_err();
+        assert!(err.contains("ssr"), "err={err}");
     }
 
     #[test]
@@ -5344,19 +5655,19 @@ proxies:
         assert_eq!(ss["method"], "aes-128-gcm");
         assert_eq!(ss["password"], "testpass");
 
-        // SSR with bracketed IPv6 and query
+        // SSR with bracketed IPv6 and query is skipped in mixed subscriptions and rejected solo.
         let ssr_raw =
             "[2001:db8::1]:8388:origin:aes-128-cfb:plain:dGVzdA/?obfsparam=&remarks=U1NSLU5vZGU";
         let ssr_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(ssr_raw.as_bytes());
         let ssr_link = format!("ssr://{ssr_b64}");
-        let config_ssr = convert_clash_to_singbox(&ssr_link, &GuiConfig::default()).unwrap();
-        let outbounds_ssr = config_ssr["outbounds"].as_array().unwrap();
-        let ssr = outbounds_ssr
-            .iter()
-            .find(|o| o["tag"] == "SSR-Node")
-            .unwrap();
-        assert_eq!(ssr["server"], "2001:db8::1");
-        assert_eq!(ssr["server_port"], 8388);
+        assert!(convert_clash_to_singbox(&ssr_link, &GuiConfig::default()).is_err());
+
+        let mixed_links = format!("{ss_link}\n{ssr_link}");
+        let config_mixed = convert_clash_to_singbox(&mixed_links, &GuiConfig::default()).unwrap();
+        let outbounds_mixed = config_mixed["outbounds"].as_array().unwrap();
+        assert!(outbounds_mixed.iter().any(|o| o["tag"] == "SS-Node"));
+        assert!(!outbounds_mixed.iter().any(|o| o["type"] == "shadowsocksr"));
+        assert!(!outbounds_mixed.iter().any(|o| o["tag"] == "SSR-Node"));
     }
 
     #[test]
@@ -5919,5 +6230,190 @@ proxies:
         // Same byte length written immediately within the same coarse mtime tick.
         std::fs::write(&path, r#"{"experimental":{"clash_api":{"secret":"xyz2"}}}"#).unwrap();
         assert_eq!(read_clash_api_secret_from_path(&path, &cache), "xyz2");
+    }
+
+    #[test]
+    fn mitigate_and_native_json_strip_shadowsocksr_safely() {
+        // Mixed native JSON: SSR outbound + empty SSR-only group + valid VLESS outbound.
+        let native_mixed = r#"{
+          "outbounds": [
+            { "type": "selector", "tag": "Proxy", "outbounds": ["SSR-Auto", "SSR-Node", "VLESS-Node"], "default": "SSR-Node" },
+            { "type": "urltest", "tag": "SSR-Auto", "outbounds": ["SSR-Node"] },
+            { "type": "shadowsocksr", "tag": "SSR-Node", "server": "1.2.3.4", "server_port": 443, "method": "aes-256-cfb", "password": "pw", "protocol": "origin", "obfs": "plain" },
+            { "type": "vless", "tag": "Chained-Via-SSR", "server": "9.9.9.9", "server_port": 443, "uuid": "00000000-0000-0000-0000-000000000000", "detour": "SSR-Node" },
+            { "type": "vless", "tag": "VLESS-Node", "server": "5.6.7.8", "server_port": 443, "uuid": "00000000-0000-0000-0000-000000000000" },
+            { "type": "direct", "tag": "direct" }
+          ],
+          "dns": {
+            "servers": [
+              { "tag": "dns_remote", "type": "udp", "server": "1.1.1.1", "detour": "SSR-Node" }
+            ]
+          },
+          "route": {
+            "final": "SSR-Node",
+            "rules": [
+              { "domain": ["ssr.example.com"], "outbound": "SSR-Node" },
+              { "domain": ["ok.example.com"], "outbound": "Proxy" }
+            ],
+            "rule_set": [
+              { "type": "remote", "tag": "rs", "format": "binary", "url": "https://example.com/rs.srs", "download_detour": "SSR-Node" }
+            ]
+          }
+        }"#;
+
+        assert!(validate_profile_content(native_mixed).is_ok());
+        let nodes = parse_native_json_nodes(native_mixed).unwrap();
+        assert!(!nodes.iter().any(|n| n.node_type == "shadowsocksr"));
+        assert!(nodes.iter().any(|n| n.name == "VLESS-Node"));
+
+        let mut merged = merge_native_json_profile(native_mixed, &GuiConfig::default()).unwrap();
+        mitigate_run_config(&mut merged);
+
+        let outbounds = merged["outbounds"].as_array().unwrap();
+        assert!(!outbounds.iter().any(|o| o["type"] == "shadowsocksr"));
+        assert!(!outbounds.iter().any(|o| o["tag"] == "SSR-Auto"));
+        assert!(!outbounds.iter().any(|o| o["tag"] == "Chained-Via-SSR"));
+
+        let proxy = outbounds.iter().find(|o| o["tag"] == "Proxy").unwrap();
+        assert_eq!(proxy["outbounds"], json!(["VLESS-Node"]));
+        assert_eq!(proxy["default"], "VLESS-Node");
+        assert_eq!(merged["dns"]["servers"][0]["detour"], "Proxy");
+        assert_eq!(merged["route"]["final"], "Proxy");
+        assert_eq!(merged["route"]["rule_set"][0]["download_detour"], "direct");
+        let rules = merged["route"]["rules"].as_array().unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["outbound"], "Proxy");
+
+        // Native JSON with ONLY SSR outbounds is rejected by validate & merge.
+        let native_ssr_only = r#"{
+          "outbounds": [
+            { "type": "selector", "tag": "Proxy", "outbounds": ["SSR-Node"] },
+            { "type": "shadowsocksr", "tag": "SSR-Node", "server": "1.2.3.4", "server_port": 443, "method": "aes-256-cfb", "password": "pw" },
+            { "type": "direct", "tag": "direct" }
+          ],
+          "route": { "final": "Proxy" }
+        }"#;
+        assert!(validate_profile_content(native_ssr_only).is_err());
+        assert!(merge_native_json_profile(native_ssr_only, &GuiConfig::default()).is_err());
+
+        // Direct mitigate_run_config on SSR-only raw JSON strips SSR and dangling selector safely.
+        let mut raw_ssr_only: serde_json::Value = serde_json::from_str(native_ssr_only).unwrap();
+        mitigate_run_config(&mut raw_ssr_only);
+        let raw_outbounds = raw_ssr_only["outbounds"].as_array().unwrap();
+        assert!(!raw_outbounds.iter().any(|o| o["type"] == "shadowsocksr"));
+        assert!(!raw_outbounds.iter().any(|o| o["tag"] == "Proxy"));
+        assert_eq!(raw_ssr_only["route"]["final"], "direct");
+    }
+
+    #[test]
+    fn tuic_udp_over_stream_omits_conflicting_udp_relay_mode() {
+        // 1. tuic:// share link in both parameter orders when udp_over_stream=1
+        for link in [
+            "tuic://00000000-0000-0000-0000-000000000000:secret@example.com:443?udp_relay_mode=quic&udp_over_stream=1#TUIC-UOS",
+            "tuic://00000000-0000-0000-0000-000000000000:secret@example.com:443?udp_over_stream=true&udp-relay-mode=native#TUIC-UOS",
+        ] {
+            let config = convert_clash_to_singbox(link, &GuiConfig::default()).unwrap();
+            let tuic = config["outbounds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|o| o["type"] == "tuic")
+                .unwrap();
+            assert_eq!(tuic["udp_over_stream"], true);
+            assert!(
+                tuic.get("udp_relay_mode").is_none(),
+                "udp_relay_mode must be omitted when udp_over_stream is true: {tuic}"
+            );
+        }
+
+        // udp_over_stream=0 preserves udp_relay_mode
+        let link_no_uos = "tuic://00000000-0000-0000-0000-000000000000:secret@example.com:443?udp_over_stream=0&udp_relay_mode=quic#TUIC-QUIC";
+        let config_no_uos = convert_clash_to_singbox(link_no_uos, &GuiConfig::default()).unwrap();
+        let tuic_no_uos = config_no_uos["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["type"] == "tuic")
+            .unwrap();
+        assert_eq!(tuic_no_uos["udp_relay_mode"], "quic");
+        assert!(tuic_no_uos.get("udp_over_stream").is_none());
+
+        // 2. Clash YAML type: tuic
+        let clash_yaml = r#"
+proxies:
+  - name: TUIC-UOS
+    type: tuic
+    server: tuic.example.com
+    port: 8443
+    uuid: 00000000-0000-0000-0000-000000000000
+    password: pass
+    udp-relay-mode: quic
+    udp-over-stream: true
+  - name: TUIC-RelayOnly
+    type: tuic
+    server: tuic2.example.com
+    port: 8443
+    uuid: 00000000-0000-0000-0000-000000000000
+    password: pass
+    udp_relay_mode: native
+    udp_over_stream: false
+"#;
+        let clash_cfg = convert_clash_to_singbox(clash_yaml, &GuiConfig::default()).unwrap();
+        let clash_outbounds = clash_cfg["outbounds"].as_array().unwrap();
+        let clash_uos = clash_outbounds
+            .iter()
+            .find(|o| o["tag"] == "TUIC-UOS")
+            .unwrap();
+        assert_eq!(clash_uos["udp_over_stream"], true);
+        assert!(clash_uos.get("udp_relay_mode").is_none());
+        let clash_relay = clash_outbounds
+            .iter()
+            .find(|o| o["tag"] == "TUIC-RelayOnly")
+            .unwrap();
+        assert_eq!(clash_relay["udp_relay_mode"], "native");
+        assert!(clash_relay.get("udp_over_stream").is_none());
+
+        // 3. mitigate_run_config & merge_native_json_profile on native JSON
+        let native_json = r#"{
+          "outbounds": [
+            {
+              "type": "tuic",
+              "tag": "Native-TUIC-UOS",
+              "server": "tuic.example.com",
+              "server_port": 8443,
+              "uuid": "00000000-0000-0000-0000-000000000000",
+              "password": "pass",
+              "udp_over_stream": true,
+              "udp_relay_mode": "quic",
+              "tls": { "enabled": true }
+            },
+            {
+              "type": "tuic",
+              "tag": "Native-TUIC-QUIC",
+              "server": "tuic2.example.com",
+              "server_port": 8443,
+              "uuid": "00000000-0000-0000-0000-000000000000",
+              "password": "pass",
+              "udp_over_stream": false,
+              "udp_relay_mode": "quic",
+              "tls": { "enabled": true }
+            }
+          ]
+        }"#;
+        let mut merged = merge_native_json_profile(native_json, &GuiConfig::default()).unwrap();
+        mitigate_run_config(&mut merged);
+        let merged_obs = merged["outbounds"].as_array().unwrap();
+        let nat_uos = merged_obs
+            .iter()
+            .find(|o| o["tag"] == "Native-TUIC-UOS")
+            .unwrap();
+        assert_eq!(nat_uos["udp_over_stream"], true);
+        assert!(nat_uos.get("udp_relay_mode").is_none());
+        let nat_quic = merged_obs
+            .iter()
+            .find(|o| o["tag"] == "Native-TUIC-QUIC")
+            .unwrap();
+        assert_eq!(nat_quic["udp_over_stream"], false);
+        assert_eq!(nat_quic["udp_relay_mode"], "quic");
     }
 }
