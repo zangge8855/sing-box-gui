@@ -28,7 +28,11 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "sys_proxy_desc",
     "btn_start_core_short",
     "btn_clear_search",
+    "btn_goto_dashboard",
+    "btn_goto_profiles",
     "btn_goto_settings",
+    "proxies_no_profile_hint",
+    "proxies_no_core_hint",
     "btn_reinstall_core",
     "latency_test_url_label",
     "latency_test_settings",
@@ -244,8 +248,13 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             }
             "empty_dashboard_title" => "No active profile yet",
             "empty_dashboard_desc" => "Install the core and import a profile to get started.",
+            "btn_goto_dashboard" => "Go to Dashboard",
             "btn_goto_profiles" => "Go to Profiles",
             "btn_goto_settings" => "Open Settings",
+            "proxies_no_profile_hint" => "Import or select a profile to view proxy nodes.",
+            "proxies_no_core_hint" => {
+                "Install the sing-box core in Settings to start and load proxy groups."
+            }
             "dash_current_node" => "Current Node",
             "dash_connections" => "Active Connections",
             "dash_no_node" => "Not selected",
@@ -634,8 +643,11 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "empty_profiles_hint" => "在上方粘贴链接，或从剪贴板 / 本地文件导入。",
             "empty_dashboard_title" => "尚未选择配置",
             "empty_dashboard_desc" => "先安装内核并导入配置，即可开始使用。",
+            "btn_goto_dashboard" => "前往控制台",
             "btn_goto_profiles" => "前往配置管理",
             "btn_goto_settings" => "打开系统设置",
+            "proxies_no_profile_hint" => "请先导入或选择一个配置以查看代理节点。",
+            "proxies_no_core_hint" => "请先在系统设置中安装 sing-box 内核，再启动以加载策略组。",
             "dash_current_node" => "当前节点",
             "dash_connections" => "活动连接数",
             "dash_no_node" => "未选择节点",

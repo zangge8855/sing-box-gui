@@ -3670,6 +3670,7 @@ impl App {
                     node_search_ref,
                     proxy_groups_ref,
                     selected_group_ref,
+                    core_installed,
                     core_running,
                     proxy_sort,
                     show_all_proxies,

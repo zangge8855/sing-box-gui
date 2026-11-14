@@ -29,6 +29,7 @@ pub fn render<'a>(
     search_query: &'a str,
     proxy_groups: &'a std::collections::HashMap<String, crate::api::ProxyInfo>,
     selected_group: &'a str,
+    core_installed: bool,
     core_running: bool,
     proxy_sort: crate::state::ProxySort,
     show_all: bool,
@@ -533,26 +534,36 @@ pub fn render<'a>(
         // Empty states follow the window like the populated page, so the
         // title and insets don't jump when nodes arrive.
         if nodes.is_empty() {
+            let has_profile = gui_config.active_profile_id.is_some();
             return responsive(move |size| {
                 let is_compact = size.width < PAGE_COMPACT_W;
-                let cta = if !core_running {
-                    Some(
-                        button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
-                            .padding(theme::BTN_PAD_MD)
-                            .style(theme::button_primary)
-                            .on_press(Message::ToggleCore)
-                            .into(),
-                    )
-                } else {
-                    None
-                };
+                let (title_key, hint_key, action) =
+                    empty_nodes_spec(core_running, has_profile, core_installed);
+                let cta: Option<Element<'_, Message>> = action.map(|kind| {
+                    let (label_key, msg) = match kind {
+                        EmptyAction::GotoDashboard => (
+                            "btn_goto_dashboard",
+                            Message::TabChanged(crate::state::Tab::Dashboard),
+                        ),
+                        EmptyAction::GotoProfiles => (
+                            "btn_goto_profiles",
+                            Message::TabChanged(crate::state::Tab::Profiles),
+                        ),
+                        EmptyAction::GotoSettings => (
+                            "btn_goto_settings",
+                            Message::TabChanged(crate::state::Tab::Settings),
+                        ),
+                        EmptyAction::StartCore => ("btn_start_core_short", Message::ToggleCore),
+                    };
+                    button(text(tr(lang, label_key)).size(theme::TYPE_BTN_MD))
+                        .padding(theme::BTN_PAD_MD)
+                        .style(theme::button_primary)
+                        .on_press(msg)
+                        .into()
+                });
                 let content = crate::ui::empty_state(
-                    tr(lang, "no_nodes"),
-                    Some(if !core_running {
-                        tr(lang, "core_not_running_hint")
-                    } else {
-                        tr(lang, "no_proxy_groups")
-                    }),
+                    tr(lang, title_key),
+                    Some(tr(lang, hint_key)),
                     cta,
                     theme,
                 );
@@ -1104,8 +1115,93 @@ fn build_card_grid<'a>(
     .into()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmptyAction {
+    GotoDashboard,
+    GotoProfiles,
+    GotoSettings,
+    StartCore,
+}
+
+/// Select the empty-state title, hint, and CTA for Proxies when no groups or nodes exist.
+fn empty_nodes_spec(
+    core_running: bool,
+    has_profile: bool,
+    core_installed: bool,
+) -> (&'static str, &'static str, Option<EmptyAction>) {
+    if core_running {
+        ("no_nodes", "no_proxy_groups", None)
+    } else if !has_profile && !core_installed {
+        (
+            "empty_dashboard_title",
+            "empty_dashboard_desc",
+            Some(EmptyAction::GotoDashboard),
+        )
+    } else if !has_profile {
+        (
+            "empty_dashboard_title",
+            "proxies_no_profile_hint",
+            Some(EmptyAction::GotoProfiles),
+        )
+    } else if !core_installed {
+        (
+            "btn_install_core_first",
+            "proxies_no_core_hint",
+            Some(EmptyAction::GotoSettings),
+        )
+    } else {
+        (
+            "no_nodes",
+            "core_not_running_hint",
+            Some(EmptyAction::StartCore),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{EmptyAction, empty_nodes_spec};
+
+    #[test]
+    fn empty_nodes_spec_avoids_start_core_when_unconfigured() {
+        assert_eq!(
+            empty_nodes_spec(false, false, false),
+            (
+                "empty_dashboard_title",
+                "empty_dashboard_desc",
+                Some(EmptyAction::GotoDashboard)
+            )
+        );
+        assert_eq!(
+            empty_nodes_spec(false, false, true),
+            (
+                "empty_dashboard_title",
+                "proxies_no_profile_hint",
+                Some(EmptyAction::GotoProfiles)
+            )
+        );
+        assert_eq!(
+            empty_nodes_spec(false, true, false),
+            (
+                "btn_install_core_first",
+                "proxies_no_core_hint",
+                Some(EmptyAction::GotoSettings)
+            )
+        );
+        assert_eq!(
+            empty_nodes_spec(false, true, true),
+            (
+                "no_nodes",
+                "core_not_running_hint",
+                Some(EmptyAction::StartCore)
+            )
+        );
+        assert_eq!(
+            empty_nodes_spec(true, true, true),
+            ("no_nodes", "no_proxy_groups", None)
+        );
+    }
+
     /// When a group has no `all` list, the empty-state must not use search-filter framing.
     #[test]
     fn empty_group_all_none_uses_no_nodes_not_search_copy() {

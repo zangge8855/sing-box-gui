@@ -12,8 +12,9 @@ use iced::widget::{
 use iced::{Alignment, Element, Length};
 
 /// Inline pickers and text fields share one width so their edges line up
-/// down a card; ports and timeouts take the narrow one.
-const CONTROL_W: f32 = 200.0;
+/// down a card; ports and timeouts take the narrow one. Sized at 168px so
+/// longer labels ("Subscription Auto-Update") stay single-line in 2-col 1080px.
+const CONTROL_W: f32 = 168.0;
 const NARROW_CONTROL_W: f32 = 110.0;
 
 fn field<'a>(

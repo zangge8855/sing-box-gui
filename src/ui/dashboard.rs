@@ -313,7 +313,7 @@ pub fn render<'a>(
             }
             fact_items.push(
                 text(format!(
-                    "{} :{}",
+                    "{}: {}",
                     tr(lang, "fact_port"),
                     gui_config.mixed_port
                 ))
@@ -1187,8 +1187,8 @@ fn traffic_waveform<'a>(
     let text_muted = theme::text_muted(theme);
     let text_tertiary = theme::text_tertiary(theme);
 
-    // Reserved Y-axis rail width so bars fit beside scale ticks cleanly.
-    const Y_AXIS_W: f32 = 64.0;
+    // Reserved Y-axis rail width so peak labels fit beside scale ticks on one line.
+    const Y_AXIS_W: f32 = 88.0;
     let plot_width = (chart_width - Y_AXIS_W - crate::ui::SP_8).max(80.0);
     let n = history.len().max(1);
     let peak_up = history.iter().map(|&(u, _)| u).max().unwrap_or(0);
@@ -1338,6 +1338,7 @@ fn traffic_waveform<'a>(
             })
             .size(theme::TYPE_MICRO)
             .font(theme::metric_font())
+            .wrapping(text::Wrapping::None)
             .color(down_color),
         )
         .height((down_area - 8.0).max(12.0))
@@ -1348,6 +1349,7 @@ fn traffic_waveform<'a>(
             text("0")
                 .size(theme::TYPE_MICRO)
                 .font(theme::metric_font())
+                .wrapping(text::Wrapping::None)
                 .color(text_tertiary),
         )
         .height(16)
@@ -1362,6 +1364,7 @@ fn traffic_waveform<'a>(
             })
             .size(theme::TYPE_MICRO)
             .font(theme::metric_font())
+            .wrapping(text::Wrapping::None)
             .color(up_color),
         )
         .height((up_area - 8.0).max(12.0))

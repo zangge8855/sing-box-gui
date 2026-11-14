@@ -426,11 +426,25 @@ pub fn render<'a>(
                     .center_x(Length::Fill),
                 );
             }
+            let list_gutter = if filtered_connections.is_empty() {
+                0.0
+            } else {
+                crate::ui::SCROLL_GUTTER
+            };
             let col = column![
                 page_title,
-                scrollable(list)
-                    .style(theme::scrollbar_style)
-                    .height(Length::Fill)
+                scrollable(container(list).padding(iced::Padding {
+                    right: list_gutter,
+                    ..Default::default()
+                }))
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::new()
+                        .width(6)
+                        .scroller_width(6)
+                        .margin(3),
+                ))
+                .style(theme::scrollbar_style)
+                .height(Length::Fill)
             ]
             .spacing(20)
             .width(Length::Fill)
@@ -493,13 +507,13 @@ pub fn render<'a>(
 
             let header: Element<'_, Message> = if is_wide {
                 row![
-                    make_hdr_btn(crate::state::ConnectionSort::Host, "host", 3),
-                    make_hdr_btn(crate::state::ConnectionSort::Process, "col_process", 2),
-                    make_hdr_btn(crate::state::ConnectionSort::Network, "network", 1),
-                    make_hdr_btn(crate::state::ConnectionSort::Chains, "chains", 2),
-                    make_hdr_btn(crate::state::ConnectionSort::Rule, "rule", 1),
-                    make_hdr_btn(crate::state::ConnectionSort::Download, "download", 1),
-                    make_hdr_btn(crate::state::ConnectionSort::Upload, "upload", 1),
+                    make_hdr_btn(crate::state::ConnectionSort::Host, "host", 6),
+                    make_hdr_btn(crate::state::ConnectionSort::Process, "col_process", 4),
+                    make_hdr_btn(crate::state::ConnectionSort::Network, "network", 2),
+                    make_hdr_btn(crate::state::ConnectionSort::Chains, "chains", 4),
+                    make_hdr_btn(crate::state::ConnectionSort::Rule, "rule", 3),
+                    make_hdr_btn(crate::state::ConnectionSort::Download, "download", 2),
+                    make_hdr_btn(crate::state::ConnectionSort::Upload, "upload", 2),
                     Space::new().width(Length::Fixed(CLOSE_COL_W))
                 ]
                 .spacing(crate::ui::SP_12)
@@ -508,14 +522,14 @@ pub fn render<'a>(
             } else {
                 let net_rule_label = format!("{} / {}", tr(lang, "network"), tr(lang, "rule"));
                 row![
-                    make_hdr_btn(crate::state::ConnectionSort::Host, "host", 3),
-                    make_hdr_btn(crate::state::ConnectionSort::Process, "col_process", 2),
-                    make_hdr_btn_custom(crate::state::ConnectionSort::Network, net_rule_label, 2),
-                    make_hdr_btn(crate::state::ConnectionSort::Chains, "chains", 2),
+                    make_hdr_btn(crate::state::ConnectionSort::Host, "host", 6),
+                    make_hdr_btn(crate::state::ConnectionSort::Process, "col_process", 4),
+                    make_hdr_btn_custom(crate::state::ConnectionSort::Network, net_rule_label, 5),
+                    make_hdr_btn(crate::state::ConnectionSort::Chains, "chains", 4),
                     make_hdr_btn_custom(
                         crate::state::ConnectionSort::Download,
                         "↓ / ↑".to_string(),
-                        3
+                        5
                     ),
                     Space::new().width(Length::Fixed(CLOSE_COL_W))
                 ]
@@ -568,9 +582,9 @@ pub fn render<'a>(
                 let len = filtered_connections.len();
                 // Cells are single-line: budget each column from its share of
                 // the table so text ends in an ellipsis instead of wrapping the
-                // row. Fill portions: wide 3+2+1+2+1+1+1, mid 3+2+2+2+3; the
+                // row. Fill portions: wide 6+4+2+4+3+2+2, mid 6+4+5+4+5; the
                 // close column is fixed.
-                let (portions, gutters) = if is_wide { (11.0, 7.0) } else { (12.0, 5.0) };
+                let (portions, gutters) = if is_wide { (23.0, 7.0) } else { (24.0, 5.0) };
                 let table_w = crate::ui::page_content_width(size.width, false);
                 let fixed =
                     2.0 + 8.0 + TABLE_SCROLL_LANE + CLOSE_COL_W + gutters * crate::ui::SP_12;
@@ -598,7 +612,7 @@ pub fn render<'a>(
                         prepared.chains_label.as_str()
                     };
 
-                    let host_short = truncate_width(host_full, cols(3.0, theme::TYPE_SECTION));
+                    let host_short = truncate_width(host_full, cols(6.0, theme::TYPE_SECTION));
                     let host_trunc = host_short != host_full;
                     let host = tip_wrap(
                         text(host_short)
@@ -611,7 +625,7 @@ pub fn render<'a>(
                         text_primary,
                     );
 
-                    let proc_short = truncate_width(process_label, cols(2.0, theme::TYPE_BTN_SM));
+                    let proc_short = truncate_width(process_label, cols(4.0, theme::TYPE_BTN_SM));
                     let proc_trunc = proc_short != process_label;
                     let process = tip_wrap(
                         text(proc_short)
@@ -624,7 +638,7 @@ pub fn render<'a>(
                         text_primary,
                     );
 
-                    let chains_short = truncate_width(chains_label, cols(2.0, theme::TYPE_BTN_SM));
+                    let chains_short = truncate_width(chains_label, cols(4.0, theme::TYPE_BTN_SM));
                     let chains_trunc = chains_short != chains_label;
                     let chains = tip_wrap(
                         text(chains_short)
@@ -655,7 +669,7 @@ pub fn render<'a>(
                     });
 
                     let row_content: Element<'_, Message> = if is_wide {
-                        let rule_short = truncate_width(&conn.rule, cols(1.0, theme::TYPE_BTN_SM));
+                        let rule_short = truncate_width(&conn.rule, cols(3.0, theme::TYPE_BTN_SM));
                         let rule_trunc = rule_short != conn.rule;
                         let rule_el = tip_wrap(
                             text(rule_short)
@@ -668,13 +682,13 @@ pub fn render<'a>(
                             text_primary,
                         );
                         row![
-                            cell(host, 3),
-                            cell(process, 2),
-                            cell(proto_badge, 1),
-                            cell(chains, 2),
-                            cell(rule_el, 1),
-                            cell(rate_label(ICON_DOWN, down_color, conn.download, theme), 1),
-                            cell(rate_label(ICON_UP, up_color, conn.upload, theme), 1),
+                            cell(host, 6),
+                            cell(process, 4),
+                            cell(proto_badge, 2),
+                            cell(chains, 4),
+                            cell(rule_el, 3),
+                            cell(rate_label(ICON_DOWN, down_color, conn.download, theme), 2),
+                            cell(rate_label(ICON_UP, up_color, conn.upload, theme), 2),
                             container(close_button(conn.id.clone(), lang, theme))
                                 .width(Length::Fixed(CLOSE_COL_W))
                                 .align_x(Alignment::End),
@@ -684,7 +698,7 @@ pub fn render<'a>(
                         .padding([7, 4])
                         .into()
                     } else {
-                        let rule_cols = cols(2.0, theme::TYPE_BTN_SM).saturating_sub(6).max(4);
+                        let rule_cols = cols(5.0, theme::TYPE_BTN_SM).saturating_sub(6).max(4);
                         let rule_short = truncate_width(&conn.rule, rule_cols);
                         let rule_trunc = rule_short != conn.rule;
                         let rule_el = tip_wrap(
@@ -708,11 +722,11 @@ pub fn render<'a>(
                         .align_y(Alignment::Center);
 
                         row![
-                            cell(host, 3),
-                            cell(process, 2),
-                            cell(net_rule, 2),
-                            cell(chains, 2),
-                            cell(traffic, 3),
+                            cell(host, 6),
+                            cell(process, 4),
+                            cell(net_rule, 5),
+                            cell(chains, 4),
+                            cell(traffic, 5),
                             container(close_button(conn.id.clone(), lang, theme))
                                 .width(Length::Fixed(CLOSE_COL_W))
                                 .align_x(Alignment::End),
