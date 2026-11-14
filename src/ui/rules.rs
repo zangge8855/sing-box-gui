@@ -3,7 +3,7 @@ use crate::state::{GuiConfig, Language, RuleField, RuleTarget};
 use crate::ui::i18n::tr;
 use crate::ui::page_header;
 use crate::ui::theme;
-use iced::widget::{Column, button, column, container, responsive, row, text, text_input};
+use iced::widget::{Column, button, column, container, responsive, row, text, text_input, tooltip};
 use iced::{Alignment, Element, Length};
 
 /// Every list row has the same height, so two cards can be matched by count.
@@ -22,6 +22,15 @@ pub fn render<'a>(
     let main_content = responsive(move |size| {
         let is_compact = size.width < crate::ui::PAGE_NARROW_W;
         let pad_compact = crate::ui::is_pad_compact(size.width);
+        let content_w =
+            crate::ui::page_content_width(size.width, pad_compact) - crate::ui::SCROLL_GUTTER;
+        let card_w = if is_compact {
+            content_w
+        } else {
+            (content_w - theme::GRID_GAP) / 2.0
+        };
+        // Text column inside rule item row: card_w - 2*CARD_PAD - pad_l(10) - pad_r(4) - tag(~42) - del(26) - spacing(24).
+        let item_cols = ((card_w - theme::CARD_PAD * 2.0 - 106.0) / 7.2).max(12.0) as usize;
         let theme = &theme_cloned;
 
         // What the built-in rules already cover, as one quiet line rather
@@ -70,6 +79,7 @@ pub fn render<'a>(
             direct_input,
             direct_lists,
             !is_compact && direct_rows < proxy_rows,
+            item_cols,
             lang,
             theme,
         );
@@ -78,6 +88,7 @@ pub fn render<'a>(
             proxy_input,
             proxy_lists,
             !is_compact && proxy_rows < direct_rows,
+            item_cols,
             lang,
             theme,
         );
@@ -107,6 +118,7 @@ fn rule_card<'a>(
     input_value: &'a str,
     lists: [(RuleField, &'a [String]); 2],
     stretch: bool,
+    item_cols: usize,
     lang: Language,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
@@ -136,13 +148,23 @@ fn rule_card<'a>(
     .spacing(crate::ui::SP_8)
     .align_y(Alignment::Center);
 
-    let input = text_input(tr(lang, "placeholder_rule"), input_value)
+    let validation_err =
+        crate::validate_rule_draft(target, input_value, lists[0].1, lists[1].1).err();
+    let can_add = !input_value.trim().is_empty() && validation_err.is_none();
+
+    let mut input = text_input(tr(lang, "placeholder_rule"), input_value)
         .on_input(move |value| Message::RulesInputChanged { target, value })
-        .on_submit(Message::AddRule { target })
         .padding([8, 10])
         .size(theme::TYPE_BTN_SM)
         .width(Length::Fill)
-        .style(theme::input_field);
+        .style(if validation_err.is_some() {
+            theme::input_field_error
+        } else {
+            theme::input_field
+        });
+    if can_add {
+        input = input.on_submit(Message::AddRule { target });
+    }
     let mut add_btn = button(
         row![
             text(crate::ui::icons::ICON_ADD)
@@ -155,7 +177,7 @@ fn rule_card<'a>(
     )
     .padding(theme::BTN_PAD_SM)
     .style(theme::button_secondary);
-    if !input_value.trim().is_empty() {
+    if can_add {
         add_btn = add_btn.on_press(Message::AddRule { target });
     }
 
@@ -179,16 +201,37 @@ fn rule_card<'a>(
             .style(theme::button_dismiss)
             .padding(3)
             .on_press(Message::RemoveRule { field, index });
-            let line = row![
-                container(
-                    text(item)
-                        .size(theme::TYPE_BTN_SM)
-                        .font(theme::mono_font())
-                        .color(text_primary)
-                        .wrapping(text::Wrapping::None),
+            let short_item = crate::ui::util::truncate_width(item, item_cols);
+            let is_truncated = short_item != *item;
+            let item_text = container(
+                text(short_item)
+                    .size(theme::TYPE_BTN_SM)
+                    .font(theme::mono_font())
+                    .color(text_primary)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::Fill)
+            .clip(true);
+            let item_el: Element<'a, Message> = if is_truncated {
+                tooltip(
+                    item_text,
+                    container(
+                        text(item.as_str())
+                            .size(theme::TYPE_BTN_SM)
+                            .font(theme::mono_font())
+                            .color(text_primary),
+                    )
+                    .padding([6, 10])
+                    .style(theme::popover_bg),
+                    tooltip::Position::Top,
                 )
-                .width(Length::Fill)
-                .clip(true),
+                .gap(4)
+                .into()
+            } else {
+                item_text.into()
+            };
+            let line = row![
+                item_el,
                 text(tag).size(theme::TYPE_MICRO).color(text_tertiary),
                 delete,
             ]
@@ -204,7 +247,7 @@ fn rule_card<'a>(
                     .height(RULE_ROW_H)
                     .align_y(Alignment::Center)
                     .width(Length::Fill)
-                    .style(|t| theme::list_item_style(t, false, false)),
+                    .style(theme::list_item_flat),
             );
         }
     }
@@ -223,25 +266,33 @@ fn rule_card<'a>(
         list.into()
     };
 
-    let mut card = container(
+    let mut card_items = column![
         column![
-            column![
-                title_row,
-                text(tr(lang, desc_key))
-                    .size(theme::TYPE_CAPTION)
-                    .color(text_muted),
-            ]
-            .spacing(4),
-            row![input, add_btn]
-                .spacing(crate::ui::SP_8)
-                .align_y(Alignment::Center),
-            list,
+            title_row,
+            text(tr(lang, desc_key))
+                .size(theme::TYPE_CAPTION)
+                .color(text_muted),
         ]
-        .spacing(crate::ui::SP_12),
-    )
-    .padding(theme::CARD_PAD)
-    .width(Length::FillPortion(1))
-    .style(theme::card_bg);
+        .spacing(4),
+        row![input, add_btn]
+            .spacing(crate::ui::SP_8)
+            .align_y(Alignment::Center),
+    ]
+    .spacing(crate::ui::SP_12);
+
+    if let Some(err_key) = validation_err {
+        card_items = card_items.push(
+            text(tr(lang, err_key))
+                .size(theme::TYPE_CAPTION)
+                .color(theme::danger_text(theme)),
+        );
+    }
+    card_items = card_items.push(list);
+
+    let mut card = container(card_items)
+        .padding(theme::CARD_PAD)
+        .width(Length::FillPortion(1))
+        .style(theme::card_bg);
     if stretch {
         card = card.height(Length::Fill);
     }

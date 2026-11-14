@@ -1,8 +1,8 @@
 use crate::api::Connection;
 use crate::message::Message;
-use crate::ui::icons::{ICON_DELETE, ICON_DOWN, ICON_UP};
+use crate::ui::icons::{ICON_CLOSE, ICON_DOWN, ICON_UP};
 use crate::ui::theme;
-use crate::ui::util::{format_size, truncate_chars, truncate_width};
+use crate::ui::util::{format_size, truncate_width};
 use crate::ui::{CONNECTIONS_TABLE_W, CONNECTIONS_WIDE_W, page_header};
 use iced::widget::text::Wrapping;
 use iced::widget::{
@@ -334,18 +334,33 @@ pub fn render<'a>(
 
                     let close_btn = close_button(conn.id.clone(), lang, theme);
 
+                    let host_short = truncate_width(host_full, 44);
+                    let host_el: Element<'_, Message> = if host_short != host_full {
+                        tooltip(
+                            text(host_short)
+                                .color(text_primary)
+                                .size(theme::TYPE_SECTION)
+                                .font(theme::ui_font(iced::font::Weight::Bold)),
+                            container(text(host_full).size(theme::TYPE_BTN_SM).color(text_primary))
+                                .padding([6, 10])
+                                .style(theme::popover_bg),
+                            tooltip::Position::Top,
+                        )
+                        .gap(4)
+                        .into()
+                    } else {
+                        text(host_short)
+                            .color(text_primary)
+                            .size(theme::TYPE_SECTION)
+                            .font(theme::ui_font(iced::font::Weight::Bold))
+                            .into()
+                    };
+
                     let card = container(
                         column![
-                            row![
-                                text(truncate_chars(host_full, 48))
-                                    .color(text_primary)
-                                    .size(theme::TYPE_SECTION)
-                                    .font(theme::ui_font(iced::font::Weight::Bold))
-                                    .width(Length::Fill),
-                                close_btn
-                            ]
-                            .align_y(Alignment::Center)
-                            .width(Length::Fill),
+                            row![container(host_el).width(Length::Fill), close_btn]
+                                .align_y(Alignment::Center)
+                                .width(Length::Fill),
                             row![
                                 container(
                                     text(conn.metadata.network.to_uppercase())
@@ -356,7 +371,7 @@ pub fn render<'a>(
                                 .padding([2, 6])
                                 .style(theme::badge_bg),
                                 container(
-                                    text(truncate_chars(&conn.rule, 24))
+                                    text(truncate_width(&conn.rule, 24))
                                         .size(theme::TYPE_MICRO)
                                         .color(text_muted)
                                 )
@@ -368,14 +383,14 @@ pub fn render<'a>(
                             text(format!(
                                 "{}: {}",
                                 tr(lang, "col_process"),
-                                truncate_chars(process_label, 36)
+                                truncate_width(process_label, 36)
                             ))
                             .color(text_muted)
                             .size(theme::TYPE_CAPTION),
                             text(format!(
                                 "{}: {}",
                                 tr(lang, "chains"),
-                                truncate_chars(chains_text, 40)
+                                truncate_width(chains_text, 40)
                             ))
                             .color(text_muted)
                             .size(theme::TYPE_CAPTION),
@@ -509,8 +524,7 @@ pub fn render<'a>(
                 .into()
             };
 
-            let mut list = column!().spacing(0);
-            if filtered_connections.is_empty() {
+            let list_content: Element<'_, Message> = if filtered_connections.is_empty() {
                 let empty_msg = if query_str.trim().is_empty() {
                     tr(lang, "no_active_connections")
                 } else {
@@ -548,8 +562,9 @@ pub fn render<'a>(
                 } else {
                     None
                 };
-                list = list.push(crate::ui::empty_state(empty_msg, hint, cta, theme));
+                crate::ui::empty_state(empty_msg, hint, cta, theme)
             } else {
+                let mut list = column!().spacing(0);
                 let len = filtered_connections.len();
                 // Cells are single-line: budget each column from its share of
                 // the table so text ends in an ellipsis instead of wrapping the
@@ -583,19 +598,44 @@ pub fn render<'a>(
                         prepared.chains_label.as_str()
                     };
 
-                    let host = text(truncate_width(host_full, cols(3.0, theme::TYPE_SECTION)))
-                        .size(theme::TYPE_SECTION)
-                        .color(text_primary)
-                        .wrapping(Wrapping::None);
-                    let process =
-                        text(truncate_width(process_label, cols(2.0, theme::TYPE_BTN_SM)))
+                    let host_short = truncate_width(host_full, cols(3.0, theme::TYPE_SECTION));
+                    let host_trunc = host_short != host_full;
+                    let host = tip_wrap(
+                        text(host_short)
+                            .size(theme::TYPE_SECTION)
+                            .color(text_primary)
+                            .wrapping(Wrapping::None)
+                            .into(),
+                        host_full,
+                        host_trunc,
+                        text_primary,
+                    );
+
+                    let proc_short = truncate_width(process_label, cols(2.0, theme::TYPE_BTN_SM));
+                    let proc_trunc = proc_short != process_label;
+                    let process = tip_wrap(
+                        text(proc_short)
                             .size(theme::TYPE_BTN_SM)
                             .color(text_muted)
-                            .wrapping(Wrapping::None);
-                    let chains = text(truncate_width(chains_label, cols(2.0, theme::TYPE_BTN_SM)))
-                        .size(theme::TYPE_BTN_SM)
-                        .color(text_muted)
-                        .wrapping(Wrapping::None);
+                            .wrapping(Wrapping::None)
+                            .into(),
+                        process_label,
+                        proc_trunc,
+                        text_primary,
+                    );
+
+                    let chains_short = truncate_width(chains_label, cols(2.0, theme::TYPE_BTN_SM));
+                    let chains_trunc = chains_short != chains_label;
+                    let chains = tip_wrap(
+                        text(chains_short)
+                            .size(theme::TYPE_BTN_SM)
+                            .color(text_muted)
+                            .wrapping(Wrapping::None)
+                            .into(),
+                        chains_label,
+                        chains_trunc,
+                        text_primary,
+                    );
 
                     let is_udp = conn.metadata.network.to_lowercase().contains("udp");
                     let proto_badge = container(
@@ -615,18 +655,24 @@ pub fn render<'a>(
                     });
 
                     let row_content: Element<'_, Message> = if is_wide {
+                        let rule_short = truncate_width(&conn.rule, cols(1.0, theme::TYPE_BTN_SM));
+                        let rule_trunc = rule_short != conn.rule;
+                        let rule_el = tip_wrap(
+                            text(rule_short)
+                                .size(theme::TYPE_BTN_SM)
+                                .color(text_muted)
+                                .wrapping(Wrapping::None)
+                                .into(),
+                            &conn.rule,
+                            rule_trunc,
+                            text_primary,
+                        );
                         row![
                             cell(host, 3),
                             cell(process, 2),
                             cell(proto_badge, 1),
                             cell(chains, 2),
-                            cell(
-                                text(truncate_width(&conn.rule, cols(1.0, theme::TYPE_BTN_SM)))
-                                    .size(theme::TYPE_BTN_SM)
-                                    .color(text_muted)
-                                    .wrapping(Wrapping::None),
-                                1
-                            ),
+                            cell(rule_el, 1),
                             cell(rate_label(ICON_DOWN, down_color, conn.download, theme), 1),
                             cell(rate_label(ICON_UP, up_color, conn.upload, theme), 1),
                             container(close_button(conn.id.clone(), lang, theme))
@@ -638,18 +684,22 @@ pub fn render<'a>(
                         .padding([7, 4])
                         .into()
                     } else {
-                        let net_rule = row![
-                            proto_badge,
-                            text(truncate_width(
-                                &conn.rule,
-                                cols(2.0, theme::TYPE_BTN_SM) - 6
-                            ))
-                            .size(theme::TYPE_BTN_SM)
-                            .color(text_muted)
-                            .wrapping(Wrapping::None),
-                        ]
-                        .spacing(6)
-                        .align_y(Alignment::Center);
+                        let rule_cols = cols(2.0, theme::TYPE_BTN_SM).saturating_sub(6).max(4);
+                        let rule_short = truncate_width(&conn.rule, rule_cols);
+                        let rule_trunc = rule_short != conn.rule;
+                        let rule_el = tip_wrap(
+                            text(rule_short)
+                                .size(theme::TYPE_BTN_SM)
+                                .color(text_muted)
+                                .wrapping(Wrapping::None)
+                                .into(),
+                            &conn.rule,
+                            rule_trunc,
+                            text_primary,
+                        );
+                        let net_rule = row![proto_badge, rule_el]
+                            .spacing(6)
+                            .align_y(Alignment::Center);
                         let traffic = row![
                             rate_label(ICON_DOWN, down_color, conn.download, theme),
                             rate_label(ICON_UP, up_color, conn.upload, theme),
@@ -673,11 +723,10 @@ pub fn render<'a>(
                         .into()
                     };
 
-                    // Hover-friendly row surface with zebra pattern
                     list = list.push(
                         container(row_content)
                             .width(Length::Fill)
-                            .style(move |t| theme::list_item_zebra(t, false, false, idx % 2 == 1)),
+                            .style(move |t| theme::table_row_bg(t, idx % 2 == 1)),
                     );
 
                     if idx + 1 < len {
@@ -689,64 +738,64 @@ pub fn render<'a>(
                         );
                     }
                 }
-            }
 
-            let header_styled = container(header)
-                .padding(iced::Padding {
-                    top: 10.0,
-                    right: TABLE_SCROLL_LANE,
-                    bottom: 10.0,
-                    left: 0.0,
-                })
-                .style(|t| container::Style {
-                    background: Some(iced::Background::Color(theme::elevated_surface(t))),
-                    border: iced::Border {
-                        color: theme::border_color(t),
-                        width: 1.0,
-                        radius: 0.0.into(),
-                    },
-                    ..Default::default()
-                });
-
-            let list_content: Element<'_, Message> = container(column![
-                header_styled,
-                scrollable(
-                    container(if hidden_connections > 0 {
-                        list.push(
-                            container(
-                                text(format!(
-                                    "{} {}",
-                                    hidden_connections,
-                                    tr(lang, "connections_hidden_hint")
-                                ))
-                                .size(theme::TYPE_CAPTION)
-                                .color(text_muted),
-                            )
-                            .width(Length::Fill)
-                            .padding(12)
-                            .center_x(Length::Fill),
-                        )
-                    } else {
-                        list
-                    })
+                let header_styled = container(header)
                     .padding(iced::Padding {
+                        top: 10.0,
                         right: TABLE_SCROLL_LANE,
-                        ..Default::default()
+                        bottom: 10.0,
+                        left: 0.0,
                     })
-                )
-                .direction(scrollable::Direction::Vertical(
-                    scrollable::Scrollbar::new()
-                        .width(6)
-                        .scroller_width(6)
-                        .margin(3),
-                ))
-                .style(theme::scrollbar_style)
+                    .style(|t| container::Style {
+                        background: Some(iced::Background::Color(theme::elevated_surface(t))),
+                        border: iced::Border {
+                            color: theme::border_color(t),
+                            width: 1.0,
+                            radius: 0.0.into(),
+                        },
+                        ..Default::default()
+                    });
+
+                container(column![
+                    header_styled,
+                    scrollable(
+                        container(if hidden_connections > 0 {
+                            list.push(
+                                container(
+                                    text(format!(
+                                        "{} {}",
+                                        hidden_connections,
+                                        tr(lang, "connections_hidden_hint")
+                                    ))
+                                    .size(theme::TYPE_CAPTION)
+                                    .color(text_muted),
+                                )
+                                .width(Length::Fill)
+                                .padding(12)
+                                .center_x(Length::Fill),
+                            )
+                        } else {
+                            list
+                        })
+                        .padding(iced::Padding {
+                            right: TABLE_SCROLL_LANE,
+                            ..Default::default()
+                        })
+                    )
+                    .direction(scrollable::Direction::Vertical(
+                        scrollable::Scrollbar::new()
+                            .width(6)
+                            .scroller_width(6)
+                            .margin(3),
+                    ))
+                    .style(theme::scrollbar_style)
+                    .height(Length::Fill)
+                ])
+                .style(theme::card_bg)
                 .height(Length::Fill)
-            ])
-            .style(theme::card_bg)
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .into();
+                .width(Length::Fill)
+                .into()
+            };
 
             let col = column![page_title, list_content]
                 .spacing(crate::ui::SP_20)
@@ -811,7 +860,7 @@ fn close_button<'a>(
 ) -> Element<'a, Message> {
     tooltip(
         button(
-            text(ICON_DELETE)
+            text(ICON_CLOSE)
                 .font(Font::with_name("Material Icons"))
                 .size(16),
         )
@@ -829,4 +878,30 @@ fn close_button<'a>(
     )
     .gap(4)
     .into()
+}
+
+fn tip_wrap<'a>(
+    el: Element<'a, Message>,
+    full: &str,
+    truncated: bool,
+    text_primary: Color,
+) -> Element<'a, Message> {
+    if truncated {
+        tooltip(
+            el,
+            container(
+                text(full.to_string())
+                    .size(theme::TYPE_BTN_SM)
+                    .color(text_primary),
+            )
+            .padding([6, 10])
+            .max_width(420)
+            .style(theme::popover_bg),
+            tooltip::Position::Top,
+        )
+        .gap(4)
+        .into()
+    } else {
+        el
+    }
 }

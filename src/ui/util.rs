@@ -73,6 +73,7 @@ pub fn traffic_usage_ratio(upload: u64, download: u64, total: u64) -> Option<f32
 }
 
 /// Truncate a string to at most `max_chars` Unicode characters, appending `...`.
+#[cfg(test)]
 pub fn truncate_chars(s: &str, max_chars: usize) -> String {
     let count = s.chars().count();
     if count <= max_chars {

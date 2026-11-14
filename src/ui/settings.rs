@@ -7,7 +7,7 @@ use crate::ui::page_header;
 use crate::ui::theme;
 use iced::widget::{
     Column, Space, button, column, container, pick_list, responsive, row, scrollable, text,
-    text_input, toggler,
+    text_input, toggler, tooltip,
 };
 use iced::{Alignment, Element, Length};
 
@@ -40,11 +40,13 @@ pub fn render<'a>(
     draft: &'a RuntimeSettingsDraft,
     errors: &'a std::collections::BTreeMap<&'static str, &'static str>,
     core_installed: bool,
+    core_running: bool,
     install_state: &'a CoreInstallState,
     core_version: Option<&'a str>,
     update_status: &'a UpdateStatus,
     config_preview_expanded: bool,
     config_preview: Option<&'a str>,
+    anim_tick: u8,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -124,6 +126,24 @@ pub fn render<'a>(
                 } else {
                     theme::button_secondary
                 });
+            if let Some(msg) = msg {
+                b = b.on_press(msg);
+            }
+            b
+        };
+        let small_icon_btn = |glyph: &'static str, key: &'static str, msg: Option<Message>| {
+            let mut b = button(
+                row![
+                    text(glyph)
+                        .font(iced::Font::with_name("Material Icons"))
+                        .size(14),
+                    text(tr(lang, key)).size(theme::TYPE_BTN_SM),
+                ]
+                .spacing(5)
+                .align_y(Alignment::Center),
+            )
+            .padding(theme::BTN_PAD_SM)
+            .style(theme::button_secondary);
             if let Some(msg) = msg {
                 b = b.on_press(msg);
             }
@@ -256,7 +276,7 @@ pub fn render<'a>(
                 Some(check_btn().into()),
             ),
             UpdateStatus::Checking => (
-                crate::ui::loading_row(tr(lang, "status_checking"), theme),
+                crate::ui::loading_row_animated(tr(lang, "status_checking"), anim_tick, theme),
                 None,
             ),
             UpdateStatus::Downloading { tag } | UpdateStatus::Installing { tag } => {
@@ -267,7 +287,7 @@ pub fn render<'a>(
                 };
                 (
                     row![
-                        crate::ui::loading_row(tr(lang, key), theme),
+                        crate::ui::loading_row_animated(tr(lang, key), anim_tick, theme),
                         caption(tag.clone(), theme::warning_text(theme)),
                     ]
                     .spacing(crate::ui::SP_8)
@@ -360,11 +380,45 @@ pub fn render<'a>(
             update_row = update_row.push(control);
         }
 
-        let general = section(
-            "settings_general",
+        // Visually separate instant-apply Appearance from draft settings.
+        let appearance = container(
+            column![
+                row![
+                    text(tr(lang, "appearance_settings"))
+                        .size(theme::TYPE_HEADING)
+                        .font(theme::ui_font(iced::font::Weight::Semibold))
+                        .color(text_primary),
+                    Space::new().width(Length::Fill),
+                    container(
+                        text(tr(lang, "appearance_instant_hint"))
+                            .size(theme::TYPE_MICRO)
+                            .color(theme::info_text(theme)),
+                    )
+                    .padding([2, 8])
+                    .style(|t| theme::badge_colored(theme::INFO, t)),
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
+                container(inline("app_language", None, None, lang_picker.into()))
+                    .padding([10, 0])
+                    .width(Length::Fill),
+                container(Space::new())
+                    .width(Length::Fill)
+                    .height(1)
+                    .style(theme::hairline),
+                container(inline("app_theme", None, None, theme_picker.into()))
+                    .padding([10, 0])
+                    .width(Length::Fill),
+            ]
+            .width(Length::Fill),
+        )
+        .padding([16.0, theme::CARD_PAD])
+        .width(Length::Fill)
+        .style(theme::card_bg);
+
+        let behavior = section(
+            "settings_behavior",
             vec![
-                inline("app_language", None, None, lang_picker.into()),
-                inline("app_theme", None, None, theme_picker.into()),
                 inline(
                     "autostart_label",
                     Some("help_autostart"),
@@ -601,18 +655,36 @@ pub fn render<'a>(
                 | CoreInstallState::Extracting
                 | CoreInstallState::Installing
         );
-        let core_action = if core_installed {
+        let core_action_btn = if core_installed {
             small_btn(
                 "btn_reinstall_core",
-                (!core_busy).then_some(Message::ForceCoreDownload),
+                (!core_busy && !core_running).then_some(Message::ForceCoreDownload),
                 false,
             )
         } else {
             small_btn(
                 "btn_download_core",
-                (!core_busy).then_some(Message::TriggerCoreDownload),
+                (!core_busy && !core_running).then_some(Message::TriggerCoreDownload),
                 true,
             )
+        };
+        let core_action: Element<'a, Message> = if core_running {
+            tooltip(
+                core_action_btn,
+                container(
+                    text(tr(lang, "core_download_requires_stop"))
+                        .size(theme::TYPE_CAPTION)
+                        .color(text_primary),
+                )
+                .padding([6, 10])
+                .max_width(260)
+                .style(theme::popover_bg),
+                tooltip::Position::Left,
+            )
+            .gap(6)
+            .into()
+        } else {
+            core_action_btn.into()
         };
         let mut core_status = column![
             row![
@@ -630,20 +702,34 @@ pub fn render<'a>(
             .align_y(Alignment::Center)
         ]
         .spacing(10);
+        if core_running {
+            core_status = core_status.push(caption(
+                tr(lang, "core_download_requires_stop").to_string(),
+                theme::warning_text(theme),
+            ));
+        }
         let install_line: Option<Element<'a, Message>> = match install_state {
             CoreInstallState::Idle => None,
-            CoreInstallState::Downloading => {
-                Some(crate::ui::loading_row(tr(lang, "core_downloading"), theme))
-            }
-            CoreInstallState::Verifying => {
-                Some(crate::ui::loading_row(tr(lang, "core_verifying"), theme))
-            }
-            CoreInstallState::Extracting => {
-                Some(crate::ui::loading_row(tr(lang, "core_extracting"), theme))
-            }
-            CoreInstallState::Installing => {
-                Some(crate::ui::loading_row(tr(lang, "core_installing"), theme))
-            }
+            CoreInstallState::Downloading => Some(crate::ui::loading_row_animated(
+                tr(lang, "core_downloading"),
+                anim_tick,
+                theme,
+            )),
+            CoreInstallState::Verifying => Some(crate::ui::loading_row_animated(
+                tr(lang, "core_verifying"),
+                anim_tick,
+                theme,
+            )),
+            CoreInstallState::Extracting => Some(crate::ui::loading_row_animated(
+                tr(lang, "core_extracting"),
+                anim_tick,
+                theme,
+            )),
+            CoreInstallState::Installing => Some(crate::ui::loading_row_animated(
+                tr(lang, "core_installing"),
+                anim_tick,
+                theme,
+            )),
             CoreInstallState::Installed => Some(
                 caption(
                     tr(lang, "core_install_success").to_string(),
@@ -662,7 +748,11 @@ pub fn render<'a>(
                     // An error can come from a forced reinstall while the old
                     // binary is still present; retry must not short-circuit on
                     // the existing destination.
-                    small_btn("btn_retry_core", Some(Message::ForceCoreDownload), false),
+                    small_btn(
+                        "btn_retry_core",
+                        (!core_running && !core_busy).then_some(Message::ForceCoreDownload),
+                        false
+                    ),
                 ]
                 .spacing(crate::ui::SP_16)
                 .align_y(Alignment::Center)
@@ -674,6 +764,7 @@ pub fn render<'a>(
         }
 
         let core_path_error = errors.get("core_path").copied();
+        let has_custom_path = !draft.core_path.trim().is_empty();
         let core_path_control = row![
             field(
                 tr(lang, "placeholder_core_path"),
@@ -682,7 +773,16 @@ pub fn render<'a>(
                 core_path_error.is_some(),
             )
             .width(Length::Fill),
-            small_btn("btn_clear_core_path", Some(Message::ClearCorePath), false),
+            small_icon_btn(
+                crate::ui::icons::ICON_FOLDER_OPEN,
+                "btn_browse",
+                Some(Message::BrowseCorePath),
+            ),
+            small_btn(
+                "btn_clear_core_path",
+                has_custom_path.then_some(Message::ClearCorePath),
+                false,
+            ),
         ]
         .spacing(crate::ui::SP_8)
         .align_y(Alignment::Center);
@@ -706,14 +806,14 @@ pub fn render<'a>(
             ],
         );
 
-        // Two balanced columns once each row has room for a label beside its
-        // control; one column (Windows-settings style) below that.
+        // Two height-balanced columns: Appearance + Startup/Updates + Advanced (11 rows)
+        // beside Proxy + DNS + Core (11 rows).
         let sections: Element<'_, Message> = if size.width >= crate::ui::SETTINGS_2COL_W {
             row![
-                column![general, proxy]
+                column![appearance, behavior, advanced]
                     .spacing(theme::GRID_GAP)
                     .width(Length::FillPortion(1)),
-                column![dns, advanced, core]
+                column![proxy, dns, core]
                     .spacing(theme::GRID_GAP)
                     .width(Length::FillPortion(1)),
             ]
@@ -721,7 +821,7 @@ pub fn render<'a>(
             .width(Length::Fill)
             .into()
         } else {
-            column![general, proxy, dns, advanced, core]
+            column![appearance, behavior, proxy, dns, advanced, core]
                 .spacing(theme::GRID_GAP)
                 .width(Length::Fill)
                 .into()
@@ -739,6 +839,15 @@ pub fn render<'a>(
         .padding(theme::BTN_PAD_SM)
         .style(theme::button_secondary)
         .on_press(Message::ToggleConfigPreview);
+        let mut preview_actions = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
+        if config_preview_expanded {
+            preview_actions = preview_actions.push(small_icon_btn(
+                crate::ui::icons::ICON_COPY,
+                "btn_copy",
+                config_preview.map(|_| Message::CopyConfigPreview),
+            ));
+        }
+        preview_actions = preview_actions.push(preview_toggle);
         let preview_header = row![
             column![
                 text(tr(lang, "core_config_preview"))
@@ -750,20 +859,31 @@ pub fn render<'a>(
             ]
             .spacing(3)
             .width(Length::Fill),
-            preview_toggle,
+            preview_actions,
         ]
         .spacing(crate::ui::SP_16)
         .align_y(Alignment::Center);
         let mut preview_col = column![preview_header].spacing(crate::ui::SP_12);
         if config_preview_expanded {
+            let bar = || {
+                scrollable::Scrollbar::new()
+                    .width(6)
+                    .scroller_width(6)
+                    .margin(2)
+            };
             preview_col = preview_col.push(
                 container(
                     scrollable(
                         text(config_preview.unwrap_or("..."))
                             .font(theme::mono_font())
                             .size(theme::TYPE_MONO)
+                            .wrapping(text::Wrapping::None)
                             .color(text_primary),
                     )
+                    .direction(scrollable::Direction::Both {
+                        vertical: bar(),
+                        horizontal: bar(),
+                    })
                     .style(theme::scrollbar_style)
                     .height(Length::Fixed((size.height - 320.0).clamp(120.0, 280.0)))
                     .width(Length::Fill),
@@ -778,23 +898,10 @@ pub fn render<'a>(
             .style(theme::card_bg);
 
         let has_pending_changes = draft.has_pending_changes(gui_config);
-        let mut content_col = column![].spacing(theme::GRID_GAP).width(Length::Fill);
-        if has_pending_changes {
-            content_col = content_col.push(
-                container(
-                    text(tr(lang, "settings_pending"))
-                        .size(theme::TYPE_CAPTION)
-                        .color(theme::warning_text(theme)),
-                )
-                .padding([8, 10])
-                .width(Length::Fill)
-                .style(|t| theme::tinted_banner(t, theme::WARNING)),
-            );
-        }
-        content_col = content_col.push(sections).push(preview_card);
+        let content_col = column![sections, preview_card]
+            .spacing(theme::GRID_GAP)
+            .width(Length::Fill);
 
-        // Save only lights up when there is something to save, and a way
-        // back sits beside it. Header buttons share the medium size.
         let mut save_btn = button(text(tr(lang, "btn_save_apply")).size(theme::TYPE_BTN_MD))
             .padding(theme::BTN_PAD_MD)
             .style(theme::button_primary);
@@ -810,12 +917,38 @@ pub fn render<'a>(
         }
         header_actions = header_actions.push(save_btn);
 
-        let header = page_header("settings", lang, Some(header_actions.into()), theme, false);
-        crate::ui::page_shell_with_pad(
-            header,
-            content_col.into(),
-            crate::ui::is_pad_compact(size.width),
-        )
+        let pad_compact = crate::ui::is_pad_compact(size.width);
+        let header = page_header(
+            "tab_settings",
+            lang,
+            Some(header_actions.into()),
+            theme,
+            pad_compact,
+        );
+        let pinned_header: Element<'_, Message> = if has_pending_changes {
+            let dirty_bar = container(
+                row![
+                    crate::ui::material_icon(crate::ui::icons::ICON_INFO)
+                        .size(crate::ui::ICON_SIZE)
+                        .color(theme::warning_text(theme)),
+                    text(tr(lang, "settings_pending"))
+                        .size(theme::TYPE_CAPTION)
+                        .color(theme::warning_text(theme))
+                        .width(Length::Fill),
+                    small_btn("btn_discard_changes", Some(Message::DiscardSettings), false),
+                    small_btn("btn_save_apply", Some(Message::SaveSettings), true),
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
+            )
+            .padding([8, 12])
+            .width(Length::Fill)
+            .style(|t| theme::tinted_banner(t, theme::WARNING));
+            column![header, dirty_bar].spacing(crate::ui::SP_12).into()
+        } else {
+            header
+        };
+        crate::ui::page_shell_with_pad(pinned_header, content_col.into(), pad_compact)
     });
 
     main_content.into()

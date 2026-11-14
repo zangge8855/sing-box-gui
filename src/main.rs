@@ -117,7 +117,9 @@ struct App {
     last_sys_proxy_enabled: bool,
     last_routing_mode: state::RoutingMode,
 
-    toast: Option<Toast>,
+    toasts: Vec<Toast>,
+    show_all_proxies: bool,
+    ui_anim_tick: u8,
     log_filter: state::LogFilter,
     log_search: String,
     core_version: Option<String>,
@@ -311,7 +313,9 @@ impl App {
             last_core_running: false,
             last_sys_proxy_enabled: false,
             last_routing_mode: initial_routing_mode,
-            toast: None,
+            toasts: Vec::new(),
+            show_all_proxies: false,
+            ui_anim_tick: 0,
             log_filter: state::LogFilter::All,
             log_search: String::new(),
             core_version: None,
@@ -420,11 +424,12 @@ impl App {
                 tokio::task::spawn_blocking(move || {
                     let content = std::fs::read_to_string(&path)
                         .map_err(|error| format!("Failed to read active profile: {error}"))?;
-                    let trimmed = content.trim();
+                    let normalized = config::normalize_profile_content(&content);
+                    let trimmed = normalized.trim();
                     if trimmed.starts_with('{') || trimmed.starts_with('[') {
-                        config::parse_native_json_nodes(&content)
+                        config::parse_native_json_nodes(trimmed)
                     } else {
-                        config::parse_clash_yaml_nodes(&content)
+                        config::parse_clash_yaml_nodes(&normalized)
                     }
                 })
                 .await
@@ -920,7 +925,20 @@ impl App {
     }
 
     fn show_toast(&mut self, toast: Toast) {
-        self.toast = Some(toast);
+        const MAX_VISIBLE_TOASTS: usize = 3;
+        if let Some(existing) = self
+            .toasts
+            .iter_mut()
+            .find(|t| t.kind == toast.kind && t.message == toast.message)
+        {
+            existing.remaining_secs = toast.remaining_secs;
+            return;
+        }
+        self.toasts.push(toast);
+        if self.toasts.len() > MAX_VISIBLE_TOASTS {
+            let excess = self.toasts.len() - MAX_VISIBLE_TOASTS;
+            self.toasts.drain(..excess);
+        }
     }
 
     fn toast_success(&mut self, msg: impl Into<String>) {
@@ -1051,7 +1069,7 @@ impl App {
                         if self.confirm_delete_profile_id.is_some() {
                             return Task::done(Message::CancelDeleteProfile);
                         }
-                        self.toast = None;
+                        self.toasts.pop();
                     }
                     iced::keyboard::Key::Character(character)
                         if modifiers.command() && character.eq_ignore_ascii_case("s") =>
@@ -1133,6 +1151,11 @@ impl App {
             }
             Message::SelectGroup(group) => {
                 self.selected_group = group;
+                self.show_all_proxies = false;
+                Task::none()
+            }
+            Message::ToggleShowAllProxies => {
+                self.show_all_proxies = !self.show_all_proxies;
                 Task::none()
             }
             Message::SelectGroupNode { group, node } => {
@@ -1370,6 +1393,30 @@ impl App {
             Message::LogSearchChanged(q) => {
                 self.log_search = q;
                 Task::none()
+            }
+            Message::ResetLogFilters => {
+                self.log_filter = state::LogFilter::All;
+                self.log_search.clear();
+                Task::none()
+            }
+            Message::CopyLogs => {
+                let q_upper = self.log_search.to_uppercase();
+                let lines: Vec<&str> = self
+                    .log_lines
+                    .iter()
+                    .filter(|line| {
+                        let uppercase = line.to_uppercase();
+                        self.log_filter.matches_upper(&uppercase)
+                            && (q_upper.is_empty() || uppercase.contains(&q_upper))
+                    })
+                    .map(String::as_str)
+                    .collect();
+                if lines.is_empty() {
+                    return Task::none();
+                }
+                let joined = lines.join("\n");
+                self.toast_info(self.tr("toast_copied"));
+                iced::clipboard::write(joined)
             }
             Message::ToggleLogsFollow => {
                 self.logs_follow = !self.logs_follow;
@@ -1714,6 +1761,7 @@ impl App {
                 self.proxy_groups.clear();
                 self.selected_group.clear();
                 self.node_search.clear();
+                self.show_all_proxies = false;
                 self.config_dirty = true;
                 self.push_log("[GUI] Active profile updated.".to_string());
                 self.toast_success(self.tr("profile_selected_toast"));
@@ -1774,6 +1822,7 @@ impl App {
                     self.gui_config.active_profile_id = None;
                     self.gui_config.selected_node_tag = None;
                     self.active_profile_nodes.clear();
+                    self.show_all_proxies = false;
                 }
                 self.config_dirty = true;
                 self.push_log("[GUI] Profile deleted.".to_string());
@@ -1871,7 +1920,7 @@ impl App {
                                         api_port, &tag, &test_url, timeout_ms,
                                     )
                                     .await;
-                                    results.push((tag, latency.ok()));
+                                    results.push((tag, Some(latency.unwrap_or(9999))));
                                 }
                                 results
                             },
@@ -1986,15 +2035,15 @@ impl App {
                     && self.tick_authority_counter.is_multiple_of(5);
                 self.tick_authority_counter = self.tick_authority_counter.wrapping_add(1);
 
-                // Auto-dismiss toast
-                if let Some(ref mut toast) = self.toast {
+                self.ui_anim_tick = self.ui_anim_tick.wrapping_add(1);
+
+                // Auto-dismiss toasts
+                for toast in &mut self.toasts {
                     if toast.remaining_secs > 0 {
                         toast.remaining_secs -= 1;
                     }
-                    if toast.remaining_secs == 0 {
-                        self.toast = None;
-                    }
                 }
+                self.toasts.retain(|t| t.remaining_secs > 0);
 
                 // Auto-update scan every 60 seconds
                 self.auto_update_tick_counter = self.auto_update_tick_counter.saturating_add(1);
@@ -2390,7 +2439,13 @@ impl App {
                 }
             }
             Message::DismissToast => {
-                self.toast = None;
+                self.toasts.pop();
+                Task::none()
+            }
+            Message::DismissToastAt(index) => {
+                if index < self.toasts.len() {
+                    self.toasts.remove(index);
+                }
                 Task::none()
             }
 
@@ -2426,6 +2481,38 @@ impl App {
                 self.toast_info(self.tr("core_path_default_draft"));
                 Task::none()
             }
+            Message::BrowseCorePath => {
+                let start_dir = {
+                    let trimmed = self.settings_draft.core_path.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        std::path::Path::new(trimmed)
+                            .parent()
+                            .filter(|p| p.exists())
+                            .map(|p| p.to_path_buf())
+                    }
+                };
+                Task::perform(
+                    async move {
+                        let dialog = rfd::AsyncFileDialog::new();
+                        #[cfg(target_os = "windows")]
+                        let dialog = dialog.add_filter("Executable", &["exe"]);
+                        let dialog = if let Some(dir) = start_dir {
+                            dialog.set_directory(dir)
+                        } else {
+                            dialog
+                        };
+                        dialog
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_string_lossy().to_string())
+                    },
+                    Message::CorePathPicked,
+                )
+            }
+            Message::CorePathPicked(Some(path)) => Task::done(Message::CorePathChanged(path)),
+            Message::CorePathPicked(None) => Task::none(),
             Message::ToggleTun => {
                 self.settings_draft.tun_mode = !self.settings_draft.tun_mode;
                 Task::none()
@@ -2545,6 +2632,17 @@ impl App {
             Message::ConfigPreviewGenerated(text) => {
                 if self.config_preview_expanded {
                     self.config_preview = Some(text);
+                }
+                Task::none()
+            }
+            Message::CopyConfigPreview => {
+                if let Some(preview) = &self.config_preview
+                    && !preview.trim().is_empty()
+                    && preview != "..."
+                {
+                    let copied = preview.clone();
+                    self.toast_info(self.tr("toast_copied"));
+                    return iced::clipboard::write(copied);
                 }
                 Task::none()
             }
@@ -2754,7 +2852,7 @@ impl App {
         let editing_profile_id_ref = self.editing_profile_id.as_deref();
         let editing_profile_name_ref = &self.editing_profile_name;
         let editing_profile_url_ref = &self.editing_profile_url;
-        let toast_ref = self.toast.as_ref();
+        let toasts_ref: &[Toast] = &self.toasts;
         let log_filter = self.log_filter;
         let log_search_ref = &self.log_search;
         let core_version_ref = self.core_version.as_deref();
@@ -2763,8 +2861,14 @@ impl App {
         let profile_more_id_ref = self.profile_more_id.as_deref();
         let updating_profile_id_ref = self.updating_profile_id.as_deref();
         let config_preview_expanded = self.config_preview_expanded;
+        let config_preview_ref = self.config_preview.as_deref();
         let logs_follow = self.logs_follow;
         let system_proxy_busy = self.system_proxy_busy;
+        let pending_routing_mode = self.pending_routing_mode;
+        let proxy_sort = self.proxy_sort;
+        let show_all_proxies = self.show_all_proxies;
+        let ui_anim_tick = self.ui_anim_tick;
+        let settings_dirty = self.settings_draft.has_pending_changes(&self.gui_config);
 
         let main_content = responsive(move |size| {
             let theme = theme_ref;
@@ -2779,16 +2883,21 @@ impl App {
                     core_starting,
                     core_stopping,
                     core_installed,
+                    core_install_state_ref,
                     sys_proxy_enabled,
                     system_proxy_busy,
+                    pending_routing_mode,
                     current_speed_ref,
                     speed_history_ref,
                     total_uploaded,
                     total_downloaded,
                     selected_node_for_dash,
                     active_connections_count,
+                    url_input_ref,
                     downloading,
+                    profile_error_ref,
                     updating_profile_id_ref,
+                    ui_anim_tick,
                     theme,
                 ),
                 Tab::Proxies => ui::proxies::render(
@@ -2800,7 +2909,9 @@ impl App {
                     proxy_groups_ref,
                     selected_group_ref,
                     core_running,
-                    self.proxy_sort,
+                    proxy_sort,
+                    show_all_proxies,
+                    ui_anim_tick,
                     theme,
                 ),
                 Tab::Profiles => ui::profiles::render(
@@ -2845,82 +2956,123 @@ impl App {
                     settings_draft_ref,
                     settings_errors_ref,
                     core_installed,
+                    core_running,
                     core_install_state_ref,
                     core_version_ref,
                     update_status_ref,
                     config_preview_expanded,
-                    self.config_preview.as_deref(),
+                    config_preview_ref,
+                    ui_anim_tick,
                     theme,
                 ),
             };
 
-            let make_tab_btn =
-                |tab: Tab, icon_char: char, key: &'static str| -> Element<'_, Message> {
-                    let active = current_tab == tab;
-                    let icon_color = if active {
-                        ui::theme::accent_text(theme)
-                    } else {
-                        ui::theme::text_tertiary(theme)
-                    };
-
-                    let btn_content: Element<'_, Message> = if is_compact {
-                        container(
-                            text(icon_char.to_string())
-                                .font(Font::with_name("Material Icons"))
-                                .size(ui::ICON_SIZE_LG)
-                                .color(icon_color),
-                        )
-                        .width(Length::Fill)
-                        .align_x(Alignment::Center)
-                        .into()
-                    } else {
-                        row![
-                            text(icon_char.to_string())
-                                .font(Font::with_name("Material Icons"))
-                                .size(ui::ICON_SIZE_LG)
-                                .color(icon_color),
-                            text(ui::i18n::tr(lang, key))
-                                .size(ui::theme::TYPE_BODY)
-                                .font(ui::theme::ui_font(if active {
-                                    iced::font::Weight::Semibold
-                                } else {
-                                    iced::font::Weight::Normal
-                                }))
-                                .color(if active {
-                                    ui::theme::accent_text(theme)
-                                } else {
-                                    ui::theme::text_muted(theme)
-                                })
-                        ]
-                        .spacing(ui::SP_12)
-                        .align_y(Alignment::Center)
-                        .into()
-                    };
-
-                    let btn = button(btn_content)
-                        .padding(if is_compact { [10, 0] } else { [9, 12] })
-                        .width(Length::Fill)
-                        .style(ui::theme::nav_item(active))
-                        .on_press(Message::TabChanged(tab));
-
-                    // Compact icon rail: show tab name on hover
-                    if is_compact {
-                        tooltip(
-                            btn,
-                            container(
-                                text(ui::i18n::tr(lang, key))
-                                    .size(ui::theme::TYPE_BTN_SM)
-                                    .color(ui::theme::text_primary(theme)),
-                            )
-                            .padding([6, 10])
-                            .style(ui::theme::popover_bg),
-                            tooltip::Position::Right,
-                        )
-                        .into()
-                    } else {
-                        btn.into()
-                    }
+            let make_tab_btn = |tab: Tab,
+                                icon_char: char,
+                                key: &'static str,
+                                show_dot: bool|
+             -> Element<'_, Message> {
+                let active = current_tab == tab;
+                let icon_color = if active {
+                    ui::theme::accent_text(theme)
+                } else {
+                    ui::theme::text_tertiary(theme)
                 };
+
+                let dirty_dot = || {
+                    container(iced::widget::Space::new())
+                        .width(6)
+                        .height(6)
+                        .style(|_t| container::Style {
+                            background: Some(iced::Background::Color(ui::theme::WARNING)),
+                            border: iced::Border {
+                                radius: 3.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        })
+                };
+
+                let btn_content: Element<'_, Message> = if is_compact {
+                    let icon_box = container(
+                        text(icon_char.to_string())
+                            .font(Font::with_name("Material Icons"))
+                            .size(ui::ICON_SIZE_LG)
+                            .color(icon_color),
+                    )
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center);
+                    if show_dot {
+                        iced::widget::stack![
+                            icon_box,
+                            container(dirty_dot())
+                                .width(Length::Fill)
+                                .align_x(Alignment::End)
+                                .padding(iced::Padding {
+                                    top: 0.0,
+                                    right: 6.0,
+                                    bottom: 0.0,
+                                    left: 0.0,
+                                }),
+                        ]
+                        .width(Length::Fill)
+                        .into()
+                    } else {
+                        icon_box.into()
+                    }
+                } else {
+                    let mut label_row = row![
+                        text(icon_char.to_string())
+                            .font(Font::with_name("Material Icons"))
+                            .size(ui::ICON_SIZE_LG)
+                            .color(icon_color),
+                        text(ui::i18n::tr(lang, key))
+                            .size(ui::theme::TYPE_BODY)
+                            .font(ui::theme::ui_font(if active {
+                                iced::font::Weight::Semibold
+                            } else {
+                                iced::font::Weight::Normal
+                            }))
+                            .color(if active {
+                                ui::theme::accent_text(theme)
+                            } else {
+                                ui::theme::text_muted(theme)
+                            })
+                    ]
+                    .spacing(ui::SP_12)
+                    .align_y(Alignment::Center);
+                    if show_dot {
+                        label_row = label_row
+                            .push(iced::widget::Space::new().width(Length::Fill))
+                            .push(dirty_dot());
+                    }
+                    label_row.into()
+                };
+
+                let btn = button(btn_content)
+                    .padding(if is_compact { [10, 0] } else { [9, 12] })
+                    .width(Length::Fill)
+                    .style(ui::theme::nav_item(active))
+                    .on_press(Message::TabChanged(tab));
+
+                // Compact icon rail: show tab name on hover
+                if is_compact {
+                    tooltip(
+                        btn,
+                        container(
+                            text(ui::i18n::tr(lang, key))
+                                .size(ui::theme::TYPE_BTN_SM)
+                                .color(ui::theme::text_primary(theme)),
+                        )
+                        .padding([6, 10])
+                        .style(ui::theme::popover_bg),
+                        tooltip::Position::Right,
+                    )
+                    .into()
+                } else {
+                    btn.into()
+                }
+            };
 
             let status_dot_color = if core_running {
                 ui::theme::SUCCESS
@@ -2929,13 +3081,33 @@ impl App {
             };
 
             let nav = column![
-                make_tab_btn(Tab::Dashboard, '\u{E871}', "tab_dashboard"),
-                make_tab_btn(Tab::Proxies, ui::icons::ICON_PROXIES, "tab_proxies"),
-                make_tab_btn(Tab::Profiles, '\u{E2C7}', "tab_profiles"),
-                make_tab_btn(Tab::Rules, '\u{E41E}', "tab_rules"),
-                make_tab_btn(Tab::Connections, '\u{E894}', "tab_connections"),
-                make_tab_btn(Tab::Logs, '\u{E85D}', "tab_logs"),
-                make_tab_btn(Tab::Settings, ui::icons::ICON_SETTINGS, "tab_settings"),
+                make_tab_btn(
+                    Tab::Dashboard,
+                    ui::icons::ICON_DASHBOARD,
+                    "tab_dashboard",
+                    false
+                ),
+                make_tab_btn(Tab::Proxies, ui::icons::ICON_PROXIES, "tab_proxies", false),
+                make_tab_btn(
+                    Tab::Profiles,
+                    ui::icons::ICON_PROFILES,
+                    "tab_profiles",
+                    false
+                ),
+                make_tab_btn(Tab::Rules, ui::icons::ICON_RULES, "tab_rules", false),
+                make_tab_btn(
+                    Tab::Connections,
+                    ui::icons::ICON_CONNECTIONS,
+                    "tab_connections",
+                    false
+                ),
+                make_tab_btn(Tab::Logs, ui::icons::ICON_LOGS, "tab_logs", false),
+                make_tab_btn(
+                    Tab::Settings,
+                    ui::icons::ICON_SETTINGS,
+                    "tab_settings",
+                    settings_dirty
+                ),
             ]
             .spacing(2)
             .width(Length::Fill);
@@ -2970,7 +3142,7 @@ impl App {
                     .width(Length::Fill)
                     .align_x(Alignment::Center),
                 )
-                .width(Length::Fixed(64.0))
+                .width(Length::Fixed(ui::SIDEBAR_COMPACT_W))
                 .height(Length::Fill)
                 .padding([22, 10])
                 .style(ui::theme::sidebar_bg)
@@ -3018,7 +3190,7 @@ impl App {
                     iced::widget::Space::new().height(Length::Fill),
                     footer,
                 ])
-                .width(Length::Fixed(216.0))
+                .width(Length::Fixed(ui::SIDEBAR_W))
                 .height(Length::Fill)
                 .padding(iced::Padding {
                     top: 22.0,
@@ -3039,8 +3211,8 @@ impl App {
             .height(Length::Fill)
             .into();
 
-            let main_body = if let Some(toast) = toast_ref {
-                let toast_el = ui::toast::render(toast, theme);
+            let main_body = if !toasts_ref.is_empty() {
+                let toast_el = ui::toast::render_stack(toasts_ref, theme);
                 iced::widget::stack![
                     container(content).width(Length::Fill).height(Length::Fill),
                     container(
@@ -3053,7 +3225,7 @@ impl App {
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .align_x(Alignment::End)
-                    .align_y(Alignment::Start)
+                    .align_y(Alignment::End)
                 ]
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -3583,6 +3755,36 @@ fn normalize_custom_rule(field: state::RuleField, value: &str) -> Result<String,
         Ok(domain)
     } else {
         Err("invalid_domain_rule")
+    }
+}
+
+pub(crate) fn validate_rule_draft(
+    target: state::RuleTarget,
+    raw: &str,
+    existing_domains: &[String],
+    existing_ips: &[String],
+) -> Result<(), &'static str> {
+    let mut entries = Vec::new();
+    for item in split_rule_entries(raw) {
+        let field = target.field(looks_like_ip_rule(item));
+        let normalized = normalize_custom_rule(field, item)?;
+        entries.push((field, normalized));
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let has_new = entries.iter().any(|(field, value)| {
+        let existing = if field.is_ip() {
+            existing_ips
+        } else {
+            existing_domains
+        };
+        !existing.iter().any(|item| item.eq_ignore_ascii_case(value))
+    });
+    if has_new {
+        Ok(())
+    } else {
+        Err("duplicate_rule")
     }
 }
 

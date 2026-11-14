@@ -1,7 +1,8 @@
 use crate::message::Message;
 use crate::state::ProxyNode;
 use crate::ui::theme;
-use crate::ui::{PAGE_COMPACT_W, empty_state, page_header};
+use crate::ui::util::truncate_width;
+use crate::ui::{PAGE_COMPACT_W, SCROLL_GUTTER, empty_state, page_header};
 use iced::widget::{
     Column, Row, Space, button, column, container, responsive, row, scrollable, text, text_input,
 };
@@ -30,6 +31,8 @@ pub fn render<'a>(
     selected_group: &'a str,
     core_running: bool,
     proxy_sort: crate::state::ProxySort,
+    show_all: bool,
+    anim_tick: u8,
     theme: &'a iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -42,10 +45,10 @@ pub fn render<'a>(
         .map(|node| node.node_type.to_ascii_lowercase())
         .collect::<std::collections::BTreeSet<_>>()
         .len();
-    // name → (type, latency, selectable, server). Server comes only from the
-    // parsed profile; API-known groups without a profile node carry None.
-    type NodeMeta = (String, Option<u64>, bool, Option<String>);
-    let mut node_meta_index: std::collections::HashMap<String, NodeMeta> = nodes
+    // name → (type, latency, selectable, server & port). Server comes only from
+    // the parsed profile; API-known groups without a profile node carry None.
+    type NodeMeta<'m> = (String, Option<u64>, bool, Option<(&'m str, u16)>);
+    let mut node_meta_index: std::collections::HashMap<String, NodeMeta<'a>> = nodes
         .iter()
         .map(|node| {
             (
@@ -54,7 +57,7 @@ pub fn render<'a>(
                     node.node_type.clone(),
                     node.latency,
                     node.selectable,
-                    Some(node.server.clone()),
+                    Some((node.server.as_str(), node.port)),
                 ),
             )
         })
@@ -65,32 +68,99 @@ pub fn render<'a>(
             .as_ref()
             .and_then(|history| history.last())
             .and_then(|sample| sample.get("delay"))
-            .and_then(|delay| delay.as_u64())
-            .filter(|delay| *delay < 9999);
+            .and_then(|delay| delay.as_u64());
         let entry = node_meta_index
             .entry(name.clone())
             .or_insert_with(|| (info.proxy_type.clone(), None, true, None));
         entry.0 = info.proxy_type.clone();
-        if api_latency.is_some() {
-            entry.1 = api_latency;
+        if let Some(delay) = api_latency {
+            // Preserve a timed-out batch result (>= 9999) when Clash reports 0.
+            if delay > 0 || entry.1.is_none_or(|prev| prev < 9999) {
+                entry.1 = Some(delay);
+            }
         }
     }
 
     let make_header_actions = move |search_query: &str, is_compact: bool| -> Element<'a, Message> {
-        // Disabled (no on_press) when core is stopped or already testing
         let speed_test_btn = if latency_testing {
-            button(crate::ui::loading_row(tr(lang, "testing_latency"), theme))
-                .padding(theme::BTN_PAD_TOOLBAR)
-                .style(theme::button_secondary)
+            let phase = (anim_tick % 4) as u16;
+            let dot = |idx: u16| {
+                let on = phase == idx;
+                container(Space::new())
+                    .width(if on { 8 } else { 5 })
+                    .height(5)
+                    .style(move |t| container::Style {
+                        background: Some(iced::Background::Color(if on {
+                            theme::accent(t)
+                        } else {
+                            theme::with_alpha(theme::accent(t), 0.30)
+                        })),
+                        border: iced::Border {
+                            radius: 2.5.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+            };
+            let busy_content = row![
+                row![dot(0), dot(1), dot(2), dot(3)]
+                    .spacing(3)
+                    .align_y(Alignment::Center),
+                text(tr(lang, "testing_latency")).size(theme::TYPE_BTN_MD),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center);
+            button(
+                container(busy_content)
+                    .width(if is_compact {
+                        Length::Shrink
+                    } else {
+                        Length::Fill
+                    })
+                    .align_x(Alignment::Center),
+            )
+            .padding(theme::BTN_PAD_TOOLBAR)
+            .width(if is_compact {
+                Length::Shrink
+            } else {
+                Length::Fixed(132.0)
+            })
+            .style(theme::button_secondary)
         } else if !core_running {
-            button(text(tr(lang, "test_latency")).size(theme::TYPE_BTN_MD))
-                .padding(theme::BTN_PAD_TOOLBAR)
-                .style(theme::button_secondary)
+            button(
+                container(text(tr(lang, "test_latency")).size(theme::TYPE_BTN_MD))
+                    .width(if is_compact {
+                        Length::Shrink
+                    } else {
+                        Length::Fill
+                    })
+                    .align_x(Alignment::Center),
+            )
+            .padding(theme::BTN_PAD_TOOLBAR)
+            .width(if is_compact {
+                Length::Shrink
+            } else {
+                Length::Fixed(132.0)
+            })
+            .style(theme::button_secondary)
         } else {
-            button(text(tr(lang, "test_latency")).size(theme::TYPE_BTN_MD))
-                .padding(theme::BTN_PAD_TOOLBAR)
-                .style(theme::button_primary)
-                .on_press(Message::StartLatencyTest)
+            button(
+                container(text(tr(lang, "test_latency")).size(theme::TYPE_BTN_MD))
+                    .width(if is_compact {
+                        Length::Shrink
+                    } else {
+                        Length::Fill
+                    })
+                    .align_x(Alignment::Center),
+            )
+            .padding(theme::BTN_PAD_TOOLBAR)
+            .width(if is_compact {
+                Length::Shrink
+            } else {
+                Length::Fixed(132.0)
+            })
+            .style(theme::button_primary)
+            .on_press(Message::StartLatencyTest)
         };
 
         let search_input = text_input(tr(lang, "search_nodes_placeholder"), search_query)
@@ -225,7 +295,7 @@ pub fn render<'a>(
                                 } else {
                                     text_primary
                                 }),
-                            text(crate::ui::util::truncate_chars(active_node, 16))
+                            text(truncate_width(active_node, 16))
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active {
                                     theme::accent_text(theme)
@@ -269,7 +339,7 @@ pub fn render<'a>(
                                 } else {
                                     text_primary
                                 }),
-                            text(crate::ui::util::truncate_chars(active_node, 20))
+                            text(truncate_width(active_node, 20))
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active {
                                     theme::accent_text(theme)
@@ -296,8 +366,10 @@ pub fn render<'a>(
                 .height(Length::Fill)
             };
 
-            let grid_width = crate::ui::page_content_width(size.width, is_compact)
-                - if is_compact { 0.0 } else { 221.0 };
+            let grid_width = (crate::ui::page_content_width(size.width, is_compact)
+                - SCROLL_GUTTER
+                - if is_compact { 0.0 } else { 221.0 })
+            .max(PROXY_CARD_MIN_W);
             let cols = card_columns(grid_width);
             let card_w = card_width(grid_width, cols);
 
@@ -317,8 +389,8 @@ pub fn render<'a>(
                             n.to_lowercase().contains(&q)
                                 || node_meta_index_moved
                                     .get(n.as_str())
-                                    .and_then(|meta| meta.3.as_deref())
-                                    .is_some_and(|server| server.to_lowercase().contains(&q))
+                                    .and_then(|meta| meta.3)
+                                    .is_some_and(|(server, _)| server.to_lowercase().contains(&q))
                         })
                         .collect()
                 };
@@ -360,9 +432,9 @@ pub fn render<'a>(
                     )
                 } else {
                     let total_nodes = filtered_sub_nodes.len();
-                    let max_render = 120;
-                    let display_nodes = if total_nodes > max_render {
-                        &filtered_sub_nodes[..max_render]
+                    let cap = if show_all { total_nodes } else { 120 };
+                    let display_nodes = if total_nodes > cap {
+                        &filtered_sub_nodes[..cap]
                     } else {
                         &filtered_sub_nodes[..]
                     };
@@ -371,16 +443,18 @@ pub fn render<'a>(
                     for &node_name in display_nodes {
                         let active = Some(node_name.as_str()) == group_info_moved.now.as_deref();
 
-                        let (node_type, latency, selectable, _server) = node_meta_index_moved
+                        let (node_type, latency, selectable, server_port) = node_meta_index_moved
                             .get(node_name)
-                            .cloned()
-                            .unwrap_or_else(|| ("unknown".to_string(), None, true, None));
+                            .map(|meta| (meta.0.as_str(), meta.1, meta.2, meta.3))
+                            .unwrap_or(("unknown", None, true, None));
+                        let server = server_port.map(|(s, _)| s);
+                        let port = server_port.map(|(_, p)| p);
 
                         let card = render_proxy_card(
                             node_name,
-                            &node_type,
-                            None,
-                            None,
+                            node_type,
+                            server,
+                            port,
                             latency,
                             active,
                             is_selector,
@@ -393,7 +467,7 @@ pub fn render<'a>(
                         card_elements.push(card);
                     }
 
-                    build_card_grid(card_elements, cols, total_nodes, max_render, theme, lang)
+                    build_card_grid(card_elements, cols, total_nodes, cap, show_all, theme, lang)
                 }
             } else {
                 // Group has no `all` node list (not a failed search filter).
@@ -553,14 +627,16 @@ pub fn render<'a>(
             let header_actions = make_header_actions(search_query, is_compact);
 
             let total_nodes = filtered_nodes.len();
-            let max_render = 120;
-            let display_nodes = if total_nodes > max_render {
-                &filtered_nodes[..max_render]
+            let cap = if show_all { total_nodes } else { 120 };
+            let display_nodes = if total_nodes > cap {
+                &filtered_nodes[..cap]
             } else {
                 &filtered_nodes[..]
             };
 
-            let grid_width = crate::ui::page_content_width(size.width, is_compact);
+            let grid_width = (crate::ui::page_content_width(size.width, is_compact)
+                - SCROLL_GUTTER)
+                .max(PROXY_CARD_MIN_W);
             let cols = card_columns(grid_width);
             let card_w = card_width(grid_width, cols);
             let mut card_elements: Vec<Element<'_, Message>> = Vec::new();
@@ -586,7 +662,7 @@ pub fn render<'a>(
             }
 
             let grid_content: Element<'_, Message> =
-                build_card_grid(card_elements, cols, total_nodes, max_render, theme, lang);
+                build_card_grid(card_elements, cols, total_nodes, cap, show_all, theme, lang);
 
             let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
             let summary =
@@ -752,12 +828,17 @@ fn render_proxy_card<'a>(
     let mut meta_row = row![type_tag]
         .spacing(crate::ui::SP_8)
         .align_y(Alignment::Center);
-    if let (Some(s), Some(p)) = (server, port) {
+    let server_label = match (server, port) {
+        (Some(s), Some(p)) if !s.is_empty() && p > 0 => Some(format!("{s}:{p}")),
+        (Some(s), _) if !s.is_empty() => Some(s.to_string()),
+        _ => None,
+    };
+    if let Some(addr) = server_label {
         let chip_w = 14.0 + proto_label.chars().count().min(12) as f32 * 7.0;
         let server_px = card_w - pad * 2.0 - chip_w - 72.0 - crate::ui::SP_8 * 2.0;
         let server_cols = (server_px / 6.6).max(6.0) as usize;
         meta_row = meta_row.push(
-            text(truncate_width(&format!("{s}:{p}"), server_cols))
+            text(truncate_width(&addr, server_cols))
                 .color(theme::text_tertiary(theme))
                 .size(theme::TYPE_CAPTION)
                 .wrapping(text::Wrapping::None)
@@ -898,7 +979,7 @@ fn render_proxy_card<'a>(
         card_btn = card_btn.on_press(Message::SelectNode(node_clone));
     }
 
-    if name_truncated {
+    let card_wrapped: Element<'a, Message> = if name_truncated {
         tooltip(
             card_btn,
             container(
@@ -913,7 +994,11 @@ fn render_proxy_card<'a>(
         .into()
     } else {
         card_btn.into()
-    }
+    };
+    container(card_wrapped)
+        .width(Length::Fill)
+        .height(Length::Fixed(PROXY_CARD_HEIGHT))
+        .into()
 }
 
 fn card_columns(width: f32) -> usize {
@@ -926,53 +1011,97 @@ fn build_card_grid<'a>(
     card_elements: Vec<Element<'a, Message>>,
     cols: usize,
     total_nodes: usize,
-    max_render: usize,
+    shown_nodes: usize,
+    show_all: bool,
     theme: &iced::Theme,
     lang: crate::state::Language,
 ) -> Element<'a, Message> {
     use crate::ui::i18n::tr;
     use crate::ui::theme;
-    use iced::widget::{Column, Row, container, scrollable, text};
+    use iced::widget::{Column, Row, container, row, scrollable, text};
     use iced::{Alignment, Length};
 
     let mut grid_rows = Column::new().spacing(theme::GRID_GAP);
-    let mut current_row = Row::new().spacing(theme::GRID_GAP);
+    let mut current_row = Row::new()
+        .spacing(theme::GRID_GAP)
+        .align_y(Alignment::Start);
     let total_cards = card_elements.len();
 
     for (i, card) in card_elements.into_iter().enumerate() {
         current_row = current_row.push(container(card).width(Length::FillPortion(1)));
         if (i + 1) % cols == 0 {
             grid_rows = grid_rows.push(current_row);
-            current_row = Row::new().spacing(theme::GRID_GAP);
+            current_row = Row::new()
+                .spacing(theme::GRID_GAP)
+                .align_y(Alignment::Start);
         }
     }
     let remaining_elements = total_cards % cols;
     if remaining_elements > 0 {
         for _ in remaining_elements..cols {
-            current_row = current_row.push(container(text("")).width(Length::FillPortion(1)));
+            current_row = current_row.push(
+                Space::new()
+                    .width(Length::FillPortion(1))
+                    .height(Length::Fixed(PROXY_CARD_HEIGHT)),
+            );
         }
         grid_rows = grid_rows.push(current_row);
     }
 
-    if total_nodes > max_render {
-        let more_count = total_nodes - max_render;
-        let hint_str = tr(lang, "more_nodes_hint").replace("{}", &more_count.to_string());
+    if total_nodes > 120 {
+        let count_text = if show_all {
+            tr(lang, "showing_nodes_all").replace("{}", &total_nodes.to_string())
+        } else {
+            tr(lang, "showing_nodes_cap")
+                .replacen("{}", &shown_nodes.to_string(), 1)
+                .replacen("{}", &total_nodes.to_string(), 1)
+        };
+        let toggle_btn = button(
+            text(tr(
+                lang,
+                if show_all {
+                    "btn_show_less"
+                } else {
+                    "btn_show_all"
+                },
+            ))
+            .size(theme::TYPE_BTN_SM),
+        )
+        .padding(theme::BTN_PAD_SM)
+        .style(theme::button_secondary)
+        .on_press(Message::ToggleShowAllProxies);
+
         grid_rows = grid_rows.push(
             container(
-                text(hint_str)
-                    .color(theme::text_muted(theme))
-                    .size(theme::TYPE_CAPTION),
+                row![
+                    text(count_text)
+                        .color(theme::text_muted(theme))
+                        .size(theme::TYPE_CAPTION),
+                    toggle_btn,
+                ]
+                .spacing(crate::ui::SP_12)
+                .align_y(Alignment::Center),
             )
             .width(Length::Fill)
             .align_x(Alignment::Center)
-            .padding(12),
+            .padding(crate::ui::SP_12)
+            .style(theme::status_card),
         );
     }
 
-    scrollable(grid_rows)
-        .style(theme::scrollbar_style)
-        .height(Length::Fill)
-        .into()
+    scrollable(container(grid_rows).padding(iced::Padding {
+        right: SCROLL_GUTTER,
+        ..Default::default()
+    }))
+    .direction(scrollable::Direction::Vertical(
+        scrollable::Scrollbar::new()
+            .width(6)
+            .scroller_width(6)
+            .margin(3),
+    ))
+    .style(theme::scrollbar_style)
+    .height(Length::Fill)
+    .into()
 }
 
 #[cfg(test)]

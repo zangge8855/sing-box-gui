@@ -1,10 +1,26 @@
 use crate::message::Message;
 use crate::state::{Toast, ToastKind};
 use crate::ui::theme;
-use iced::widget::{button, container, row, text};
+use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Font, Length};
 
-pub fn render<'a>(toast: &'a Toast, theme: &iced::Theme) -> Element<'a, Message> {
+pub fn render_stack<'a>(toasts: &'a [Toast], theme: &iced::Theme) -> Element<'a, Message> {
+    let items: Vec<Element<'a, Message>> = toasts
+        .iter()
+        .enumerate()
+        .map(|(idx, toast)| render_toast(toast, Some(idx), theme))
+        .collect();
+    column(items)
+        .spacing(crate::ui::SP_8)
+        .align_x(Alignment::End)
+        .into()
+}
+
+fn render_toast<'a>(
+    toast: &'a Toast,
+    index: Option<usize>,
+    theme: &iced::Theme,
+) -> Element<'a, Message> {
     // Semantic colour lives in the glyph only; the surface stays neutral so
     // a stream of toasts never turns the corner of the window into a rainbow.
     let (glyph, glyph_color) = match toast.kind {
@@ -21,35 +37,52 @@ pub fn render<'a>(toast: &'a Toast, theme: &iced::Theme) -> Element<'a, Message>
         .size(crate::ui::ICON_SIZE_LG)
         .color(glyph_color);
 
+    let dismiss_msg = match index {
+        Some(i) => Message::DismissToastAt(i),
+        None => Message::DismissToast,
+    };
+
     let dismiss = button(
-        text(crate::ui::icons::ICON_DELETE)
+        text(crate::ui::icons::ICON_CLOSE)
             .font(Font::with_name("Material Icons"))
             .size(14),
     )
     .padding(4)
     .style(theme::button_ghost)
-    .on_press(Message::DismissToast);
+    .on_press(dismiss_msg);
 
-    let body = row![
-        icon,
-        text(&toast.message)
-            .size(theme::TYPE_BTN_SM)
-            .color(theme::text_primary(theme))
-            .width(Length::Fill),
-        dismiss,
-    ]
-    .spacing(crate::ui::SP_12)
-    .align_y(Alignment::Center)
-    .padding(iced::Padding {
-        top: 10.0,
-        right: 8.0,
-        bottom: 10.0,
-        left: 14.0,
-    });
+    let msg_scroll = container(
+        scrollable(
+            text(&toast.message)
+                .size(theme::TYPE_BTN_SM)
+                .color(theme::text_primary(theme))
+                .width(Length::Fill),
+        )
+        .height(Length::Shrink)
+        .direction(iced::widget::scrollable::Direction::Vertical(
+            iced::widget::scrollable::Scrollbar::new()
+                .width(4)
+                .scroller_width(4)
+                .margin(2),
+        ))
+        .style(theme::scrollbar_style),
+    )
+    .width(Length::Fill)
+    .max_height(120.0);
+
+    let body = row![icon, msg_scroll, dismiss,]
+        .spacing(crate::ui::SP_12)
+        .align_y(Alignment::Center)
+        .padding(iced::Padding {
+            top: 10.0,
+            right: 8.0,
+            bottom: 10.0,
+            left: 14.0,
+        });
 
     container(body)
         .width(Length::Shrink)
-        .max_width(480.0)
+        .max_width(440.0)
         .style(theme::popover_bg)
         .into()
 }

@@ -20,21 +20,27 @@ use iced::{Alignment, Element, Length};
 /// Minimum window width — must stay below SHELL_COMPACT_W so icon sidebar is reachable.
 pub const WINDOW_MIN_W: f32 = 640.0;
 pub const WINDOW_MIN_H: f32 = 480.0;
+/// Compact icon-only sidebar width.
+pub const SIDEBAR_COMPACT_W: f32 = 64.0;
+/// Expanded sidebar width.
+pub const SIDEBAR_W: f32 = 200.0;
 /// Shell sidebar collapses to icon-only below this window width.
-pub const SHELL_COMPACT_W: f32 = 820.0;
+pub const SHELL_COMPACT_W: f32 = 900.0;
 /// Page header actions stack vertically below this content width.
-pub const PAGE_COMPACT_W: f32 = 750.0;
-/// Single-column card layouts (settings/rules).
-pub const PAGE_NARROW_W: f32 = 800.0;
+/// Kept below `SHELL_COMPACT_W - SIDEBAR_W - 1.0` so expanding the sidebar never
+/// pushes content width back down into compact mode.
+pub const PAGE_COMPACT_W: f32 = 680.0;
+/// Single-column card layouts (settings/rules/profiles/proxies).
+pub const PAGE_NARROW_W: f32 = 680.0;
 /// Connections: card list below; mid table above this.
-pub const CONNECTIONS_TABLE_W: f32 = 850.0;
+pub const CONNECTIONS_TABLE_W: f32 = 740.0;
 /// Connections: full 7-column table above this.
 pub const CONNECTIONS_WIDE_W: f32 = 1100.0;
-/// Settings splits into two columns above this, once each row has room for
-/// its label beside an inline control.
-pub const SETTINGS_2COL_W: f32 = 1100.0;
+/// Settings splits into two columns above this, sized so the default 1080px
+/// window (879px content alongside SIDEBAR_W) shows the 2-column layout.
+pub const SETTINGS_2COL_W: f32 = 820.0;
 /// Dashboard stacks status cards below this.
-pub const DASHBOARD_COMPACT_W: f32 = 780.0;
+pub const DASHBOARD_COMPACT_W: f32 = 680.0;
 /// Content max width for page shells.
 pub const PAGE_MAX_WIDTH: f32 = 1200.0;
 
@@ -51,6 +57,23 @@ mod tests {
             "WINDOW_MIN_W ({}) must be < SHELL_COMPACT_W ({})",
             WINDOW_MIN_W,
             SHELL_COMPACT_W
+        );
+    }
+
+    #[test]
+    fn shell_breakpoint_never_inverts_page_compact() {
+        let min_expanded_content = SHELL_COMPACT_W - SIDEBAR_W - 1.0;
+        assert!(
+            min_expanded_content >= PAGE_COMPACT_W,
+            "Content width at SHELL_COMPACT_W ({}) must stay >= PAGE_COMPACT_W ({})",
+            min_expanded_content,
+            PAGE_COMPACT_W
+        );
+        assert!(
+            min_expanded_content >= DASHBOARD_COMPACT_W,
+            "Content width at SHELL_COMPACT_W ({}) must stay >= DASHBOARD_COMPACT_W ({})",
+            min_expanded_content,
+            DASHBOARD_COMPACT_W
         );
     }
 
@@ -275,7 +298,7 @@ pub fn page_shell_with_pad<'a>(
 
 /// Width of the page scrollbar lane (6px bar + 3px margin each side), carved
 /// out of the page's right inset.
-const SCROLL_GUTTER: f32 = 12.0;
+pub const SCROLL_GUTTER: f32 = 12.0;
 
 /// Non-scrolling shell for pages that manage their own inner scroll area
 /// (e.g. Logs terminal, Proxies grid).
@@ -361,15 +384,47 @@ pub fn empty_state<'a>(
         .into()
 }
 
-/// Busy / loading row: accent bar + label (download, latency, update check).
-pub fn loading_row<'a>(label: &'a str, theme: &iced::Theme) -> Element<'a, Message> {
-    let bar = container(Space::new())
-        .width(Length::Fixed(72.0))
-        .height(Length::Fixed(4.0))
+/// Animated dual-tone busy indicator; `phase` advances on UI ticks.
+pub fn loading_row_animated<'a>(
+    label: &'a str,
+    phase: u8,
+    theme: &iced::Theme,
+) -> Element<'a, Message> {
+    let (lead, thumb, trail): (u16, u16, u16) = match phase % 4 {
+        0 => (0, 3, 5),
+        1 => (2, 4, 2),
+        2 => (5, 3, 0),
+        _ => (2, 4, 2),
+    };
+    let thumb_pill = container(Space::new())
+        .width(Length::FillPortion(thumb))
+        .height(Length::Fixed(5.0))
         .style(|t| container::Style {
             background: Some(iced::Background::Color(ui_theme::accent(t))),
             border: iced::Border {
-                radius: 2.0.into(),
+                radius: 2.5.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    let mut track_row = row![].height(Length::Fixed(5.0)).width(Length::Fill);
+    if lead > 0 {
+        track_row = track_row.push(Space::new().width(Length::FillPortion(lead)));
+    }
+    track_row = track_row.push(thumb_pill);
+    if trail > 0 {
+        track_row = track_row.push(Space::new().width(Length::FillPortion(trail)));
+    }
+    let bar = container(track_row)
+        .width(Length::Fixed(76.0))
+        .height(Length::Fixed(5.0))
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(ui_theme::with_alpha(
+                ui_theme::accent(t),
+                if ui_theme::is_dark(t) { 0.16 } else { 0.14 },
+            ))),
+            border: iced::Border {
+                radius: 2.5.into(),
                 ..Default::default()
             },
             ..Default::default()

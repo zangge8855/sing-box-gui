@@ -391,7 +391,8 @@ fn seed(app: &mut App, case: &Case) {
     app.confirm_delete_profile_id = None;
     app.editing_profile_id = None;
     app.profile_more_id = None;
-    app.toast = None;
+    app.toasts.clear();
+    app.show_all_proxies = false;
     app.config_preview_expanded = false;
     app.config_preview = None;
     if case.variant == "empty" {
@@ -439,11 +440,20 @@ fn seed(app: &mut App, case: &Case) {
         "新加坡备用线路 · Singapore backup",
     ];
     for (i, name) in names.into_iter().enumerate() {
+        let (node_type, server, port) = match i {
+            5 => ("urltest", String::new(), 0),
+            6 => ("direct", String::new(), 0),
+            _ => (
+                if i % 2 == 0 { "vless" } else { "hysteria2" },
+                format!("node-{i}.example.com"),
+                443,
+            ),
+        };
         app.active_profile_nodes.push(ProxyNode {
             name: name.into(),
-            node_type: if i % 2 == 0 { "vless" } else { "hysteria2" }.into(),
-            server: format!("node-{i}.example.com"),
-            port: 443,
+            node_type: node_type.into(),
+            server,
+            port,
             latency: Some([42, 68, 108, 230, 9999, 18, 0, 580][i]),
             selectable: true,
         });

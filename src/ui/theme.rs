@@ -547,7 +547,7 @@ pub fn card_selected(theme: &iced::Theme) -> container::Style {
             width: 1.5,
             radius: RADIUS_LG.into(),
         },
-        shadow: Shadow::default(),
+        shadow: surface_shadow(theme),
         text_color: Some(text_primary(theme)),
         ..Default::default()
     }
@@ -568,7 +568,7 @@ pub fn status_card(theme: &iced::Theme) -> container::Style {
             width: 1.0,
             radius: RADIUS_LG.into(),
         },
-        shadow: Shadow::default(),
+        shadow: surface_shadow(theme),
         text_color: Some(text_primary(theme)),
         ..Default::default()
     }
@@ -982,7 +982,9 @@ pub fn power_button(running: bool) -> impl Fn(&iced::Theme, button::Status) -> b
                 ..Default::default()
             }
         } else {
-            let bg = if pressed {
+            let bg = if disabled {
+                bg(theme)
+            } else if pressed {
                 mix(card_surface(theme), accent(theme), 0.14)
             } else if hovered {
                 mix(card_surface(theme), accent(theme), 0.07)
@@ -1001,13 +1003,19 @@ pub fn power_button(running: bool) -> impl Fn(&iced::Theme, button::Status) -> b
                 border: Border {
                     radius: radius.into(),
                     width: 1.5,
-                    color: if hovered || pressed {
+                    color: if disabled {
+                        border_color(theme)
+                    } else if hovered || pressed {
                         accent(theme)
                     } else {
                         border_strong(theme)
                     },
                 },
-                shadow: surface_shadow(theme),
+                shadow: if disabled {
+                    Shadow::default()
+                } else {
+                    surface_shadow(theme)
+                },
                 ..Default::default()
             }
         }
@@ -1046,6 +1054,14 @@ pub fn list_item_style(
         },
         ..Default::default()
     }
+}
+
+pub fn list_item_flat(theme: &iced::Theme) -> container::Style {
+    list_item_style(theme, false, false)
+}
+
+pub fn table_row_bg(theme: &iced::Theme, is_zebra: bool) -> container::Style {
+    list_item_zebra(theme, false, false, is_zebra)
 }
 
 pub fn list_item_zebra(
@@ -1119,7 +1135,11 @@ pub fn input_field(theme: &iced::Theme, status: text_input::Status) -> text_inpu
             color: border_color,
         },
         value: text_primary(theme),
-        placeholder: text_tertiary(theme),
+        placeholder: mix(
+            input_surface(theme),
+            text_tertiary(theme),
+            if dark { 0.62 } else { 0.66 },
+        ),
         selection: with_alpha(accent(theme), 0.28),
         icon: text_muted(theme),
     }

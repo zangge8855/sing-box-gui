@@ -17,9 +17,9 @@ pub fn get_logs_scrollable_id() -> &'static iced::widget::Id {
 }
 
 /// Below this page width the toolbar stacks under the title.
-const LOGS_TOOLBAR_INLINE_W: f32 = 1100.0;
+const LOGS_TOOLBAR_INLINE_W: f32 = 840.0;
 /// Below this the second toolbar row wraps instead of pushing the actions right.
-const LOGS_TOOLBAR_SPREAD_W: f32 = 700.0;
+const LOGS_TOOLBAR_SPREAD_W: f32 = 640.0;
 
 /// Locates the severity word sing-box prints near the start of a line
 /// (`+0800 2026-10-27 14:30:00 INFO [..] ...`) so the line can be set as
@@ -97,7 +97,9 @@ pub fn render<'a>(
         filtered_lines.drain(..filtered_lines.len() - MAX_VISIBLE_LOG_LINES);
     }
 
-    let main_content = responsive(move |size| {
+    let total_shown = filtered_lines.len();
+
+    let main_content_inner = responsive(move |size| {
         let theme = &theme_cloned;
         let stacked = size.width < LOGS_TOOLBAR_INLINE_W;
         let text_primary = theme::text_primary(theme);
@@ -116,7 +118,7 @@ pub fn render<'a>(
                         iced::font::Weight::Normal
                     }),
                 ))
-                .padding([6, 12])
+                .padding([6, 9])
                 .style(theme::button_tab(active));
                 if !active {
                     b = b.on_press(Message::LogFilterChanged(f));
@@ -141,7 +143,7 @@ pub fn render<'a>(
             .width(if stacked {
                 Length::Fill
             } else {
-                Length::Fixed(theme::SEARCH_WIDTH)
+                Length::Fixed(168.0)
             })
             .size(theme::TYPE_BODY)
             .style(theme::input_field);
@@ -153,23 +155,52 @@ pub fn render<'a>(
             .label(tr(lang, "logs_follow"))
             .text_size(theme::TYPE_BTN_MD)
             .size(18)
-            .spacing(8)
+            .spacing(6)
             .on_toggle(|_| Message::ToggleLogsFollow)
             .style(theme::toggler_style);
 
         // Same height as the search field and the segmented track.
-        let action = |key: &'static str, msg: Message| {
-            button(text(tr(lang, key)).size(theme::TYPE_BTN_MD))
+        let action = |icon: Option<&str>, key: &'static str, msg: Option<Message>| {
+            let content: Element<'_, Message> = if let Some(glyph) = icon {
+                row![
+                    text(glyph.to_string())
+                        .font(iced::Font::with_name("Material Icons"))
+                        .size(14),
+                    text(tr(lang, key)).size(theme::TYPE_BTN_MD),
+                ]
+                .spacing(5)
+                .align_y(Alignment::Center)
+                .into()
+            } else {
+                text(tr(lang, key)).size(theme::TYPE_BTN_MD).into()
+            };
+            let mut b = button(content)
                 .padding(theme::BTN_PAD_TOOLBAR)
-                .style(theme::button_secondary)
-                .on_press(msg)
+                .style(theme::button_secondary);
+            if let Some(m) = msg {
+                b = b.on_press(m);
+            }
+            b
         };
         let actions_group = row![
             follow_switch,
-            action("clear_logs", Message::ClearLogs),
-            action("export_logs", Message::ExportLogs),
+            action(
+                Some(crate::ui::icons::ICON_COPY),
+                "btn_copy",
+                (total_shown > 0).then_some(Message::CopyLogs),
+            ),
+            action(
+                None,
+                "clear_logs",
+                (total_lines > 0).then_some(Message::ClearLogs),
+            ),
+            action(
+                None,
+                "export_logs",
+                (total_lines > 0).then_some(Message::ExportLogs),
+            ),
         ]
-        .spacing(theme::SP_12)
+        .spacing(theme::SP_8)
         .align_y(Alignment::Center);
 
         let actions: Element<'_, Message> = if !stacked {
@@ -266,10 +297,10 @@ pub fn render<'a>(
             .align_y(Alignment::Center)
             .style(theme::console_bg)
         } else if shown == 0 {
-            let cta = button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
+            let cta = button(text(tr(lang, "btn_reset_filters")).size(theme::TYPE_BTN_MD))
                 .padding(theme::BTN_PAD_MD)
                 .style(theme::button_secondary)
-                .on_press(Message::LogSearchChanged(String::new()));
+                .on_press(Message::ResetLogFilters);
             container(crate::ui::empty_state(
                 tr(lang, "no_matching_logs"),
                 None,
@@ -282,24 +313,50 @@ pub fn render<'a>(
             .align_y(Alignment::Center)
             .style(theme::console_bg)
         } else {
+            let count_label = tr(lang, "logs_count_fmt")
+                .replacen("{}", &shown.to_string(), 1)
+                .replacen("{}", &total_lines.to_string(), 1);
+            let meta_bar = row![
+                text(count_label)
+                    .size(theme::TYPE_CAPTION)
+                    .font(theme::metric_font())
+                    .color(text_tertiary),
+                Space::new().width(Length::Fill),
+            ]
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 4.0,
+                bottom: 6.0,
+                left: 0.0,
+            });
             // Embedded thin scrollbar: once the log overflows it takes its own
             // lane, so it never paints over the ends of wrapped lines.
             container(
-                scrollable(logs_col)
-                    .id(get_logs_scrollable_id().clone())
-                    .direction(scrollable::Direction::Vertical(
-                        scrollable::Scrollbar::new()
-                            .width(6)
-                            .scroller_width(6)
-                            .margin(0)
-                            .spacing(8),
-                    ))
-                    .style(theme::scrollbar_style)
-                    .height(Length::Fill)
-                    .width(Length::Fill),
+                column![
+                    meta_bar,
+                    container(Space::new())
+                        .width(Length::Fill)
+                        .height(1)
+                        .style(theme::hairline),
+                    Space::new().height(theme::SP_8),
+                    scrollable(logs_col)
+                        .id(get_logs_scrollable_id().clone())
+                        .direction(scrollable::Direction::Vertical(
+                            scrollable::Scrollbar::new()
+                                .width(6)
+                                .scroller_width(6)
+                                .margin(0)
+                                .spacing(8),
+                        ))
+                        .style(theme::scrollbar_style)
+                        .height(Length::Fill)
+                        .width(Length::Fill),
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill),
             )
             .padding(iced::Padding {
-                top: theme::CARD_PAD_DENSE,
+                top: 10.0,
                 right: 10.0,
                 bottom: theme::CARD_PAD_DENSE,
                 left: theme::CARD_PAD_DENSE,
@@ -319,7 +376,7 @@ pub fn render<'a>(
         crate::ui::page_body_fixed_with_pad(col.into(), crate::ui::is_pad_compact(size.width))
     });
 
-    main_content.into()
+    main_content_inner.into()
 }
 
 #[cfg(test)]

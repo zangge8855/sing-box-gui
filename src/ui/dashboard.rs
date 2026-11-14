@@ -1,5 +1,5 @@
 use crate::message::Message;
-use crate::state::{Bandwidth, GuiConfig, Language, Profile, RoutingMode, Tab};
+use crate::state::{Bandwidth, CoreInstallState, GuiConfig, Language, Profile, RoutingMode, Tab};
 use crate::ui::i18n::tr;
 use crate::ui::page_header;
 use crate::ui::theme;
@@ -7,7 +7,7 @@ use crate::ui::util::{
     format_size, format_speed, labelled_size, traffic_usage_ratio, truncate_width,
 };
 use iced::widget::{
-    Space, button, column, container, responsive, row, stack, text, toggler, tooltip,
+    Space, button, column, container, responsive, row, stack, text, text_input, toggler, tooltip,
 };
 use iced::{Alignment, Color, Element, Length};
 
@@ -28,7 +28,10 @@ fn split_figure(formatted: &str) -> (String, String) {
 
 /// Smallest page height at which the dashboard fits without scrolling, so the
 /// traffic chart can take whatever is left instead of leaving a blank tail.
-fn fill_height_threshold(tun_banner: bool, profile_strip: bool) -> f32 {
+fn fill_height_threshold(tun_banner: bool, profile_strip: bool, onboarding: bool) -> f32 {
+    if onboarding {
+        return f32::INFINITY;
+    }
     let mut h = 590.0;
     if tun_banner {
         h += 57.0;
@@ -46,16 +49,21 @@ pub fn render<'a>(
     core_starting: bool,
     core_stopping: bool,
     core_installed: bool,
+    core_install_state: &'a CoreInstallState,
     sys_proxy_enabled: bool,
     system_proxy_busy: bool,
+    pending_routing_mode: Option<RoutingMode>,
     current_speed: &Bandwidth,
     speed_history: &[(u64, u64)],
     total_uploaded: u64,
     total_downloaded: u64,
     selected_node: Option<&'a str>,
     active_connections: usize,
+    url_input: &'a str,
     downloading: bool,
+    profile_error: Option<&'a str>,
     updating_profile_id: Option<&'a str>,
+    anim_tick: u8,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
@@ -70,18 +78,29 @@ pub fn render<'a>(
         .active_profile_id
         .as_deref()
         .and_then(|id| gui_config.subscriptions.iter().find(|p| p.id == id));
+    let show_onboarding = !has_profile || !core_installed;
 
     let main_content = responsive(move |size| {
         let is_compact = size.width < crate::ui::DASHBOARD_COMPACT_W;
         let pad_compact = crate::ui::is_pad_compact(size.width);
         let fill_height = !is_compact
-            && size.height >= fill_height_threshold(gui_config.tun_mode, active_profile.is_some());
+            && size.height
+                >= fill_height_threshold(
+                    gui_config.tun_mode,
+                    active_profile.is_some(),
+                    show_onboarding,
+                );
         let theme = &theme_cloned;
         let text_primary = theme::text_primary(theme);
         let text_muted = theme::text_muted(theme);
         let text_tertiary = theme::text_tertiary(theme);
 
-        let content_w = crate::ui::page_content_width(size.width, pad_compact);
+        let content_w = crate::ui::page_content_width(size.width, pad_compact)
+            - if fill_height {
+                0.0
+            } else {
+                crate::ui::SCROLL_GUTTER
+            };
         let hero_pad = if is_compact {
             theme::CARD_PAD
         } else {
@@ -89,7 +108,7 @@ pub fn render<'a>(
         };
         let hero_inner = content_w - hero_pad * 2.0;
         let power_size = if is_compact { 56.0 } else { 64.0 };
-        let controls_w = (hero_inner * 0.42).clamp(280.0, 360.0);
+        let controls_w = (hero_inner * 0.44).clamp(296.0, 384.0);
         let identity_w = if is_compact {
             hero_inner - power_size - crate::ui::SP_16
         } else {
@@ -121,7 +140,14 @@ pub fn render<'a>(
         } else {
             (text_tertiary, false, tr(lang, "status_stopped"), text_muted)
         };
-        let status_line = row![
+        let can_start = has_profile && core_installed;
+        let disabled_reason =
+            (!core_running && !core_busy && !can_start).then_some(if !core_installed {
+                "btn_install_core_first"
+            } else {
+                "btn_import_profile_first"
+            });
+        let mut status_items: Vec<Element<'_, Message>> = vec![
             crate::ui::status_dot(
                 dot_color,
                 dot_active,
@@ -131,12 +157,34 @@ pub fn render<'a>(
             ),
             text(tr(lang, "singbox_core"))
                 .size(theme::TYPE_CAPTION)
-                .color(text_tertiary),
-        ]
-        .spacing(crate::ui::SP_12)
-        .align_y(Alignment::Center);
+                .color(text_tertiary)
+                .into(),
+        ];
+        if let Some(reason_key) = disabled_reason {
+            status_items.push(
+                container(
+                    text(tr(lang, reason_key))
+                        .size(theme::TYPE_MICRO)
+                        .color(theme::warning_text(theme)),
+                )
+                .padding([2, 7])
+                .style(|t| theme::badge_colored(theme::WARNING, t))
+                .into(),
+            );
+        } else if has_profile {
+            status_items.push(
+                text(format!("· {}", tr(lang, "dash_current_node")))
+                    .size(theme::TYPE_CAPTION)
+                    .color(text_tertiary)
+                    .into(),
+            );
+        }
+        let status_line = iced::widget::Row::with_children(status_items)
+            .spacing(crate::ui::SP_12)
+            .align_y(Alignment::Center)
+            .wrap()
+            .vertical_spacing(4);
 
-        let can_start = has_profile && core_installed;
         let mut power = button(
             container(icon(
                 crate::ui::icons::ICON_POWER,
@@ -160,6 +208,8 @@ pub fn render<'a>(
             tr(lang, "status_stopping")
         } else if core_running {
             tr(lang, "btn_stop_core")
+        } else if let Some(reason_key) = disabled_reason {
+            tr(lang, reason_key)
         } else {
             tr(lang, "btn_start_core")
         };
@@ -190,7 +240,7 @@ pub fn render<'a>(
         };
         // Size and truncation follow the room actually left beside the
         // controls, so a long node name never pushes them off the card.
-        let headline_size = if is_compact || identity_w < 340.0 {
+        let headline_size = if is_compact || identity_w < 320.0 {
             theme::TYPE_TITLE
         } else {
             theme::TYPE_DISPLAY
@@ -226,11 +276,11 @@ pub fn render<'a>(
         };
 
         // Quiet facts beneath the headline: label in grey, value in ink.
-        let mut facts = row![].spacing(crate::ui::SP_16).align_y(Alignment::Center);
+        let mut fact_items: Vec<Element<'_, Message>> = Vec::new();
         if let Some(desc) = subline {
-            facts = facts.push(text(desc).size(theme::TYPE_BTN_SM).color(text_muted));
+            fact_items.push(text(desc).size(theme::TYPE_BTN_SM).color(text_muted).into());
         } else {
-            facts = facts.push(
+            fact_items.push(
                 button(
                     row![
                         text(tr(lang, "dash_connections"))
@@ -246,10 +296,34 @@ pub fn render<'a>(
                 )
                 .padding([2, 8])
                 .style(theme::button_ghost)
-                .on_press(Message::TabChanged(Tab::Connections)),
+                .on_press(Message::TabChanged(Tab::Connections))
+                .into(),
+            );
+            if let Some(profile) = active_profile {
+                fact_items.push(
+                    text(format!(
+                        "{}: {}",
+                        tr(lang, "fact_profile"),
+                        truncate_width(&profile.name, 16)
+                    ))
+                    .size(theme::TYPE_CAPTION)
+                    .color(text_tertiary)
+                    .into(),
+                );
+            }
+            fact_items.push(
+                text(format!(
+                    "{} :{}",
+                    tr(lang, "fact_port"),
+                    gui_config.mixed_port
+                ))
+                .size(theme::TYPE_CAPTION)
+                .font(theme::metric_font())
+                .color(text_tertiary)
+                .into(),
             );
             if gui_config.tun_mode {
-                facts = facts.push(
+                fact_items.push(
                     container(
                         text("TUN")
                             .size(theme::TYPE_MICRO)
@@ -257,12 +331,18 @@ pub fn render<'a>(
                             .color(theme::badge_text(theme::INFO, theme)),
                     )
                     .padding([2, 6])
-                    .style(|t| theme::badge_colored(theme::INFO, t)),
+                    .style(|t| theme::badge_colored(theme::INFO, t))
+                    .into(),
                 );
             }
         }
+        let facts = iced::widget::Row::with_children(fact_items)
+            .spacing(crate::ui::SP_12)
+            .align_y(Alignment::Center)
+            .wrap()
+            .vertical_spacing(4);
 
-        let mut identity = column![
+        let identity = column![
             container(status_line).padding([0, 8]),
             headline_el,
             container(facts).padding(iced::Padding {
@@ -272,32 +352,6 @@ pub fn render<'a>(
         ]
         .spacing(6)
         .width(Length::Fill);
-
-        // A clear next step when the power control cannot act yet.
-        let cta_key = if core_running || core_busy {
-            None
-        } else if !has_profile {
-            Some(("btn_goto_profiles", Tab::Profiles))
-        } else if !core_installed {
-            Some(("btn_goto_settings", Tab::Settings))
-        } else {
-            None
-        };
-        if let Some((key, tab)) = cta_key {
-            identity = identity.push(
-                container(
-                    button(text(tr(lang, key)).size(theme::TYPE_BTN_MD))
-                        .padding(theme::BTN_PAD_MD)
-                        .style(theme::button_primary)
-                        .on_press(Message::TabChanged(tab)),
-                )
-                .padding(iced::Padding {
-                    top: 6.0,
-                    left: 8.0,
-                    ..Default::default()
-                }),
-            );
-        }
 
         // ── Controls: routing mode and system proxy, beside the power ─────
         let label_w = match lang {
@@ -310,7 +364,7 @@ pub fn render<'a>(
                 .color(text_muted)
                 .width(Length::Fixed(label_w))
         };
-        let current_mode = gui_config.routing_mode;
+        let current_mode = pending_routing_mode.unwrap_or(gui_config.routing_mode);
         let segment = |mode: RoutingMode, key: &'static str, desc_key: &'static str| {
             let active = mode == current_mode;
             let mut b = button(
@@ -327,7 +381,7 @@ pub fn render<'a>(
             .width(Length::FillPortion(1))
             .padding([6, 8])
             .style(theme::button_tab(active));
-            if !active {
+            if !active && pending_routing_mode.is_none() {
                 b = b.on_press(Message::RoutingModeChanged(mode));
             }
             tooltip(
@@ -390,19 +444,21 @@ pub fn render<'a>(
         .into();
         let proxy_row = row![
             control_label("system_proxy"),
-            text(proxy_state)
-                .size(theme::TYPE_BTN_SM)
-                .font(theme::ui_font(iced::font::Weight::Medium))
-                .color(proxy_state_color),
-            text(format!("127.0.0.1:{}", gui_config.mixed_port))
-                .size(theme::TYPE_CAPTION)
-                .font(theme::metric_font())
-                .color(text_tertiary),
+            column![
+                text(proxy_state)
+                    .size(theme::TYPE_BTN_SM)
+                    .font(theme::ui_font(iced::font::Weight::Medium))
+                    .color(proxy_state_color),
+                text(format!("127.0.0.1:{}", gui_config.mixed_port))
+                    .size(theme::TYPE_MICRO)
+                    .font(theme::metric_font())
+                    .color(text_tertiary),
+            ]
+            .spacing(1),
             Space::new().width(Length::Fill),
             proxy_switch,
         ]
         .spacing(crate::ui::SP_12)
-        .height(Length::Fixed(35.0))
         .align_y(Alignment::Center);
 
         let controls = column![routing_row, proxy_row].spacing(crate::ui::SP_12);
@@ -441,8 +497,22 @@ pub fn render<'a>(
             );
         }
         if core_starting {
-            hero_col = hero_col.push(crate::ui::loading_row(
+            hero_col = hero_col.push(crate::ui::loading_row_animated(
                 tr(lang, "core_starting_hint"),
+                anim_tick,
+                theme,
+            ));
+        } else if core_stopping {
+            hero_col = hero_col.push(crate::ui::loading_row_animated(
+                tr(lang, "status_stopping"),
+                anim_tick,
+                theme,
+            ));
+        }
+        if pending_routing_mode.is_some() {
+            hero_col = hero_col.push(crate::ui::loading_row_animated(
+                tr(lang, "mode_switching_hint"),
+                anim_tick,
                 theme,
             ));
         }
@@ -587,9 +657,9 @@ pub fn render<'a>(
             traffic = traffic.height(Length::Fill);
         }
 
-        let mut content_col = column![].spacing(theme::GRID_GAP).width(Length::Fill);
-        if gui_config.tun_mode {
-            content_col = content_col.push(
+        // Note: hero is always shown first above onboarding/traffic.
+        let mut final_col = if gui_config.tun_mode {
+            column![
                 container(
                     text(tr(lang, "tun_admin_banner"))
                         .size(theme::TYPE_BTN_SM)
@@ -598,11 +668,30 @@ pub fn render<'a>(
                 .padding(crate::ui::SP_12)
                 .width(Length::Fill)
                 .style(|t| theme::tinted_banner(t, theme::WARNING)),
-            );
+                hero,
+            ]
+        } else {
+            column![hero]
         }
-        content_col = content_col.push(hero).push(traffic);
+        .spacing(theme::GRID_GAP)
+        .width(Length::Fill);
+        if show_onboarding {
+            final_col = final_col.push(onboarding_card(
+                core_installed,
+                core_install_state,
+                active_profile,
+                url_input,
+                downloading,
+                profile_error,
+                can_start,
+                lang,
+                anim_tick,
+                theme,
+            ));
+        }
+        final_col = final_col.push(traffic);
         if let Some(profile) = active_profile {
-            content_col = content_col.push(profile_strip(
+            final_col = final_col.push(profile_strip(
                 profile,
                 lang,
                 theme,
@@ -616,15 +705,277 @@ pub fn render<'a>(
         if fill_height {
             crate::ui::page_shell_fixed_with_pad(
                 header,
-                content_col.height(Length::Fill).into(),
+                final_col.height(Length::Fill).into(),
                 pad_compact,
             )
         } else {
-            crate::ui::page_shell_with_pad(header, content_col.into(), pad_compact)
+            crate::ui::page_shell_with_pad(header, final_col.into(), pad_compact)
         }
     });
 
     main_content.into()
+}
+
+/// First-launch 1-2-3 setup guide rendered on Dashboard whenever the core or
+/// an active profile is missing, keeping setup on one screen.
+#[allow(clippy::too_many_arguments)]
+fn onboarding_card<'a>(
+    core_installed: bool,
+    install_state: &'a CoreInstallState,
+    active_profile: Option<&'a Profile>,
+    url_input: &'a str,
+    downloading: bool,
+    profile_error: Option<&'a str>,
+    can_start: bool,
+    lang: Language,
+    anim_tick: u8,
+    theme: &iced::Theme,
+) -> Element<'a, Message> {
+    let text_primary = theme::text_primary(theme);
+    let text_muted = theme::text_muted(theme);
+    let text_tertiary = theme::text_tertiary(theme);
+
+    let step_badge = |done: bool| -> Element<'a, Message> {
+        if done {
+            crate::ui::material_icon(crate::ui::icons::ICON_CHECK_CIRCLE)
+                .size(crate::ui::ICON_SIZE_LG)
+                .color(theme::success_text(theme))
+                .into()
+        } else {
+            container(Space::new())
+                .width(10)
+                .height(10)
+                .style(|t| container::Style {
+                    background: Some(iced::Background::Color(theme::accent(t))),
+                    border: iced::Border {
+                        radius: 5.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .into()
+        }
+    };
+
+    // Step 1: Install sing-box core
+    let step1_body: Element<'a, Message> = if core_installed {
+        text(tr(lang, "onboarding_step1_ready"))
+            .size(theme::TYPE_CAPTION)
+            .color(theme::success_text(theme))
+            .into()
+    } else {
+        match install_state {
+            CoreInstallState::Downloading => {
+                crate::ui::loading_row_animated(tr(lang, "core_downloading"), anim_tick, theme)
+            }
+            CoreInstallState::Verifying => {
+                crate::ui::loading_row_animated(tr(lang, "core_verifying"), anim_tick, theme)
+            }
+            CoreInstallState::Extracting => {
+                crate::ui::loading_row_animated(tr(lang, "core_extracting"), anim_tick, theme)
+            }
+            CoreInstallState::Installing => {
+                crate::ui::loading_row_animated(tr(lang, "core_installing"), anim_tick, theme)
+            }
+            CoreInstallState::Error(err) => row![
+                column![
+                    text(tr(lang, "core_install_failed"))
+                        .size(theme::TYPE_CAPTION)
+                        .color(theme::danger_text(theme)),
+                    text(err.as_str())
+                        .size(theme::TYPE_CAPTION)
+                        .color(text_muted),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                button(text(tr(lang, "btn_retry_core")).size(theme::TYPE_BTN_SM))
+                    .padding(theme::BTN_PAD_SM)
+                    .style(theme::button_primary)
+                    .on_press(Message::TriggerCoreDownload),
+            ]
+            .spacing(crate::ui::SP_12)
+            .align_y(Alignment::Center)
+            .into(),
+            CoreInstallState::Idle | CoreInstallState::Installed => row![
+                text(tr(lang, "core_status_missing"))
+                    .size(theme::TYPE_CAPTION)
+                    .color(text_muted)
+                    .width(Length::Fill),
+                button(text(tr(lang, "onboarding_step1_action")).size(theme::TYPE_BTN_SM))
+                    .padding(theme::BTN_PAD_SM)
+                    .style(theme::button_primary)
+                    .on_press(Message::TriggerCoreDownload),
+            ]
+            .spacing(crate::ui::SP_12)
+            .align_y(Alignment::Center)
+            .into(),
+        }
+    };
+    let step1 = row![
+        step_badge(core_installed),
+        column![
+            text(tr(lang, "onboarding_step1_title"))
+                .size(theme::TYPE_BODY)
+                .font(theme::ui_font(iced::font::Weight::Semibold))
+                .color(text_primary),
+            step1_body,
+        ]
+        .spacing(6)
+        .width(Length::Fill),
+    ]
+    .spacing(crate::ui::SP_12)
+    .align_y(Alignment::Start);
+
+    // Step 2: Import profile or subscription
+    let has_profile = active_profile.is_some();
+    let step2_body: Element<'a, Message> = if let Some(profile) = active_profile {
+        text(format!(
+            "{}: {}",
+            tr(lang, "onboarding_step2_ready"),
+            profile.name
+        ))
+        .size(theme::TYPE_CAPTION)
+        .color(theme::success_text(theme))
+        .into()
+    } else {
+        let can_import = !downloading && !url_input.trim().is_empty();
+        let mut input = text_input(tr(lang, "sub_url_placeholder"), url_input)
+            .on_input(Message::SubscriptionInputChanged)
+            .padding(8)
+            .size(theme::TYPE_BODY)
+            .width(Length::Fill)
+            .style(theme::input_field);
+        if can_import {
+            input = input.on_submit(Message::DownloadSubscription);
+        }
+        let mut import_btn = button(
+            text(tr(
+                lang,
+                if downloading {
+                    "btn_downloading"
+                } else {
+                    "btn_download"
+                },
+            ))
+            .size(theme::TYPE_BTN_SM),
+        )
+        .padding(theme::BTN_PAD_SM)
+        .style(if downloading {
+            theme::button_secondary
+        } else {
+            theme::button_primary
+        });
+        if can_import {
+            import_btn = import_btn.on_press(Message::DownloadSubscription);
+        }
+
+        let mut col = column![
+            row![input, import_btn]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
+            row![
+                button(text(tr(lang, "btn_import_clipboard")).size(theme::TYPE_BTN_SM))
+                    .padding(theme::BTN_PAD_SM)
+                    .style(theme::button_secondary)
+                    .on_press(Message::ImportFromClipboard),
+                button(text(tr(lang, "btn_import_file")).size(theme::TYPE_BTN_SM))
+                    .padding(theme::BTN_PAD_SM)
+                    .style(theme::button_secondary)
+                    .on_press(Message::ImportLocalFile),
+            ]
+            .spacing(crate::ui::SP_8)
+            .wrap()
+            .vertical_spacing(crate::ui::SP_8),
+        ]
+        .spacing(crate::ui::SP_8);
+        if let Some(err) = profile_error {
+            col = col.push(
+                text(err)
+                    .size(theme::TYPE_CAPTION)
+                    .color(theme::danger_text(theme)),
+            );
+        }
+        col.into()
+    };
+    let step2 = row![
+        step_badge(has_profile),
+        column![
+            text(tr(lang, "onboarding_step2_title"))
+                .size(theme::TYPE_BODY)
+                .font(theme::ui_font(iced::font::Weight::Semibold))
+                .color(text_primary),
+            step2_body,
+        ]
+        .spacing(6)
+        .width(Length::Fill),
+    ]
+    .spacing(crate::ui::SP_12)
+    .align_y(Alignment::Start);
+
+    // Step 3: Ready to connect
+    let step3 = row![
+        step_badge(can_start),
+        column![
+            text(tr(lang, "onboarding_step3_title"))
+                .size(theme::TYPE_BODY)
+                .font(theme::ui_font(iced::font::Weight::Semibold))
+                .color(text_primary),
+            text(tr(
+                lang,
+                if can_start {
+                    "onboarding_step3_ready"
+                } else {
+                    "onboarding_step3_waiting"
+                }
+            ))
+            .size(theme::TYPE_CAPTION)
+            .color(if can_start {
+                theme::success_text(theme)
+            } else {
+                text_tertiary
+            }),
+        ]
+        .spacing(4)
+        .width(Length::Fill),
+    ]
+    .spacing(crate::ui::SP_12)
+    .align_y(Alignment::Start);
+
+    container(
+        column![
+            column![
+                text(tr(lang, "onboarding_title"))
+                    .size(theme::TYPE_HEADING)
+                    .font(theme::ui_font(iced::font::Weight::Semibold))
+                    .color(text_primary),
+                text(tr(lang, "onboarding_subtitle"))
+                    .size(theme::TYPE_CAPTION)
+                    .color(text_muted),
+            ]
+            .spacing(2),
+            container(Space::new())
+                .width(Length::Fill)
+                .height(1)
+                .style(theme::hairline),
+            step1,
+            container(Space::new())
+                .width(Length::Fill)
+                .height(1)
+                .style(theme::hairline),
+            step2,
+            container(Space::new())
+                .width(Length::Fill)
+                .height(1)
+                .style(theme::hairline),
+            step3,
+        ]
+        .spacing(crate::ui::SP_12)
+        .width(Length::Fill),
+    )
+    .padding(theme::CARD_PAD)
+    .width(Length::Fill)
+    .style(theme::card_selected)
+    .into()
 }
 
 /// The waveform, with a quiet caption over it while nothing is flowing.
@@ -836,10 +1187,13 @@ fn traffic_waveform<'a>(
     let text_muted = theme::text_muted(theme);
     let text_tertiary = theme::text_tertiary(theme);
 
+    // Reserved Y-axis rail width so bars fit beside scale ticks cleanly.
+    const Y_AXIS_W: f32 = 64.0;
+    let plot_width = (chart_width - Y_AXIS_W - crate::ui::SP_8).max(80.0);
     let n = history.len().max(1);
     let peak_up = history.iter().map(|&(u, _)| u).max().unwrap_or(0);
     let peak_down = history.iter().map(|&(_, d)| d).max().unwrap_or(0);
-    let slot = chart_width / n as f32;
+    let slot = plot_width / n as f32;
     let gap = (slot * 0.35).clamp(2.0, 8.0);
     let height = height.floor();
     let (down_area, up_area, scale) = waveform_split(peak_down, peak_up, height);
@@ -848,8 +1202,9 @@ fn traffic_waveform<'a>(
         if value == 0 {
             return Space::new().height(0).into();
         }
-        let reach = if rising { down_area } else { up_area } - 2.0;
-        let h = (value as f32 * scale).clamp(2.0, reach.max(2.0));
+        // Keep 3px clear of the top/bottom borders and 2px clear of the baseline.
+        let reach = (if rising { down_area } else { up_area } - 5.0).max(2.0);
+        let h = (value as f32 * scale).clamp(2.0, reach);
         let r = (h / 2.0).min(3.0);
         let radius = if rising {
             iced::border::Radius {
@@ -920,6 +1275,7 @@ fn traffic_waveform<'a>(
                 .width(Length::Fill)
                 .align_y(Alignment::End)
                 .padding(iced::Padding {
+                    top: 3.0,
                     bottom: 2.0,
                     ..Default::default()
                 }),
@@ -930,6 +1286,7 @@ fn traffic_waveform<'a>(
                 .align_y(Alignment::Start)
                 .padding(iced::Padding {
                     top: 2.0,
+                    bottom: 3.0,
                     ..Default::default()
                 }),
         ]
@@ -972,7 +1329,54 @@ fn traffic_waveform<'a>(
     .width(Length::Fill)
     .height(height);
 
-    stack![baseline, bars].into()
+    let y_axis = column![
+        container(
+            text(if peak_down > 0 {
+                format!("↓ {}", format_speed(peak_down))
+            } else {
+                String::new()
+            })
+            .size(theme::TYPE_MICRO)
+            .font(theme::metric_font())
+            .color(down_color),
+        )
+        .height((down_area - 8.0).max(12.0))
+        .width(Length::Fill)
+        .align_x(Alignment::End)
+        .align_y(Alignment::Start),
+        container(
+            text("0")
+                .size(theme::TYPE_MICRO)
+                .font(theme::metric_font())
+                .color(text_tertiary),
+        )
+        .height(16)
+        .width(Length::Fill)
+        .align_x(Alignment::End)
+        .align_y(Alignment::Center),
+        container(
+            text(if peak_up > 0 {
+                format!("↑ {}", format_speed(peak_up))
+            } else {
+                String::new()
+            })
+            .size(theme::TYPE_MICRO)
+            .font(theme::metric_font())
+            .color(up_color),
+        )
+        .height((up_area - 8.0).max(12.0))
+        .width(Length::Fill)
+        .align_x(Alignment::End)
+        .align_y(Alignment::End),
+    ]
+    .width(Length::Fixed(Y_AXIS_W))
+    .height(height);
+
+    row![y_axis, stack![baseline, bars]]
+        .spacing(crate::ui::SP_8)
+        .width(Length::Fill)
+        .height(height)
+        .into()
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use crate::message::Message;
 use crate::state::GuiConfig;
 use crate::ui::theme;
-use crate::ui::util::{format_size, labelled_size, traffic_usage_ratio, truncate_chars};
+use crate::ui::util::{format_size, labelled_size, traffic_usage_ratio, truncate_width};
 use crate::ui::{PAGE_COMPACT_W, page_header};
 use iced::widget::{Column, Space, button, column, container, responsive, row, text, text_input};
 use iced::{Alignment, Element, Length};
@@ -36,15 +36,18 @@ pub fn render<'a>(
         let text_primary = theme::text_primary(theme);
         let text_muted = theme::text_muted(theme);
 
+        let can_import = !downloading && !url_input.trim().is_empty();
         // Import: one input that takes any link or document, with the other
         // sources tucked beside the title instead of a half-empty second row.
-        let input = text_input(tr(lang, "sub_url_placeholder"), url_input)
+        let mut input = text_input(tr(lang, "sub_url_placeholder"), url_input)
             .on_input(Message::SubscriptionInputChanged)
-            .on_submit(Message::DownloadSubscription)
             .padding(crate::ui::SP_12)
             .width(Length::Fill)
             .size(theme::TYPE_BODY)
             .style(theme::input_field);
+        if can_import {
+            input = input.on_submit(Message::DownloadSubscription);
+        }
 
         let mut import_btn = button(
             text(tr(
@@ -64,7 +67,7 @@ pub fn render<'a>(
         } else {
             theme::button_primary
         });
-        if !downloading {
+        if can_import {
             import_btn = import_btn.on_press(Message::DownloadSubscription);
         }
 
@@ -84,19 +87,23 @@ pub fn render<'a>(
                 .on_press(msg)
         };
 
+        let add_header = row![
+            text(tr(lang, "import_sub"))
+                .color(text_primary)
+                .size(theme::TYPE_HEADING)
+                .font(theme::ui_font(iced::font::Weight::Semibold)),
+            Space::new().width(Length::Fill),
+            source_btn("btn_import_clipboard", Message::ImportFromClipboard),
+            source_btn("btn_import_file", Message::ImportLocalFile),
+        ]
+        .spacing(crate::ui::SP_8)
+        .align_y(Alignment::Center)
+        .wrap()
+        .vertical_spacing(crate::ui::SP_8);
+
         let add_form = container(
             column![
-                row![
-                    text(tr(lang, "import_sub"))
-                        .color(text_primary)
-                        .size(theme::TYPE_HEADING)
-                        .font(theme::ui_font(iced::font::Weight::Semibold)),
-                    Space::new().width(Length::Fill),
-                    source_btn("btn_import_clipboard", Message::ImportFromClipboard),
-                    source_btn("btn_import_file", Message::ImportLocalFile),
-                ]
-                .spacing(crate::ui::SP_8)
-                .align_y(Alignment::Center),
+                add_header,
                 row![input, import_btn]
                     .spacing(crate::ui::SP_12)
                     .align_y(Alignment::Center),
@@ -118,6 +125,7 @@ pub fn render<'a>(
                     text(err)
                         .size(theme::TYPE_SECTION)
                         .color(theme::danger_text(theme))
+                        .width(Length::Fill)
                 ]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
@@ -141,26 +149,28 @@ pub fn render<'a>(
             for profile in &gui_config.subscriptions {
                 let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
 
-                // Only the card whose update is in flight reads "Downloading…";
-                // the rest stay labeled but disabled while a download runs.
+                // Only the card whose update is in flight reads "Updating…";
+                // non-subscription local/share-link profiles omit Update.
                 let is_updating = updating_id.as_deref() == Some(profile.id.as_str());
-                let mut update_btn = button(
-                    text(tr(
-                        lang,
-                        if is_updating {
-                            "btn_downloading"
-                        } else {
-                            "btn_update"
-                        },
-                    ))
-                    .size(theme::TYPE_BTN_SM),
-                )
-                .padding(theme::BTN_PAD_SM)
-                .style(theme::button_secondary);
-                if !downloading {
-                    update_btn =
-                        update_btn.on_press(Message::UpdateSubscription(profile.id.clone()));
-                }
+                let update_btn = profile.is_subscription.then(|| {
+                    let mut b = button(
+                        text(tr(
+                            lang,
+                            if is_updating {
+                                "btn_updating"
+                            } else {
+                                "btn_update"
+                            },
+                        ))
+                        .size(theme::TYPE_BTN_SM),
+                    )
+                    .padding(theme::BTN_PAD_SM)
+                    .style(theme::button_secondary);
+                    if !downloading {
+                        b = b.on_press(Message::UpdateSubscription(profile.id.clone()));
+                    }
+                    b
+                });
 
                 // A pending delete confirmation keeps the More row open.
                 let confirming_delete = confirm_delete_id == Some(profile.id.as_str());
@@ -196,7 +206,10 @@ pub fn render<'a>(
                             .on_press(Message::SelectProfile(profile.id.clone())),
                     );
                 }
-                actions_row = actions_row.push(update_btn).push(more_btn);
+                if let Some(b) = update_btn {
+                    actions_row = actions_row.push(b);
+                }
+                actions_row = actions_row.push(more_btn);
 
                 let secondary_row: Option<Element<'a, Message>> = if show_more {
                     let delete_actions: Element<'a, Message> = if confirming_delete {
@@ -220,7 +233,7 @@ pub fn render<'a>(
                             .on_press(Message::RequestDeleteProfile(profile.id.clone()))
                             .into()
                     };
-                    // Destructive action set apart at the far end.
+                    // Destructive action set apart; wraps cleanly on 640px windows.
                     Some(
                         row![
                             button(text(tr(lang, "btn_edit_url")).size(theme::TYPE_BTN_SM))
@@ -236,6 +249,8 @@ pub fn render<'a>(
                         ]
                         .spacing(crate::ui::SP_8)
                         .align_y(Alignment::Center)
+                        .wrap()
+                        .vertical_spacing(crate::ui::SP_8)
                         .into(),
                     )
                 } else {
@@ -243,7 +258,7 @@ pub fn render<'a>(
                 };
 
                 let masked_url = mask_sensitive_url(&profile.url);
-                let display_url = truncate_chars(&masked_url, 40);
+                let display_url = truncate_width(&masked_url, if is_compact { 42 } else { 54 });
 
                 let is_editing = editing_id.as_deref() == Some(profile.id.as_str());
 
@@ -344,7 +359,7 @@ pub fn render<'a>(
                             _ => None,
                         };
 
-                    let mut meta_line = row![
+                    let mut meta_items: Vec<Element<'_, Message>> = vec![
                         text(format!(
                             "{} {}",
                             tr(lang, "updated_at_label"),
@@ -352,42 +367,64 @@ pub fn render<'a>(
                         ))
                         .color(text_muted)
                         .size(theme::TYPE_CAPTION)
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center);
+                        .into(),
+                    ];
+                    if !profile.is_subscription {
+                        meta_items.push(
+                            text("·")
+                                .color(theme::text_tertiary(theme))
+                                .size(theme::TYPE_CAPTION)
+                                .into(),
+                        );
+                        meta_items.push(
+                            text(tr(lang, "profile_kind_local"))
+                                .color(theme::text_tertiary(theme))
+                                .size(theme::TYPE_CAPTION)
+                                .into(),
+                        );
+                    }
                     if let Some(ts) = profile.expire_at
                         && let Some(dt) = chrono::DateTime::from_timestamp(ts, 0)
                     {
                         let near =
                             ts.saturating_sub(chrono::Utc::now().timestamp()) < 7 * 24 * 3600;
-                        meta_line = meta_line
-                            .push(
-                                text("·")
-                                    .color(theme::text_tertiary(theme))
-                                    .size(theme::TYPE_CAPTION),
-                            )
-                            .push(
-                                text(format!(
-                                    "{} {}",
-                                    tr(lang, "expire_at_label"),
-                                    dt.with_timezone(&chrono::Local).format("%Y-%m-%d")
-                                ))
-                                .color(if near {
-                                    theme::warning_text(theme)
-                                } else {
-                                    text_muted
-                                })
-                                .size(theme::TYPE_CAPTION),
-                            );
+                        meta_items.push(
+                            text("·")
+                                .color(theme::text_tertiary(theme))
+                                .size(theme::TYPE_CAPTION)
+                                .into(),
+                        );
+                        meta_items.push(
+                            text(format!(
+                                "{} {}",
+                                tr(lang, "expire_at_label"),
+                                dt.with_timezone(&chrono::Local).format("%Y-%m-%d")
+                            ))
+                            .color(if near {
+                                theme::warning_text(theme)
+                            } else {
+                                text_muted
+                            })
+                            .size(theme::TYPE_CAPTION)
+                            .into(),
+                        );
                     }
+                    let meta_line = iced::widget::Row::with_children(meta_items)
+                        .spacing(6)
+                        .align_y(Alignment::Center)
+                        .wrap()
+                        .vertical_spacing(4);
 
                     // Status reads as a small pill beside the name, not as a
                     // control-sized block that looks like a disabled button.
                     let mut name_row = row![
-                        text(truncate_chars(&profile.name, 36))
-                            .color(text_primary)
-                            .size(theme::TYPE_HEADING)
-                            .font(theme::ui_font(iced::font::Weight::Semibold))
+                        text(truncate_width(
+                            &profile.name,
+                            if is_compact { 34 } else { 42 }
+                        ))
+                        .color(text_primary)
+                        .size(theme::TYPE_HEADING)
+                        .font(theme::ui_font(iced::font::Weight::Semibold))
                     ]
                     .spacing(crate::ui::SP_8)
                     .align_y(Alignment::Center);
@@ -508,12 +545,22 @@ pub fn render<'a>(
             lang,
             Some(open_folder_btn.into()),
             theme,
-            false,
+            is_compact,
         );
 
-        // Scroll the import form with the records. A fixed form plus a nested
-        // list left no room for profiles on short/HiDPI windows.
-        crate::ui::page_shell_with_pad(header, main_layout_col.into(), is_compact)
+        // Scroll the import form with the records, leaving a slight right margin
+        // so selected card borders never graze the scrollbar lane.
+        crate::ui::page_shell_with_pad(
+            header,
+            container(main_layout_col)
+                .padding(iced::Padding {
+                    right: 4.0,
+                    ..Default::default()
+                })
+                .width(Length::Fill)
+                .into(),
+            is_compact,
+        )
     });
 
     main_content.into()
