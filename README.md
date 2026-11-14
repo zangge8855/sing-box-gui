@@ -2,7 +2,7 @@
 # sing-box GUI
 
 [![Build](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml/badge.svg)](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml)
-![Version](https://img.shields.io/badge/version-2026.10.29-2E7D6B.svg)
+![Version](https://img.shields.io/badge/version-2026.11.14-2E7D6B.svg)
 
 
 <p align="center">
@@ -29,7 +29,7 @@ A native-style, cross-platform desktop client for [sing-box](https://github.com/
 | Protocol | Sharing link | Clash YAML conversion | Native sing-box JSON |
 | --- | :---: | :---: | :---: |
 | Shadowsocks (SIP002, plugins) | Yes | Yes | Passthrough |
-| ShadowsocksR | Yes | Yes | Passthrough |
+| ShadowsocksR | Skipped (removed in sing-box) | Skipped (removed in sing-box) | Stripped safely |
 | VMess | Yes | Yes | Passthrough |
 | VLESS / Reality | Yes | Yes | Passthrough |
 | Trojan | Yes | Yes | Passthrough |
@@ -41,11 +41,14 @@ A native-style, cross-platform desktop client for [sing-box](https://github.com/
 | SSH | Yes | Yes | Passthrough |
 | ShadowTLS | Yes | Yes | Passthrough |
 | SOCKS / HTTP(S) | Yes | Yes | Passthrough |
-| WireGuard endpoint and custom types | Native JSON | No fabricated legacy outbound | Passthrough |
+| WireGuard | Yes (`wg://` / `wireguard://` → `endpoints[]`) | Yes (`endpoints[]`) | Passthrough (`endpoints[]`) |
+| Custom / experimental types | Native JSON | Native JSON | Passthrough |
 
 Converted transport metadata includes WebSocket, HTTP/H2, HTTPUpgrade, QUIC, and gRPC. TLS conversion preserves SNI, insecure mode, ALPN, uTLS fingerprint, and Reality options where supported. Hysteria-family and TUIC imports preserve common bandwidth, obfuscation, port-hopping, congestion, UDP relay, 0-RTT, and heartbeat options.
 
-Native sing-box JSON is the compatibility path for endpoint-only features such as current WireGuard endpoints and for custom/experimental objects that cannot be represented safely by Clash proxy entries. The application keeps the native object graph instead of inventing an invalid outbound.
+`wg://` / `wireguard://` sharing links and Clash `type: wireguard` entries map directly to native sing-box `endpoints[]` (referenced by `Proxy` / `Auto`) instead of fabricating a deprecated legacy outbound. Native sing-box JSON remains the compatibility path for custom/experimental objects and advanced native object graphs.
+
+ShadowsocksR was removed in sing-box 1.6.0, so `ssr://` links, Clash `type: ssr` / `type: shadowsocksr` entries, and `shadowsocksr` outbounds in native JSON are safely skipped/stripped (with dangling group, route, and detour references cleaned up) in mixed profiles instead of crashing core startup; SSR-only profiles fail validation with an explicit error.
 
 Tor and other local-runtime outbounds that depend on an external executable remain available through native sing-box JSON. Snell and Mieru are not present in the official sing-box v1.13.14 option set and are therefore not advertised as convertible protocols.
 
@@ -127,9 +130,11 @@ Linux 支持原生 Wayland 和 X11，托盘通过 D-Bus StatusNotifierItem 工�
 
 ### 协议兼容性
 
-分享链接与 Clash 转换支持 Shadowsocks（含 SIP002 插件）、ShadowsocksR、VMess、VLESS/Reality、Trojan、Hysteria、Hysteria2、TUIC、AnyTLS、Naive、SSH、ShadowTLS，以及 Clash 中的 SOCKS/HTTP 节点。可保留 WS、HTTP/H2、HTTPUpgrade、QUIC、gRPC、SNI、ALPN、uTLS 指纹、Reality、混淆、带宽、端口跳跃、UDP 转发、0-RTT、心跳及 SSH 私钥等常用参数。
+分享链接与 Clash 转换支持 Shadowsocks（含 SIP002 插件）、VMess、VLESS/Reality、Trojan、Hysteria、Hysteria2、TUIC、AnyTLS、Naive、SSH、ShadowTLS、WireGuard（`wg://` / `wireguard://` 与 Clash `type: wireguard` 直接映射为原生 `endpoints[]`），以及 SOCKS/HTTP 节点。可保留 WS、HTTP/H2、HTTPUpgrade、QUIC、gRPC、SNI、ALPN、uTLS 指纹、Reality、混淆、带宽、端口跳跃、UDP 转发、0-RTT、心跳及 SSH 私钥等常用参数。
 
-新版 sing-box 的 WireGuard 属于 endpoint，而不是传统 outbound。此类 endpoint、实验性类型和自定义对象请使用原生 sing-box JSON；程序会保留原始对象结构，不会生成无效的旧式 WireGuard outbound。
+新版 sing-box 的 WireGuard 属于 `endpoints[]` 而非传统 outbound；导入的 WireGuard 分享链接与 Clash 节点会自动转换为原生 `endpoints[]`（由 `Proxy` / `Auto` 引用），不再生成无效的旧式 outbound。其他实验性类型和自定义对象请继续使用原生 sing-box JSON，程序会保留原始对象结构。
+
+由于 sing-box 1.6.0 已移除 ShadowsocksR，混合配置中的 `ssr://` 分享链接、Clash `type: ssr` / `shadowsocksr` 节点以及原生 JSON 中的 `shadowsocksr` outbound 会被安全跳过或剥离（同时清理悬空的策略组、规则与 detour 引用），避免启动崩溃；仅包含 SSR 的配置会在校验时直接报错。
 
 Tor 等依赖本机外部可执行文件的 outbound 继续通过原生 sing-box JSON 使用。官方 sing-box v1.13.14 已不包含 Snell、Mieru 选项，因此本项目不会将它们错误宣传为可转换协议。
 
