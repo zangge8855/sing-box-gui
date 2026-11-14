@@ -19,6 +19,15 @@ use tokio::sync::mpsc::Sender;
 use std::os::windows::process::CommandExt;
 
 static CURRENT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
+/// Active startup PID (while `start_core` is inside `STARTUP_GRACE_MS`), allowing
+/// `stop_core()` to abort a startup without blocking on `LIFECYCLE_LOCK`.
+#[derive(Debug, Clone, Copy)]
+struct StartupHandle {
+    pid: u32,
+    #[cfg(unix)]
+    process_group: bool,
+}
+static STARTUP_HANDLE: Mutex<Option<StartupHandle>> = Mutex::new(None);
 /// Set when the user (or app shutdown) intentionally stops the core.
 static INTENTIONAL_STOP: AtomicBool = AtomicBool::new(false);
 /// Message captured when the core dies without an intentional stop.
@@ -30,12 +39,55 @@ pub const CORE_VERSION: &str = "1.13.14";
 /// for up to `STARTUP_GRACE_MS` while waiting for the child to survive).
 static CORE_RUNNING_CACHED: AtomicBool = AtomicBool::new(false);
 static CORE_DOWNLOAD_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static CORE_DOWNLOAD_PROGRESS: OnceLock<tokio::sync::watch::Sender<CoreDownloadStage>> =
+    OnceLock::new();
+
+/// High-level progress state for [`download_core_with_progress`] and
+/// [`subscribe_core_download_progress`].
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum CoreDownloadStage {
+    #[default]
+    Idle,
+    Starting,
+    FetchingMetadata,
+    Downloading {
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    },
+    Verifying,
+    Extracting,
+    Installing,
+    Completed,
+    Failed(String),
+}
+
+fn download_progress_tx() -> &'static tokio::sync::watch::Sender<CoreDownloadStage> {
+    CORE_DOWNLOAD_PROGRESS.get_or_init(|| {
+        let (tx, _) = tokio::sync::watch::channel(CoreDownloadStage::Idle);
+        tx
+    })
+}
+
+/// Subscribe to structured core download progress updates without scraping log lines.
+#[allow(dead_code)]
+pub fn subscribe_core_download_progress() -> tokio::sync::watch::Receiver<CoreDownloadStage> {
+    download_progress_tx().subscribe()
+}
+
+/// Return the most recent core download stage snapshot.
+#[allow(dead_code)]
+pub fn current_core_download_progress() -> CoreDownloadStage {
+    download_progress_tx().borrow().clone()
+}
 
 /// How long to wait after spawn before treating the core as "started".
 /// Catches immediate FATAL exits (bad config, rule-set init, port bind, …).
 pub const STARTUP_GRACE_MS: u64 = 3000;
 /// Max time `stop_core` waits for the child to exit gracefully before forcing.
 /// Lets sing-box flush its cache file and tear down TUN/sysproxy state.
+pub const GRACEFUL_STOP_TIMEOUT_MS: u64 = 2000;
+
 fn get_process_lock() -> std::sync::MutexGuard<'static, Option<Child>> {
     CURRENT_PROCESS.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -121,10 +173,20 @@ fn decode_log_line(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+#[cfg(test)]
 fn spawn_log_forwarder<R: Read + Send + 'static>(
     pipe: R,
     sender: Sender<String>,
     early_buf: Arc<Mutex<Vec<String>>>,
+) {
+    spawn_log_forwarder_with_flag(pipe, sender, early_buf, Arc::new(AtomicBool::new(true)));
+}
+
+fn spawn_log_forwarder_with_flag<R: Read + Send + 'static>(
+    pipe: R,
+    sender: Sender<String>,
+    early_buf: Arc<Mutex<Vec<String>>>,
+    capture_early: Arc<AtomicBool>,
 ) {
     thread::spawn(move || {
         let mut reader = BufReader::new(pipe);
@@ -137,7 +199,10 @@ fn spawn_log_forwarder<R: Read + Send + 'static>(
             if truncated {
                 line_str.push_str(" … [truncated]");
             }
-            if let Ok(mut buf_guard) = early_buf.lock() {
+            if capture_early.load(Ordering::Relaxed)
+                && let Ok(mut buf_guard) = early_buf.lock()
+                && capture_early.load(Ordering::Relaxed)
+            {
                 // Ring buffer capped at 500 lines. Once full we drop the
                 // oldest entries so the final lines on a FATAL early-exit
                 // (whichever are closer to the actual error) stay visible
@@ -191,15 +256,32 @@ fn spawn_log_forwarder<R: Read + Send + 'static>(
 
 /// Poll `child` until it exits or `grace_ms` elapses.
 /// On early exit, returns Err with formatted core output from `early_buf`.
+#[allow(dead_code)]
 pub fn wait_core_startup_grace(
     child: &mut Child,
     early_buf: &Mutex<Vec<String>>,
     grace_ms: u64,
 ) -> Result<(), String> {
+    let never_cancelled = AtomicBool::new(false);
+    wait_core_startup_grace_interruptible(child, early_buf, grace_ms, &never_cancelled)
+}
+
+fn wait_core_startup_grace_interruptible(
+    child: &mut Child,
+    early_buf: &Mutex<Vec<String>>,
+    grace_ms: u64,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_millis(grace_ms);
     loop {
+        if cancelled.load(Ordering::SeqCst) {
+            return Err("Core startup cancelled".to_string());
+        }
         match child.try_wait() {
             Ok(Some(status)) => {
+                if cancelled.load(Ordering::SeqCst) {
+                    return Err("Core startup cancelled".to_string());
+                }
                 // Let pipe reader threads finish draining after process exit.
                 thread::sleep(Duration::from_millis(150));
                 let lines = early_buf.lock().map(|g| g.clone()).unwrap_or_default();
@@ -247,6 +329,16 @@ pub fn cleanup_stale_temp_binaries() {
 static CURRENT_JOB_OBJECT: Mutex<Option<windows_sys::Win32::Foundation::HANDLE>> = Mutex::new(None);
 
 #[cfg(target_os = "windows")]
+fn close_current_job_object() {
+    let mut job_lock = CURRENT_JOB_OBJECT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(job) = job_lock.take() {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(job);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn bind_child_to_job_object(child: &std::process::Child) -> Result<(), String> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
@@ -284,6 +376,347 @@ fn bind_child_to_job_object(child: &std::process::Child) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+mod proc_ctl {
+    use std::ffi::c_void;
+    use std::path::Path;
+
+    const PROCESS_TERMINATE: u32 = 0x0001;
+    const PROCESS_SYNCHRONIZE: u32 = 0x0010_0000;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
+
+    unsafe extern "system" {
+        fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut c_void;
+        fn TerminateProcess(process: *mut c_void, exit_code: u32) -> i32;
+        fn WaitForSingleObject(handle: *mut c_void, milliseconds: u32) -> u32;
+        fn GetExitCodeProcess(process: *mut c_void, exit_code: *mut u32) -> i32;
+        fn QueryFullProcessImageNameW(
+            process: *mut c_void,
+            flags: u32,
+            exe_name: *mut u16,
+            size: *mut u32,
+        ) -> i32;
+        fn CloseHandle(object: *mut c_void) -> i32;
+    }
+
+    struct OwnedHandle(*mut c_void);
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    CloseHandle(self.0);
+                }
+            }
+        }
+    }
+
+    fn open_process(pid: u32, expected_name: Option<&str>, access: u32) -> Option<OwnedHandle> {
+        if pid == 0 {
+            return None;
+        }
+        let handle = unsafe { OpenProcess(access | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return None;
+        }
+        let owned = OwnedHandle(handle);
+        let mut exit_code: u32 = 0;
+        if unsafe { GetExitCodeProcess(owned.0, &mut exit_code) } == 0 || exit_code != STILL_ACTIVE
+        {
+            return None;
+        }
+        if let Some(expected) = expected_name {
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            if unsafe { QueryFullProcessImageNameW(owned.0, 0, buf.as_mut_ptr(), &mut len) } == 0 {
+                return None;
+            }
+            let image_path = String::from_utf16_lossy(&buf[..len as usize]);
+            let matches_name = Path::new(&image_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case(expected));
+            if !matches_name {
+                return None;
+            }
+        }
+        Some(owned)
+    }
+
+    pub fn is_pid_alive(pid: u32, expected_name: &str) -> bool {
+        open_process(pid, Some(expected_name), 0).is_some()
+    }
+
+    pub fn terminate_pid(
+        pid: u32,
+        expected_name: Option<&str>,
+        _process_group: bool,
+        timeout_ms: u32,
+    ) -> Result<bool, String> {
+        let Some(handle) =
+            open_process(pid, expected_name, PROCESS_TERMINATE | PROCESS_SYNCHRONIZE)
+        else {
+            return Ok(false);
+        };
+        if unsafe { TerminateProcess(handle.0, 1) } == 0 {
+            let mut exit_code: u32 = 0;
+            if unsafe { GetExitCodeProcess(handle.0, &mut exit_code) } != 0
+                && exit_code != STILL_ACTIVE
+            {
+                return Ok(true);
+            }
+            return Err(format!(
+                "Failed to terminate core process {pid}: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        unsafe {
+            WaitForSingleObject(handle.0, timeout_ms);
+        }
+        Ok(true)
+    }
+}
+
+#[cfg(unix)]
+mod proc_ctl {
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    #[cfg(target_os = "linux")]
+    fn is_zombie(pid: u32) -> bool {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            return false;
+        };
+        let Some(after_comm) = stat.rfind(')') else {
+            return false;
+        };
+        stat[after_comm + 1..].trim_start().starts_with('Z')
+    }
+
+    pub fn is_pid_alive(pid: u32, expected_name: &str) -> bool {
+        if pid == 0 {
+            return false;
+        }
+        let pid_t = pid as libc::pid_t;
+        let probe = unsafe { libc::kill(pid_t, 0) };
+        if probe != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
+            return false;
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if is_zombie(pid) {
+                return false;
+            }
+            if let Ok(exe) = std::fs::read_link(format!("/proc/{pid}/exe")) {
+                let name = exe
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .trim_end_matches(" (deleted)");
+                return name == expected_name;
+            }
+            if let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline"))
+                && let Some(arg0) = cmdline.split(|&b| b == 0).next()
+            {
+                let arg0 = String::from_utf8_lossy(arg0);
+                return Path::new(arg0.as_ref())
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    == Some(expected_name);
+            }
+            false
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let Ok(out) = std::process::Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "comm="])
+                .output()
+            else {
+                return false;
+            };
+            if !out.status.success() {
+                return false;
+            }
+            let comm = String::from_utf8_lossy(&out.stdout);
+            Path::new(comm.trim()).file_name().and_then(|n| n.to_str()) == Some(expected_name)
+        }
+    }
+
+    fn send_signal(
+        pid: libc::pid_t,
+        process_group: bool,
+        signal: libc::c_int,
+    ) -> Result<(), std::io::Error> {
+        let rc = unsafe {
+            if process_group {
+                let pg_rc = libc::kill(-pid, signal);
+                if pg_rc != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                {
+                    libc::kill(pid, signal)
+                } else {
+                    pg_rc
+                }
+            } else {
+                libc::kill(pid, signal)
+            }
+        };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+
+    pub fn terminate_pid(
+        pid: u32,
+        expected_name: Option<&str>,
+        process_group: bool,
+        timeout_ms: u32,
+    ) -> Result<bool, String> {
+        if let Some(name) = expected_name
+            && !is_pid_alive(pid, name)
+        {
+            return Ok(false);
+        }
+        let pid_t = pid as libc::pid_t;
+        if let Err(err) = send_signal(pid_t, process_group, libc::SIGTERM) {
+            if err.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(false);
+            }
+            return Err(format!("Failed to signal core process {pid}: {err}"));
+        }
+
+        if timeout_ms > 0 {
+            let deadline = Instant::now() + Duration::from_millis(u64::from(timeout_ms));
+            while Instant::now() < deadline {
+                let alive = match expected_name {
+                    Some(name) => is_pid_alive(pid, name),
+                    None => {
+                        let rc = unsafe { libc::kill(pid_t, 0) };
+                        rc == 0
+                            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+                    }
+                };
+                if !alive {
+                    return Ok(true);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let _ = send_signal(pid_t, process_group, libc::SIGKILL);
+        }
+        Ok(true)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct CorePidRecord {
+    pid: u32,
+    core_name: String,
+    #[serde(default)]
+    process_group: bool,
+}
+
+fn core_pid_file_path() -> PathBuf {
+    get_app_dir().join("core.pid")
+}
+
+fn read_pid_record_from(path: &Path) -> Option<CorePidRecord> {
+    let bytes = fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn write_pid_record_to(path: &Path, record: &CorePidRecord) -> Result<(), String> {
+    let bytes = serde_json::to_vec(record)
+        .map_err(|e| format!("Failed to serialize core PID record: {e}"))?;
+    crate::config::atomic_write(path, &bytes)
+}
+
+fn remove_pid_record_at(path: &Path) {
+    let _ = fs::remove_file(path);
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        let _ = fs::remove_file(path.with_file_name(format!("{name}.bak")));
+    }
+}
+
+fn record_running_core_pid(pid: u32, core_path: &Path, process_group: bool) {
+    let core_name = core_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_else(|| get_core_filename())
+        .to_string();
+    let record = CorePidRecord {
+        pid,
+        core_name,
+        process_group,
+    };
+    let _ = write_pid_record_to(&core_pid_file_path(), &record);
+}
+
+/// Return the live sing-box PID currently tracked in-process or via `core.pid`
+/// (from a `close_core_on_exit == false` session), cleaning up stale PID files.
+pub fn get_tracked_core_pid() -> Option<u32> {
+    {
+        let mut lock = get_process_lock();
+        if let Some(ref mut child) = *lock
+            && matches!(child.try_wait(), Ok(None))
+        {
+            return Some(child.id());
+        }
+    }
+    let pid_path = core_pid_file_path();
+    let record = read_pid_record_from(&pid_path)?;
+    if proc_ctl::is_pid_alive(record.pid, &record.core_name) {
+        Some(record.pid)
+    } else {
+        remove_pid_record_at(&pid_path);
+        None
+    }
+}
+
+/// Return `true` if a detached core from an earlier session (`close_core_on_exit == false`)
+/// is still running outside the current child handle.
+#[allow(dead_code)]
+pub fn is_detached_core_running(_gui_config: &GuiConfig) -> bool {
+    if is_core_running() {
+        return false;
+    }
+    let pid_path = core_pid_file_path();
+    let Some(record) = read_pid_record_from(&pid_path) else {
+        return false;
+    };
+    if proc_ctl::is_pid_alive(record.pid, &record.core_name) {
+        true
+    } else {
+        remove_pid_record_at(&pid_path);
+        false
+    }
+}
+
+/// Terminate an orphaned/detached core recorded in `core.pid` (for example after
+/// restarting the GUI with `close_core_on_exit == false`). Returns `Ok(true)` if
+/// a detached process was stopped.
+#[allow(dead_code)]
+pub fn stop_detached_core(_gui_config: &GuiConfig) -> Result<bool, String> {
+    stop_detached_core_internal()
+}
+
+fn stop_detached_core_internal() -> Result<bool, String> {
+    let pid_path = core_pid_file_path();
+    let Some(record) = read_pid_record_from(&pid_path) else {
+        return Ok(false);
+    };
+    let res = proc_ctl::terminate_pid(
+        record.pid,
+        Some(&record.core_name),
+        record.process_group,
+        GRACEFUL_STOP_TIMEOUT_MS as u32,
+    );
+    remove_pid_record_at(&pid_path);
+    res
+}
+
 pub fn get_core_filename() -> &'static str {
     #[cfg(target_os = "windows")]
     {
@@ -295,14 +728,19 @@ pub fn get_core_filename() -> &'static str {
     }
 }
 
+/// Return the GUI-managed download destination inside `<app_dir>/bin`.
+pub fn managed_core_path() -> PathBuf {
+    get_app_dir().join("bin").join(get_core_filename())
+}
+
 pub fn get_core_path(gui_config: &GuiConfig) -> PathBuf {
     if let Some(ref path) = gui_config.core_path {
-        let p = PathBuf::from(path);
-        if p.exists() {
-            return p;
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
         }
     }
-    get_app_dir().join("bin").join(get_core_filename())
+    managed_core_path()
 }
 
 pub fn is_core_installed(gui_config: &GuiConfig) -> bool {
@@ -457,27 +895,94 @@ struct CoreRelease {
     assets: Vec<CoreReleaseAsset>,
 }
 
+async fn fetch_with_no_proxy_fallback(
+    proxy_client: &reqwest::Client,
+    direct_client: &reqwest::Client,
+    url: &str,
+) -> Result<reqwest::Response, reqwest::Error> {
+    match proxy_client
+        .get(url)
+        .header("User-Agent", "sing-box-gui")
+        .send()
+        .await
+    {
+        Ok(resp) if !matches!(resp.status().as_u16(), 502..=504) => Ok(resp),
+        Err(first_err) => direct_client
+            .get(url)
+            .header("User-Agent", "sing-box-gui")
+            .send()
+            .await
+            .or(Err(first_err)),
+        Ok(bad_gateway_resp) => direct_client
+            .get(url)
+            .header("User-Agent", "sing-box-gui")
+            .send()
+            .await
+            .or(Ok(bad_gateway_resp)),
+    }
+}
+
+fn emit_download_stage<F: FnMut(CoreDownloadStage)>(stage: CoreDownloadStage, on_progress: &mut F) {
+    let _ = download_progress_tx().send(stage.clone());
+    on_progress(stage);
+}
+
 /// Download official sing-box into the managed bin folder.
 /// When `force` is true, replace an existing binary (reinstall / upgrade pin).
 pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Result<(), String> {
+    download_core_with_progress(None, Some(&progress_sender), force, |_| {}).await
+}
+
+/// Download official sing-box into an explicit `dest_path` (for custom core paths).
+#[allow(dead_code)]
+pub async fn download_core_to(
+    dest_path: &Path,
+    progress_sender: Sender<String>,
+    force: bool,
+) -> Result<(), String> {
+    download_core_with_progress(Some(dest_path), Some(&progress_sender), force, |_| {}).await
+}
+
+/// Download official sing-box with structured [`CoreDownloadStage`] callbacks
+/// and global watch updates (via [`subscribe_core_download_progress`]).
+///
+/// When `dest_path` is `None`, installs into [`managed_core_path()`].
+pub async fn download_core_with_progress<F>(
+    dest_path: Option<&Path>,
+    progress_sender: Option<&Sender<String>>,
+    force: bool,
+    mut on_progress: F,
+) -> Result<(), String>
+where
+    F: FnMut(CoreDownloadStage),
+{
     let download_lock = CORE_DOWNLOAD_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
     let _guard = download_lock
         .try_lock()
         .map_err(|_| "A core download is already in progress".to_string())?;
-    if is_core_running() {
-        return Err("Stop the core before reinstalling or replacing it".to_string());
+    if is_core_running() || get_tracked_core_pid().is_some() {
+        let msg = "Stop the core before reinstalling or replacing it".to_string();
+        emit_download_stage(CoreDownloadStage::Failed(msg.clone()), &mut on_progress);
+        return Err(msg);
     }
 
-    let app_dir = get_app_dir();
-    let bin_dir = app_dir.join("bin");
-    fs::create_dir_all(&bin_dir).map_err(|e| format!("Failed to create bin directory: {}", e))?;
-    let dest_path = bin_dir.join(get_core_filename());
+    let dest_path = dest_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(managed_core_path);
+    let dest_dir = dest_path
+        .parent()
+        .ok_or_else(|| "Core destination path has no parent directory".to_string())?;
+    fs::create_dir_all(dest_dir).map_err(|e| format!("Failed to create bin directory: {}", e))?;
 
     if dest_path.exists() && !force {
+        emit_download_stage(CoreDownloadStage::Completed, &mut on_progress);
         return Ok(());
     }
 
-    let _ = progress_sender.try_send("Downloading sing-box core...".to_string());
+    emit_download_stage(CoreDownloadStage::Starting, &mut on_progress);
+    if let Some(tx) = progress_sender {
+        let _ = tx.try_send("Downloading sing-box core...".to_string());
+    }
 
     let version = CORE_VERSION;
 
@@ -512,19 +1017,27 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
     let staged_path = unique_sibling_path(&dest_path, "staged");
 
     let res = async {
-        let client = reqwest::Client::builder()
+        emit_download_stage(CoreDownloadStage::FetchingMetadata, &mut on_progress);
+        let proxy_client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(300))
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .map_err(|e| format!("Failed to build core download client: {e}"))?;
-        let metadata_response = client
-            .get(format!(
-                "https://api.github.com/repos/SagerNet/sing-box/releases/tags/v{version}"
-            ))
-            .header("User-Agent", "sing-box-gui")
-            .send()
-            .await
-            .map_err(|e| format!("Failed to fetch core release metadata: {e}"))?;
+        let direct_client = reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(300))
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .map_err(|e| format!("Failed to build direct core download client: {e}"))?;
+
+        let metadata_url =
+            format!("https://api.github.com/repos/SagerNet/sing-box/releases/tags/v{version}");
+        let metadata_response =
+            fetch_with_no_proxy_fallback(&proxy_client, &direct_client, &metadata_url)
+                .await
+                .map_err(|e| format!("Failed to fetch core release metadata: {e}"))?;
         if !metadata_response.status().is_success() {
             return Err(format!(
                 "Core release metadata returned status {}",
@@ -552,12 +1065,13 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
                 .as_deref()
                 .ok_or_else(|| "Core release asset has no SHA-256 digest".to_string())?,
         )?;
-        let response = client
-            .get(&asset.browser_download_url)
-            .header("User-Agent", "sing-box-gui")
-            .send()
-            .await
-            .map_err(|e| format!("Failed to download core: {}", e))?;
+        let response = fetch_with_no_proxy_fallback(
+            &proxy_client,
+            &direct_client,
+            &asset.browser_download_url,
+        )
+        .await
+        .map_err(|e| format!("Failed to download core: {}", e))?;
 
         if !response.status().is_success() {
             return Err(format!("Server returned error: {}", response.status()));
@@ -581,7 +1095,15 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
 
         let mut stream = response.bytes_stream();
         let mut downloaded = 0usize;
+        let mut last_reported_bytes = 0usize;
         let mut hasher = Sha256::new();
+        emit_download_stage(
+            CoreDownloadStage::Downloading {
+                downloaded_bytes: 0,
+                total_bytes: Some(asset.size),
+            },
+            &mut on_progress,
+        );
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| format!("Failed to read chunk: {}", e))?;
             downloaded = downloaded.saturating_add(chunk.len());
@@ -592,13 +1114,28 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
             file.write_all(&chunk)
                 .await
                 .map_err(|e| format!("Failed to write chunk: {}", e))?;
+            if downloaded.saturating_sub(last_reported_bytes) >= 64 * 1024
+                || downloaded as u64 == asset.size
+            {
+                last_reported_bytes = downloaded;
+                emit_download_stage(
+                    CoreDownloadStage::Downloading {
+                        downloaded_bytes: downloaded as u64,
+                        total_bytes: Some(asset.size),
+                    },
+                    &mut on_progress,
+                );
+            }
         }
         file.flush()
             .await
             .map_err(|e| format!("Failed to flush core archive: {e}"))?;
         drop(file);
 
-        let _ = progress_sender.try_send("Verifying core...".to_string());
+        emit_download_stage(CoreDownloadStage::Verifying, &mut on_progress);
+        if let Some(tx) = progress_sender {
+            let _ = tx.try_send("Verifying core...".to_string());
+        }
         if downloaded as u64 != asset.size {
             return Err(format!(
                 "Core download size mismatch: expected {}, received {}",
@@ -610,7 +1147,10 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
             return Err("Core archive SHA-256 verification failed".to_string());
         }
 
-        let _ = progress_sender.try_send("Extracting core...".to_string());
+        emit_download_stage(CoreDownloadStage::Extracting, &mut on_progress);
+        if let Some(tx) = progress_sender {
+            let _ = tx.try_send("Extracting core...".to_string());
+        }
 
         #[cfg(target_os = "windows")]
         {
@@ -738,7 +1278,10 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
         }
         validate_binary_magic(&staged_path)?;
 
-        let _ = progress_sender.try_send("Installing core...".to_string());
+        emit_download_stage(CoreDownloadStage::Installing, &mut on_progress);
+        if let Some(tx) = progress_sender {
+            let _ = tx.try_send("Installing core...".to_string());
+        }
         install_staged_core(&staged_path, &dest_path)?;
 
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -760,10 +1303,16 @@ pub async fn download_core(progress_sender: Sender<String>, force: bool) -> Resu
 
     match res {
         Ok(_) => {
-            let _ = progress_sender.try_send("Core installed successfully!".to_string());
+            emit_download_stage(CoreDownloadStage::Completed, &mut on_progress);
+            if let Some(tx) = progress_sender {
+                let _ = tx.try_send("Core installed successfully!".to_string());
+            }
             Ok(())
         }
-        Err(e) => Err(e),
+        Err(e) => {
+            emit_download_stage(CoreDownloadStage::Failed(e.clone()), &mut on_progress);
+            Err(e)
+        }
     }
 }
 
@@ -799,6 +1348,82 @@ pub fn prepare_run_config(gui_config: &GuiConfig) -> Result<PathBuf, String> {
     Ok(run_config_path)
 }
 
+fn apply_singbox_compat_env(cmd: &mut Command) {
+    cmd.env("ENABLE_DEPRECATED_LEGACY_DNS_SERVERS", "true");
+    cmd.env("ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER", "true");
+    cmd.env("ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS", "true");
+}
+
+#[cfg(target_os = "linux")]
+fn spawn_unix_core(mut cmd: Command, close_on_exit: bool) -> std::io::Result<Child> {
+    use std::os::unix::process::CommandExt;
+    use std::sync::mpsc;
+
+    type SpawnJob = Box<dyn FnOnce() + Send>;
+    static SPAWNER_TX: OnceLock<mpsc::Sender<SpawnJob>> = OnceLock::new();
+    let tx = SPAWNER_TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<SpawnJob>();
+        let _ = thread::Builder::new()
+            .name("sing-box-spawner".to_string())
+            .spawn(move || {
+                while let Ok(job) = rx.recv() {
+                    job();
+                }
+            });
+        tx
+    });
+
+    let (res_tx, res_rx) = mpsc::sync_channel(1);
+    tx.send(Box::new(move || {
+        // Record TGID before fork; the persistent spawner thread outlives
+        // transient spawn_blocking workers so PDEATHSIG only fires on GUI exit.
+        let parent_pid = unsafe { libc::getpid() };
+        unsafe {
+            cmd.pre_exec(move || {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if close_on_exit {
+                    if libc::prctl(
+                        libc::PR_SET_PDEATHSIG,
+                        libc::SIGTERM as libc::c_ulong,
+                        0,
+                        0,
+                        0,
+                    ) != 0
+                    {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::getppid() != parent_pid {
+                        libc::raise(libc::SIGTERM);
+                    }
+                }
+                Ok(())
+            });
+        }
+        let _ = res_tx.send(cmd.spawn());
+    }))
+    .map_err(|_| std::io::Error::other("Core spawner thread unavailable"))?;
+
+    res_rx
+        .recv()
+        .map_err(|_| std::io::Error::other("Core spawner thread did not respond"))?
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn spawn_unix_core(mut cmd: Command, _close_on_exit: bool) -> std::io::Result<Child> {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd.spawn()
+}
+
 /// Run `sing-box check -c run_config.json` after generating config.
 /// Also used internally by `start_core`; public for Settings “validate” hooks.
 #[allow(dead_code)]
@@ -813,6 +1438,7 @@ pub fn check_core_config(gui_config: &GuiConfig) -> Result<(), String> {
     let run_config_path = prepare_run_config(gui_config)?;
     let mut cmd = Command::new(&core_path);
     cmd.args(["check", "-c", &run_config_path.to_string_lossy()]);
+    apply_singbox_compat_env(&mut cmd);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
@@ -871,6 +1497,7 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
             .arg("check")
             .arg("-c")
             .arg(run_config_path.as_os_str());
+        apply_singbox_compat_env(&mut check_cmd);
         check_cmd.stdout(Stdio::piped());
         check_cmd.stderr(Stdio::piped());
         #[cfg(target_os = "windows")]
@@ -892,21 +1519,43 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
         }
     }
 
+    // Stop any orphaned detached instance left from a prior close_core_on_exit == false
+    // run only after the new config has passed validation.
+    let _ = stop_detached_core_internal();
+
+    #[cfg(target_os = "windows")]
+    if !gui_config.close_core_on_exit {
+        close_current_job_object();
+    }
+
     let app_dir = get_app_dir();
     let mut cmd = Command::new(&core_path);
     cmd.arg("run").arg("-c").arg(run_config_path.as_os_str());
     cmd.current_dir(&app_dir);
-    cmd.env("ENABLE_DEPRECATED_LEGACY_DNS_SERVERS", "true");
-    cmd.env("ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER", "true");
+    apply_singbox_compat_env(&mut cmd);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
+    #[cfg(unix)]
+    let mut child = spawn_unix_core(cmd, gui_config.close_core_on_exit)
+        .map_err(|e| format!("Failed to start process: {}", e))?;
+    #[cfg(not(unix))]
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to start process: {}", e))?;
+
+    let child_pid = child.id();
+    {
+        let mut startup_lock = STARTUP_HANDLE.lock().unwrap_or_else(|e| e.into_inner());
+        *startup_lock = Some(StartupHandle {
+            pid: child_pid,
+            #[cfg(unix)]
+            process_group: true,
+        });
+    }
 
     #[cfg(target_os = "windows")]
     if gui_config.close_core_on_exit
@@ -918,30 +1567,64 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
         ));
     }
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "Failed to capture stdout".to_string())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "Failed to capture stderr".to_string())?;
+    let (stdout, stderr) = match (child.stdout.take(), child.stderr.take()) {
+        (Some(out), Some(err)) => (out, err),
+        _ => {
+            *STARTUP_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            let _ = child.kill();
+            let _ = child.wait();
+            #[cfg(target_os = "windows")]
+            close_current_job_object();
+            return Err("Failed to capture stdout/stderr".to_string());
+        }
+    };
 
     let early_buf = Arc::new(Mutex::new(Vec::<String>::new()));
-    spawn_log_forwarder(stdout, log_sender.clone(), Arc::clone(&early_buf));
-    spawn_log_forwarder(stderr, log_sender, Arc::clone(&early_buf));
+    let capture_early = Arc::new(AtomicBool::new(true));
+    spawn_log_forwarder_with_flag(
+        stdout,
+        log_sender.clone(),
+        Arc::clone(&early_buf),
+        Arc::clone(&capture_early),
+    );
+    spawn_log_forwarder_with_flag(
+        stderr,
+        log_sender,
+        Arc::clone(&early_buf),
+        Arc::clone(&capture_early),
+    );
 
     // Do not advertise success until the process survives the grace window.
     // On early exit, surface FATAL/ERROR text instead of a silent UI flip.
-    if let Err(e) = wait_core_startup_grace(&mut child, &early_buf, STARTUP_GRACE_MS) {
+    let grace_res = wait_core_startup_grace_interruptible(
+        &mut child,
+        &early_buf,
+        STARTUP_GRACE_MS,
+        &INTENTIONAL_STOP,
+    );
+    capture_early.store(false, Ordering::Release);
+    if let Ok(mut buf_guard) = early_buf.lock() {
+        buf_guard.clear();
+        buf_guard.shrink_to_fit();
+    }
+
+    if let Err(e) = grace_res {
+        *STARTUP_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let _ = child.kill();
         let _ = child.wait();
+        #[cfg(target_os = "windows")]
+        close_current_job_object();
         return Err(e);
     }
 
+    let mut lock = get_process_lock();
+    *STARTUP_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     if INTENTIONAL_STOP.load(Ordering::SeqCst) {
         let _ = child.kill();
         let _ = child.wait();
+        #[cfg(target_os = "windows")]
+        close_current_job_object();
+        CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
         return Err("Core startup cancelled".to_string());
     }
 
@@ -950,8 +1633,8 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
         let mut g = get_last_unexpected_exit_lock();
         *g = None;
     }
+    record_running_core_pid(child_pid, &core_path, cfg!(unix));
     CORE_RUNNING_CACHED.store(true, Ordering::SeqCst);
-    let mut lock = get_process_lock();
     *lock = Some(child);
     Ok(())
 }
@@ -959,73 +1642,100 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
 pub fn stop_core() {
     INTENTIONAL_STOP.store(true, Ordering::SeqCst);
     CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
-    #[cfg(target_os = "windows")]
-    {
-        let mut job_lock = CURRENT_JOB_OBJECT.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(job) = job_lock.take() {
-            unsafe {
-                windows_sys::Win32::Foundation::CloseHandle(job);
-            }
-        }
-    }
-    let mut lock = get_process_lock();
-    if let Some(child) = lock.as_mut() {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                lock.take();
-                return;
-            }
-            Ok(None) => {}
-            Err(error) => {
-                let mut g = get_last_unexpected_exit_lock();
-                *g = Some(format!("Failed to inspect core before stopping: {error}"));
-            }
-        }
+
+    // Abort an in-flight startup grace period without waiting for LIFECYCLE_LOCK.
+    let startup = { *STARTUP_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) };
+    if let Some(handle) = startup {
         #[cfg(unix)]
-        {
-            let pid = child.id() as libc::pid_t;
-            unsafe {
-                let result = libc::kill(pid, libc::SIGTERM);
-                if result != 0 {
-                    let error = std::io::Error::last_os_error();
-                    // ESRCH means the process exited between try_wait and
-                    // kill; it is a successful stop from the user's point of
-                    // view. Other errors are retained for diagnostics.
-                    if error.raw_os_error() != Some(libc::ESRCH) {
-                        let mut g = get_last_unexpected_exit_lock();
-                        *g = Some(format!("Failed to terminate core: {error}"));
-                    }
-                }
-            }
-            let start = Instant::now();
-            let mut exited = false;
-            while start.elapsed() < Duration::from_secs(2) {
-                match child.try_wait() {
-                    Ok(Some(_)) => {
-                        exited = true;
-                        break;
-                    }
-                    Ok(None) => {
-                        thread::sleep(Duration::from_millis(50));
-                    }
-                    Err(error) => {
-                        let mut g = get_last_unexpected_exit_lock();
-                        *g = Some(format!("Failed while waiting for core: {error}"));
-                        break;
-                    }
-                }
-            }
-            if !exited {
-                let _ = child.kill();
-            }
-        }
+        let pg = handle.process_group;
         #[cfg(not(unix))]
-        {
-            let _ = child.kill();
-        }
-        let _ = child.wait();
-        lock.take();
+        let pg = false;
+        let _ = proc_ctl::terminate_pid(handle.pid, None, pg, 0);
     }
+
+    let mut had_child = false;
+    {
+        let mut lock = get_process_lock();
+        if let Some(child) = lock.as_mut() {
+            had_child = true;
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    lock.take();
+                }
+                Ok(None) => {
+                    #[cfg(unix)]
+                    {
+                        let pid = child.id() as libc::pid_t;
+                        unsafe {
+                            let pg_rc = libc::kill(-pid, libc::SIGTERM);
+                            let result = if pg_rc != 0
+                                && std::io::Error::last_os_error().raw_os_error()
+                                    == Some(libc::ESRCH)
+                            {
+                                libc::kill(pid, libc::SIGTERM)
+                            } else {
+                                pg_rc
+                            };
+                            if result != 0 {
+                                let error = std::io::Error::last_os_error();
+                                if error.raw_os_error() != Some(libc::ESRCH) {
+                                    let mut g = get_last_unexpected_exit_lock();
+                                    *g = Some(format!("Failed to terminate core: {error}"));
+                                }
+                            }
+                        }
+                        let start = Instant::now();
+                        let mut exited = false;
+                        while start.elapsed() < Duration::from_millis(GRACEFUL_STOP_TIMEOUT_MS) {
+                            match child.try_wait() {
+                                Ok(Some(_)) => {
+                                    exited = true;
+                                    break;
+                                }
+                                Ok(None) => {
+                                    thread::sleep(Duration::from_millis(50));
+                                }
+                                Err(error) => {
+                                    let mut g = get_last_unexpected_exit_lock();
+                                    *g = Some(format!("Failed while waiting for core: {error}"));
+                                    break;
+                                }
+                            }
+                        }
+                        if !exited {
+                            unsafe {
+                                let _ = libc::kill(-pid, libc::SIGKILL);
+                            }
+                            let _ = child.kill();
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = child.kill();
+                    }
+                    let _ = child.wait();
+                    lock.take();
+                }
+                Err(error) => {
+                    let mut g = get_last_unexpected_exit_lock();
+                    *g = Some(format!("Failed to inspect core before stopping: {error}"));
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    lock.take();
+                }
+            }
+        }
+    }
+
+    if !had_child {
+        let _ = stop_detached_core_internal();
+    } else {
+        remove_pid_record_at(&core_pid_file_path());
+    }
+
+    // Close the Windows Job Object only after child termination + wait completes.
+    #[cfg(target_os = "windows")]
+    close_current_job_object();
 }
 
 static CONSECUTIVE_TRY_WAIT_ERRORS: AtomicUsize = AtomicUsize::new(0);
@@ -1041,6 +1751,9 @@ fn is_core_running_locked(lock: &mut Option<Child>) -> bool {
             Ok(Some(status)) => {
                 CONSECUTIVE_TRY_WAIT_ERRORS.store(0, Ordering::SeqCst);
                 *lock = None;
+                remove_pid_record_at(&core_pid_file_path());
+                #[cfg(target_os = "windows")]
+                close_current_job_object();
                 let intentional = INTENTIONAL_STOP.swap(false, Ordering::SeqCst);
                 if !intentional {
                     let msg = format_unexpected_exit(status.code());
@@ -1059,6 +1772,9 @@ fn is_core_running_locked(lock: &mut Option<Child>) -> bool {
                         let _ = dead_child.kill();
                         let _ = dead_child.wait();
                     }
+                    remove_pid_record_at(&core_pid_file_path());
+                    #[cfg(target_os = "windows")]
+                    close_current_job_object();
                     CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
                     CONSECUTIVE_TRY_WAIT_ERRORS.store(0, Ordering::SeqCst);
                     false
@@ -1097,14 +1813,23 @@ pub fn get_core_version(gui_config: &GuiConfig) -> Result<String, String> {
     let mut cmd = Command::new(&path);
     cmd.arg("version");
     cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
+    cmd.stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000);
     let output = cmd
         .output()
         .map_err(|e| format!("Failed to run core version: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        return Err(if detail.is_empty() {
+            format!("Core version check failed (status {})", output.status)
+        } else {
+            format!("Core version check failed: {detail}")
+        });
+    }
     let text = String::from_utf8_lossy(&output.stdout);
-    let first = text.lines().next().unwrap_or("unknown").trim().to_string();
+    let first = text.lines().next().unwrap_or("").trim().to_string();
     if first.is_empty() {
         Err("Empty version output".to_string())
     } else {
@@ -1358,5 +2083,202 @@ mod tests {
         assert!(first.ends_with("[truncated]"));
         assert!(first.len() < 66 * 1024);
         assert_eq!(second, "ok");
+    }
+
+    #[test]
+    fn compat_env_sets_all_deprecated_flags() {
+        let mut cmd = Command::new("sing-box");
+        apply_singbox_compat_env(&mut cmd);
+        let envs: std::collections::HashMap<_, _> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_str()?.to_string(), v?.to_str()?.to_string())))
+            .collect();
+        assert_eq!(
+            envs.get("ENABLE_DEPRECATED_LEGACY_DNS_SERVERS")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            envs.get("ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            envs.get("ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS")
+                .map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn get_core_path_respects_custom_path_and_blank_fallback() {
+        let mut cfg = GuiConfig {
+            core_path: Some("  /custom/nonexistent/sing-box  ".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_core_path(&cfg),
+            PathBuf::from("/custom/nonexistent/sing-box")
+        );
+        assert!(!is_core_installed(&cfg));
+
+        cfg.core_path = Some("   ".to_string());
+        assert_eq!(get_core_path(&cfg), managed_core_path());
+    }
+
+    #[test]
+    fn get_core_version_errors_on_nonzero_exit() {
+        #[cfg(target_os = "windows")]
+        let (_bin_dir, script_path) = {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let p = dir.path().join("fake-core.cmd");
+            fs::write(&p, "@echo boom 1>&2\r\n@exit /b 42\r\n").expect("write script");
+            (dir, p)
+        };
+        #[cfg(not(target_os = "windows"))]
+        let (_bin_dir, script_path) = {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = tempfile::tempdir().expect("tempdir");
+            let p = dir.path().join("fake-core.sh");
+            fs::write(&p, "#!/bin/sh\necho boom >&2\nexit 42\n").expect("write script");
+            fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).expect("chmod");
+            (dir, p)
+        };
+        let cfg = GuiConfig {
+            core_path: Some(script_path.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        let err = get_core_version(&cfg).expect_err("non-zero status should error");
+        assert!(err.contains("boom") || err.contains("failed"), "err={err}");
+    }
+
+    #[test]
+    fn log_forwarder_stops_buffering_early_lines_after_grace() {
+        let (reader, mut writer) = std::io::pipe().expect("os pipe");
+        let early = Arc::new(Mutex::new(Vec::new()));
+        let capture_early = Arc::new(AtomicBool::new(true));
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
+        spawn_log_forwarder_with_flag(reader, tx, Arc::clone(&early), Arc::clone(&capture_early));
+
+        use std::io::Write;
+        writeln!(writer, "grace-line").expect("write");
+        writer.flush().expect("flush");
+        assert_eq!(rx.blocking_recv().as_deref(), Some("grace-line"));
+        assert_eq!(*early.lock().unwrap(), vec!["grace-line".to_string()]);
+
+        capture_early.store(false, Ordering::SeqCst);
+        writeln!(writer, "post-grace-line").expect("write");
+        writer.flush().expect("flush");
+        assert_eq!(rx.blocking_recv().as_deref(), Some("post-grace-line"));
+        assert_eq!(*early.lock().unwrap(), vec!["grace-line".to_string()]);
+    }
+
+    #[test]
+    fn wait_grace_cancels_promptly_on_intentional_stop() {
+        #[cfg(target_os = "windows")]
+        let mut child = Command::new("cmd")
+            .args(["/C", "ping -n 10 127.0.0.1 >nul"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn");
+        #[cfg(not(target_os = "windows"))]
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 10"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn");
+
+        let early = Mutex::new(Vec::new());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancel_clone = Arc::clone(&cancelled);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(120));
+            cancel_clone.store(true, Ordering::SeqCst);
+        });
+
+        let started = Instant::now();
+        let err = wait_core_startup_grace_interruptible(&mut child, &early, 5000, &cancelled)
+            .expect_err("should cancel before full grace window");
+        let elapsed = started.elapsed();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(err.contains("cancelled"), "err={err}");
+        assert!(elapsed < Duration::from_secs(2), "took {elapsed:?}");
+    }
+
+    #[test]
+    fn pid_record_roundtrip_and_watch_progress_helpers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pid_path = dir.path().join("core.pid");
+        let rec = CorePidRecord {
+            pid: 424242,
+            core_name: get_core_filename().to_string(),
+            process_group: true,
+        };
+        write_pid_record_to(&pid_path, &rec).expect("write");
+        assert_eq!(read_pid_record_from(&pid_path), Some(rec));
+        remove_pid_record_at(&pid_path);
+        assert!(read_pid_record_from(&pid_path).is_none());
+
+        let watch_rx = subscribe_core_download_progress();
+        let _ = download_progress_tx().send(CoreDownloadStage::FetchingMetadata);
+        assert!(watch_rx.has_changed().unwrap_or(false));
+        assert_eq!(
+            current_core_download_progress(),
+            CoreDownloadStage::FetchingMetadata
+        );
+        let _ = download_progress_tx().send(CoreDownloadStage::Idle);
+    }
+
+    #[test]
+    fn proc_ctl_verifies_image_name_before_terminating_pid() {
+        let self_exe = std::env::current_exe().expect("test exe");
+        let self_name = self_exe
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("exe name");
+        let self_pid = std::process::id();
+        assert!(proc_ctl::is_pid_alive(self_pid, self_name));
+        assert!(!proc_ctl::is_pid_alive(self_pid, "sing-box-unrelated"));
+
+        #[cfg(target_os = "windows")]
+        let mut child = Command::new("ping")
+            .args(["-n", "10", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn ping");
+        #[cfg(not(target_os = "windows"))]
+        let mut child = Command::new("sleep")
+            .arg("10")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn sleep");
+
+        let pid = child.id();
+        #[cfg(target_os = "windows")]
+        let expected_name = "PING.EXE".to_string();
+        #[cfg(target_os = "linux")]
+        let expected_name = fs::read_link(format!("/proc/{pid}/exe"))
+            .ok()
+            .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .unwrap_or_else(|| "sleep".to_string());
+        #[cfg(all(unix, not(target_os = "linux")))]
+        let expected_name = "sleep".to_string();
+
+        assert!(!proc_ctl::is_pid_alive(pid, "sing-box-unrelated"));
+        assert!(proc_ctl::is_pid_alive(pid, &expected_name));
+
+        // Wrong expected name must refuse to kill.
+        assert!(!proc_ctl::terminate_pid(pid, Some("sing-box-unrelated"), false, 500).unwrap());
+        assert!(proc_ctl::is_pid_alive(pid, &expected_name));
+
+        // Matching name must terminate and wait cleanly.
+        assert!(proc_ctl::terminate_pid(pid, Some(&expected_name), false, 2000).unwrap());
+        let _ = child.wait();
+        assert!(!proc_ctl::is_pid_alive(pid, &expected_name));
     }
 }

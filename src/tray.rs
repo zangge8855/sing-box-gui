@@ -98,19 +98,40 @@ mod platform {
                         match service.spawn().await {
                             Ok(handle) => {
                                 online.store(true, Ordering::Release);
-                                while rx.changed().await.is_ok() {
-                                    let state = *rx.borrow_and_update();
-                                    if handle
-                                        .update(move |tray| tray.state = state)
-                                        .await
-                                        .is_none()
-                                    {
-                                        break;
+                                let mut receiver_closed = false;
+                                loop {
+                                    match rx.changed().await {
+                                        Ok(()) => {
+                                            let state = *rx.borrow_and_update();
+                                            if handle
+                                                .update(move |tray| tray.state = state)
+                                                .await
+                                                .is_none()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        Err(_) => {
+                                            receiver_closed = true;
+                                            break;
+                                        }
                                     }
                                 }
-                                online.store(false, Ordering::Release);
+                                if online.swap(false, Ordering::AcqRel) {
+                                    send(Message::TrayUnavailable);
+                                }
                                 handle.shutdown().await;
-                                return;
+                                if receiver_closed {
+                                    return;
+                                }
+                                // Wait before re-spawning if the SNI service actor exited
+                                // unexpectedly (for example D-Bus/watcher restart).
+                                tokio::select! {
+                                    changed = rx.changed() => {
+                                        if changed.is_err() { return; }
+                                    }
+                                    _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                                }
                             }
                             Err(_) => {
                                 // GNOME may have no AppIndicator extension, or the
@@ -145,6 +166,15 @@ mod platform {
                 }
                 *current = state;
                 true
+            });
+        }
+
+        /// Unconditionally push `state` to the tray service even when `state`
+        /// compares equal to the previously stored snapshot.
+        #[allow(dead_code)]
+        pub fn force_update(&self, state: TrayState) {
+            self.state.send_modify(|current| {
+                *current = state;
             });
         }
     }
@@ -325,9 +355,6 @@ mod platform {
                         button: tray_icon::MouseButton::Left,
                         button_state: tray_icon::MouseButtonState::Up,
                         ..
-                    } | tray_icon::TrayIconEvent::DoubleClick {
-                        button: tray_icon::MouseButton::Left,
-                        ..
                     }
                 ) {
                     send(Message::TrayIconClicked);
@@ -349,6 +376,7 @@ mod platform {
                 .and_then(|icon| {
                     TrayIconBuilder::new()
                         .with_menu(Box::new(menu))
+                        .with_menu_on_left_click(false)
                         .with_tooltip("sing-box GUI")
                         .with_icon(icon)
                         .build()
@@ -374,6 +402,17 @@ mod platform {
         }
 
         pub fn update(&self, state: TrayState) {
+            self.apply_state(state);
+        }
+
+        /// Unconditionally re-apply all menu labels and checkmark states so an
+        /// auto-toggled OS `CheckMenuItem` cannot drift from application state.
+        #[allow(dead_code)]
+        pub fn force_update(&self, state: TrayState) {
+            self.apply_state(state);
+        }
+
+        fn apply_state(&self, state: TrayState) {
             let label = |key| tr(state.language, key);
             self.show.set_text(label("tray_show_window"));
             self.exit.set_text(label("tray_exit"));
@@ -394,6 +433,29 @@ mod platform {
                 .set_checked(state.routing_mode == RoutingMode::Global);
             self.direct
                 .set_checked(state.routing_mode == RoutingMode::Direct);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tray_state_routing_mode_flags_are_mutually_exclusive() {
+        for mode in [RoutingMode::Rule, RoutingMode::Global, RoutingMode::Direct] {
+            let state = TrayState {
+                language: Language::En,
+                core_running: true,
+                system_proxy_enabled: true,
+                routing_mode: mode,
+            };
+            let checked = [
+                state.routing_mode == RoutingMode::Rule,
+                state.routing_mode == RoutingMode::Global,
+                state.routing_mode == RoutingMode::Direct,
+            ];
+            assert_eq!(checked.into_iter().filter(|&c| c).count(), 1);
         }
     }
 }

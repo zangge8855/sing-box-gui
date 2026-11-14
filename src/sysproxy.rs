@@ -79,6 +79,422 @@ pub fn check_system_proxy(port: u16) -> Result<bool, String> {
         && configured_port == port)
 }
 
+#[allow(dead_code)]
+fn is_loopback_proxy_host(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
+#[allow(dead_code)]
+fn is_owned_proxy_endpoint(
+    host: &str,
+    configured_port: u16,
+    expected_port: u16,
+    recorded_port: Option<u16>,
+) -> bool {
+    is_loopback_proxy_host(host)
+        && (expected_port == 0
+            || configured_port == expected_port
+            || recorded_port == Some(configured_port))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn merge_windows_proxy_override(existing: &str) -> String {
+    let app_entries = ["localhost", "127.0.0.1", "::1", "<local>"];
+    let mut merged: Vec<String> = Vec::new();
+    for entry in existing
+        .split(';')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        if !merged.iter().any(|seen| seen.eq_ignore_ascii_case(entry)) {
+            merged.push(entry.to_string());
+        }
+    }
+    for required in app_entries {
+        if !merged
+            .iter()
+            .any(|seen| seen.eq_ignore_ascii_case(required))
+        {
+            merged.push(required.to_string());
+        }
+    }
+    merged.join(";")
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn restore_windows_proxy_override(original: &str, current: &str) -> String {
+    let app_entries = ["localhost", "127.0.0.1", "::1", "<local>"];
+    let mut merged: Vec<String> = Vec::new();
+    for entry in original
+        .split(';')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        if !merged.iter().any(|seen| seen.eq_ignore_ascii_case(entry)) {
+            merged.push(entry.to_string());
+        }
+    }
+    for entry in current.split(';').map(str::trim).filter(|entry| {
+        !entry.is_empty()
+            && !app_entries
+                .iter()
+                .any(|app| app.eq_ignore_ascii_case(entry))
+    }) {
+        if !merged.iter().any(|seen| seen.eq_ignore_ascii_case(entry)) {
+            merged.push(entry.to_string());
+        }
+    }
+    merged.join(";")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_gsettings_string_array(raw: &str) -> Vec<String> {
+    let trimmed = raw.trim();
+    let trimmed = trimmed.strip_prefix("@as ").unwrap_or(trimmed).trim();
+    let Some(inner) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) else {
+        return Vec::new();
+    };
+    let mut items = Vec::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(&ch) = chars.peek() {
+        if ch.is_whitespace() || ch == ',' {
+            chars.next();
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            let quote = ch;
+            chars.next();
+            let mut item = String::new();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    if let Some(next) = chars.next() {
+                        item.push(next);
+                    }
+                } else if c == quote {
+                    break;
+                } else {
+                    item.push(c);
+                }
+            }
+            let item = item.trim();
+            if !item.is_empty() {
+                items.push(item.to_string());
+            }
+        } else {
+            let mut item = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == ',' {
+                    break;
+                }
+                item.push(c);
+                chars.next();
+            }
+            let item = item.trim();
+            if !item.is_empty() {
+                items.push(item.to_string());
+            }
+        }
+    }
+    items
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn format_gsettings_string_array(items: &[String]) -> String {
+    if items.is_empty() {
+        return "@as []".to_string();
+    }
+    let quoted: Vec<String> = items
+        .iter()
+        .map(|item| {
+            let escaped = item.replace('\\', "\\\\").replace('\'', "\\'");
+            format!("'{escaped}'")
+        })
+        .collect();
+    format!("[{}]", quoted.join(", "))
+}
+
+#[allow(dead_code)]
+fn merge_linux_ignore_hosts(existing: &[String]) -> Vec<String> {
+    let mut merged: Vec<String> = Vec::new();
+    for entry in existing.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if !merged.iter().any(|seen| seen.eq_ignore_ascii_case(entry)) {
+            merged.push(entry.to_string());
+        }
+    }
+    for required in ["localhost", "127.0.0.1", "::1"] {
+        if !merged
+            .iter()
+            .any(|seen| seen.eq_ignore_ascii_case(required))
+        {
+            merged.push(required.to_string());
+        }
+    }
+    merged
+}
+
+#[allow(dead_code)]
+fn restore_linux_ignore_hosts(original: &[String], current: &[String]) -> Vec<String> {
+    let app_entries = ["localhost", "127.0.0.1", "::1"];
+    let mut merged: Vec<String> = Vec::new();
+    for entry in original.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if !merged.iter().any(|seen| seen.eq_ignore_ascii_case(entry)) {
+            merged.push(entry.to_string());
+        }
+    }
+    for entry in current.iter().map(|s| s.trim()).filter(|entry| {
+        !entry.is_empty()
+            && !app_entries
+                .iter()
+                .any(|app| app.eq_ignore_ascii_case(entry))
+    }) {
+        if !merged.iter().any(|seen| seen.eq_ignore_ascii_case(entry)) {
+            merged.push(entry.to_string());
+        }
+    }
+    merged
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn merge_kde_no_proxy(existing: &str) -> String {
+    let items: Vec<String> = existing
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    merge_linux_ignore_hosts(&items).join(",")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn restore_kde_no_proxy(original: &str, current: &str) -> String {
+    let orig: Vec<String> = original
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    let curr: Vec<String> = current
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    restore_linux_ignore_hosts(&orig, &curr).join(",")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_kde_proxy_endpoint(raw: &str) -> Option<(String, u16)> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let without_scheme = trimmed
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(trimmed)
+        .trim_end_matches('/');
+    if let Some(rest) = without_scheme.strip_prefix('[') {
+        let (host, port) = rest.split_once("]:")?;
+        return Some((host.to_string(), port.parse().ok()?));
+    }
+    if let Some((host, port)) = without_scheme.rsplit_once(':') {
+        return Some((host.trim().to_string(), port.trim().parse().ok()?));
+    }
+    let mut parts = without_scheme.split_whitespace();
+    let host = parts.next()?;
+    let port = parts.next()?.parse().ok()?;
+    Some((host.to_string(), port))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn is_virtual_interface(device: &str) -> bool {
+    let lower = device.trim().to_ascii_lowercase();
+    [
+        "utun", "tun", "tap", "ppp", "ipsec", "gif", "stf", "lo", "awdl", "llw", "bridge", "anpi",
+        "ap",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn is_secondary_service(service_name: &str) -> bool {
+    let lower = service_name.trim().to_ascii_lowercase();
+    lower.contains("thunderbolt bridge")
+        || lower.contains("iphone usb")
+        || lower.contains("bluetooth pan")
+        || lower.contains("firewire")
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_network_service_order(order: &str) -> Vec<(String, Option<String>)> {
+    let mut services: Vec<(String, Option<String>)> = Vec::new();
+    let mut pending_idx: Option<usize> = None;
+
+    for line in order.lines().map(str::trim) {
+        if line.starts_with('(') && !line.starts_with("(Hardware Port:") {
+            if let Some((_, raw_name)) = line.split_once(") ") {
+                let trimmed = raw_name.trim();
+                if let Some(disabled_or_name) = trimmed.strip_prefix('*') {
+                    let _ = disabled_or_name;
+                    pending_idx = None;
+                } else if !trimmed.is_empty() {
+                    services.push((trimmed.to_string(), None));
+                    pending_idx = Some(services.len() - 1);
+                }
+            }
+        } else if let Some(idx) = pending_idx
+            && let Some((_, device_value)) = line.split_once("Device:")
+        {
+            let device = device_value.trim().trim_end_matches(')').trim();
+            if !device.is_empty() && !device.eq_ignore_ascii_case("none") {
+                services[idx].1 = Some(device.to_string());
+            }
+        }
+    }
+    services
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn service_for_interface_in_order(order: &str, device: &str) -> Option<String> {
+    parse_network_service_order(order)
+        .into_iter()
+        .find_map(|(service, dev)| (dev.as_deref() == Some(device)).then_some(service))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_active_physical_devices_from_ifconfig(output: &str) -> Vec<String> {
+    let mut active = Vec::new();
+    let mut current_iface: Option<String> = None;
+    let mut is_up_running = false;
+    let mut has_routable_ip = false;
+    let mut status_inactive = false;
+
+    let flush = |iface: Option<String>,
+                 up_running: bool,
+                 routable: bool,
+                 inactive: bool,
+                 out: &mut Vec<String>| {
+        if let Some(name) = iface
+            && up_running
+            && routable
+            && !inactive
+            && !is_virtual_interface(&name)
+            && !out.contains(&name)
+        {
+            out.push(name);
+        }
+    };
+
+    for raw_line in output.lines() {
+        if !raw_line.starts_with([' ', '\t']) && raw_line.contains(": flags=") {
+            flush(
+                current_iface.take(),
+                is_up_running,
+                has_routable_ip,
+                status_inactive,
+                &mut active,
+            );
+            let iface = raw_line.split(':').next().unwrap_or("").trim().to_string();
+            current_iface = (!iface.is_empty()).then_some(iface);
+            is_up_running = raw_line.contains("<UP,")
+                || raw_line.contains(",UP,")
+                || raw_line.contains(",RUNNING");
+            if let Some(flags_start) = raw_line.find('<')
+                && let Some(flags_end) = raw_line[flags_start..].find('>')
+            {
+                let flags = &raw_line[flags_start + 1..flags_start + flags_end];
+                let tokens: Vec<&str> = flags.split(',').collect();
+                is_up_running = tokens.contains(&"UP") && tokens.contains(&"RUNNING");
+            }
+            has_routable_ip = false;
+            status_inactive = false;
+            continue;
+        }
+
+        let line = raw_line.trim();
+        if let Some(rest) = line.strip_prefix("status:") {
+            if rest.trim().eq_ignore_ascii_case("inactive") {
+                status_inactive = true;
+            }
+        } else if let Some(rest) = line.strip_prefix("inet ") {
+            let ip = rest.split_whitespace().next().unwrap_or("");
+            if !ip.is_empty() && !ip.starts_with("127.") && !ip.starts_with("169.254.") {
+                has_routable_ip = true;
+            }
+        } else if let Some(rest) = line.strip_prefix("inet6 ") {
+            let ip = rest.split(['%', ' ']).next().unwrap_or("");
+            if !ip.is_empty() && ip != "::1" && !ip.to_ascii_lowercase().starts_with("fe80:") {
+                has_routable_ip = true;
+            }
+        }
+    }
+
+    flush(
+        current_iface,
+        is_up_running,
+        has_routable_ip,
+        status_inactive,
+        &mut active,
+    );
+    active
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn select_macos_service(
+    services: &[(String, Option<String>)],
+    route_device: Option<&str>,
+    active_devices: &[String],
+) -> Option<String> {
+    if let Some(dev) = route_device
+        && !is_virtual_interface(dev)
+        && let Some((service, _)) = services.iter().find(|(service, s_dev)| {
+            s_dev.as_deref() == Some(dev) && !is_secondary_service(service)
+        })
+    {
+        return Some(service.clone());
+    }
+
+    if let Some((service, _)) = services.iter().find(|(service, s_dev)| {
+        !is_secondary_service(service)
+            && s_dev.as_deref().is_some_and(|dev| {
+                !is_virtual_interface(dev) && active_devices.iter().any(|active| active == dev)
+            })
+    }) {
+        return Some(service.clone());
+    }
+
+    if let Some((service, _)) = services.iter().find(|(_service, s_dev)| {
+        s_dev
+            .as_deref()
+            .is_some_and(|dev| active_devices.iter().any(|active| active == dev))
+    }) {
+        return Some(service.clone());
+    }
+
+    if let Some((service, _)) = services.iter().find(|(service, s_dev)| {
+        !is_secondary_service(service) && !s_dev.as_deref().is_some_and(is_virtual_interface)
+    }) {
+        return Some(service.clone());
+    }
+
+    services.first().map(|(service, _)| service.clone())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_macos_bypass_domains(raw: &str) -> Vec<String> {
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("There aren't"))
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn merge_macos_bypass_domains(raw_existing: &str) -> Vec<String> {
+    merge_linux_ignore_hosts(&parse_macos_bypass_domains(raw_existing))
+}
+
 #[cfg(target_os = "windows")]
 mod platform {
     use std::ffi::c_void;
@@ -94,6 +510,7 @@ mod platform {
     const BACKUP_SERVER: &str = "SingBoxGuiProxyBackupServer";
     const BACKUP_OVERRIDE: &str = "SingBoxGuiProxyBackupOverride";
     const BACKUP_AUTOCONFIGURL: &str = "SingBoxGuiProxyBackupAutoConfigUrl";
+    const BACKUP_APPLIED_PORT: &str = "SingBoxGuiProxyBackupAppliedPort";
 
     #[link(name = "wininet")]
     unsafe extern "system" {
@@ -141,6 +558,7 @@ mod platform {
         let _ = settings.delete_value(BACKUP_SERVER);
         let _ = settings.delete_value(BACKUP_OVERRIDE);
         let _ = settings.delete_value(BACKUP_AUTOCONFIGURL);
+        let _ = settings.delete_value(BACKUP_APPLIED_PORT);
         settings
             .delete_value(BACKUP_MARKER)
             .map_err(|e| format!("Failed to clear Windows proxy backup marker: {e}"))
@@ -164,9 +582,13 @@ mod platform {
         }
         let current_enable: u32 = settings.get_value("ProxyEnable").unwrap_or_default();
         let current_server: String = settings.get_value("ProxyServer").unwrap_or_default();
+        let recorded_port: Option<u16> = settings
+            .get_value::<u32, _>(BACKUP_APPLIED_PORT)
+            .ok()
+            .and_then(|p| u16::try_from(p).ok())
+            .filter(|&p| p > 0);
         let is_local_proxy = parse_proxy_server(&current_server).is_some_and(|(host, port)| {
-            matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1")
-                && (port == expected_port || expected_port > 0)
+            super::is_owned_proxy_endpoint(&host, port, expected_port, recorded_port)
         });
         let still_owned = current_enable != 0 && is_local_proxy;
         if !force && !still_owned {
@@ -179,28 +601,9 @@ mod platform {
             .get_value::<String, _>(BACKUP_OVERRIDE)
             .unwrap_or_default();
         let current: String = settings.get_value("ProxyOverride").unwrap_or_default();
-        let app_entries = ["localhost", "127.0.0.1", "::1", "<local>"];
-        let mut merged: Vec<String> = original
-            .split(';')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .map(str::to_string)
-            .collect();
-        for entry in current.split(';').map(str::trim).filter(|entry| {
-            !entry.is_empty()
-                && !app_entries
-                    .iter()
-                    .any(|app| app.eq_ignore_ascii_case(entry))
-        }) {
-            if !merged
-                .iter()
-                .any(|existing| existing.eq_ignore_ascii_case(entry))
-            {
-                merged.push(entry.to_string());
-            }
-        }
+        let restored_override = super::restore_windows_proxy_override(&original, &current);
         settings
-            .set_value("ProxyOverride", &merged.join(";"))
+            .set_value("ProxyOverride", &restored_override)
             .map_err(|e| format!("Failed to restore Windows bypass list: {e}"))?;
 
         if let Ok(original_pac) = settings.get_value::<String, _>(BACKUP_AUTOCONFIGURL)
@@ -233,10 +636,10 @@ mod platform {
             // restore an already-enabled corporate proxy instead of blindly
             // forcing Windows back to "direct".
             let marker: Option<u32> = settings.get_value(BACKUP_MARKER).ok();
-            let merged_override = if marker.is_none() {
+            let current_override: String = settings.get_value("ProxyOverride").unwrap_or_default();
+            if marker.is_none() {
                 let original_enable: u32 = settings.get_value("ProxyEnable").unwrap_or_default();
                 let original_server: String = settings.get_value("ProxyServer").unwrap_or_default();
-                let original: String = settings.get_value("ProxyOverride").unwrap_or_default();
                 if let Ok(pac) = settings.get_value::<String, _>("AutoConfigURL")
                     && !pac.trim().is_empty()
                 {
@@ -250,28 +653,33 @@ mod platform {
                     .set_value(BACKUP_SERVER, &original_server)
                     .map_err(|e| format!("Failed to back up Windows proxy server: {e}"))?;
                 settings
-                    .set_value(BACKUP_OVERRIDE, &original)
+                    .set_value(BACKUP_OVERRIDE, &current_override)
                     .map_err(|e| format!("Failed to back up Windows bypass list: {e}"))?;
                 settings
                     .set_value(BACKUP_MARKER, &1u32)
                     .map_err(|e| format!("Failed to mark Windows proxy backup: {e}"))?;
-                Some(if original.trim().is_empty() {
-                    "localhost;127.0.0.1;::1;<local>".to_string()
-                } else {
-                    format!("{original};localhost;127.0.0.1;::1;<local>")
-                })
-            } else {
-                None
-            };
+            } else if let Ok(pac) = settings.get_value::<String, _>("AutoConfigURL")
+                && !pac.trim().is_empty()
+            {
+                if settings
+                    .get_value::<String, _>(BACKUP_AUTOCONFIGURL)
+                    .is_err()
+                {
+                    let _ = settings.set_value(BACKUP_AUTOCONFIGURL, &pac);
+                }
+                let _ = settings.delete_value("AutoConfigURL");
+            }
+            let merged_override = super::merge_windows_proxy_override(&current_override);
             let apply_result = (|| {
-                if let Some(merged) = merged_override {
+                if merged_override != current_override {
                     settings
-                        .set_value("ProxyOverride", &merged)
+                        .set_value("ProxyOverride", &merged_override)
                         .map_err(|e| format!("Failed to update Windows proxy bypass list: {e}"))?;
                 }
                 settings
                     .set_value("ProxyServer", &format!("127.0.0.1:{port}"))
                     .map_err(|e| format!("Failed to update Windows proxy server: {e}"))?;
+                let _ = settings.set_value(BACKUP_APPLIED_PORT, &u32::from(port));
                 settings
                     .set_value("ProxyEnable", &1u32)
                     .map_err(|e| format!("Failed to update Windows proxy state: {e}"))?;
@@ -288,10 +696,13 @@ mod platform {
         } else {
             // Restore the complete user state if we previously backed it up.
             if !restore_proxy_backup(&settings, port, false)? {
+                let current_enable: u32 = settings.get_value("ProxyEnable").unwrap_or_default();
                 let current_server: String = settings.get_value("ProxyServer").unwrap_or_default();
-                if parse_proxy_server(&current_server).is_some_and(|(host, _)| {
-                    matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1")
-                }) {
+                if current_enable != 0
+                    && parse_proxy_server(&current_server).is_some_and(|(host, current_port)| {
+                        super::is_loopback_proxy_host(&host) && port > 0 && current_port == port
+                    })
+                {
                     settings
                         .set_value("ProxyEnable", &0u32)
                         .map_err(|e| format!("Failed to disable Windows proxy: {e}"))?;
@@ -321,9 +732,12 @@ mod platform {
 
 #[cfg(target_os = "linux")]
 mod platform {
+    use std::io::ErrorKind;
     use std::process::{Command, Output};
 
     const PROXY_SCHEMA: &str = "org.gnome.system.proxy";
+    const KIOSLAVERC: &str = "kioslaverc";
+    const KDE_PROXY_GROUP: &str = "Proxy Settings";
 
     fn run_gsettings(args: &[&str]) -> Result<Output, String> {
         let output = Command::new("gsettings")
@@ -340,32 +754,229 @@ mod platform {
         }
     }
 
-    fn set_value(schema: &str, key: &str, value: &str) -> Result<(), String> {
+    fn set_gnome_value(schema: &str, key: &str, value: &str) -> Result<(), String> {
         run_gsettings(&["set", schema, key, value]).map(|_| ())
     }
 
-    fn get_value(schema: &str, key: &str) -> Result<String, String> {
+    fn get_gnome_value(schema: &str, key: &str) -> Result<String, String> {
         let output = run_gsettings(&["get", schema, key])?;
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    fn restore_backup(expected_port: u16, force: bool) -> Result<bool, String> {
-        let Some(payload) = super::load_platform_backup("linux") else {
-            return Ok(false);
-        };
-        if !force {
-            let (enabled, host, configured_port) = get_system_proxy()?;
-            let still_owned = enabled
-                && matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1")
-                && configured_port == expected_port;
-            if !still_owned {
-                super::clear_platform_backup();
-                return Ok(true);
+    fn gnome_is_usable() -> bool {
+        get_gnome_value(PROXY_SCHEMA, "mode").is_ok()
+    }
+
+    fn kde_is_session() -> bool {
+        for var in [
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_DESKTOP",
+            "DESKTOP_SESSION",
+        ] {
+            if let Ok(val) = std::env::var(var) {
+                let lower = val.to_ascii_lowercase();
+                if lower.contains("kde") || lower.contains("plasma") {
+                    return true;
+                }
             }
         }
-        let values = payload
-            .as_object()
-            .ok_or_else(|| "Invalid Linux proxy backup".to_string())?;
+        std::env::var("KDE_FULL_SESSION")
+            .ok()
+            .is_some_and(|v| !v.trim().is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+    }
+
+    fn run_kde_cmd(candidates: &[&str], args: &[&str]) -> Result<Output, String> {
+        let mut last_err = None;
+        for bin in candidates {
+            match Command::new(bin).args(args).output() {
+                Ok(output) if output.status.success() => return Ok(output),
+                Ok(output) => {
+                    last_err = Some(format!(
+                        "{bin} failed: {}",
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ));
+                }
+                Err(e) if e.kind() == ErrorKind::NotFound => continue,
+                Err(e) => {
+                    last_err = Some(format!("Failed to run {bin}: {e}"));
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| format!("{} not found", candidates.join("/"))))
+    }
+
+    fn kde_read_key(key: &str) -> Result<String, String> {
+        let output = run_kde_cmd(
+            &["kreadconfig6", "kreadconfig5"],
+            &[
+                "--file",
+                KIOSLAVERC,
+                "--group",
+                KDE_PROXY_GROUP,
+                "--key",
+                key,
+            ],
+        )?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn kde_write_key(key: &str, value: Option<&str>) -> Result<(), String> {
+        match value {
+            Some(v) if !v.is_empty() => run_kde_cmd(
+                &["kwriteconfig6", "kwriteconfig5"],
+                &[
+                    "--file",
+                    KIOSLAVERC,
+                    "--group",
+                    KDE_PROXY_GROUP,
+                    "--key",
+                    key,
+                    v,
+                ],
+            )
+            .map(|_| ()),
+            _ => run_kde_cmd(
+                &["kwriteconfig6", "kwriteconfig5"],
+                &[
+                    "--file",
+                    KIOSLAVERC,
+                    "--group",
+                    KDE_PROXY_GROUP,
+                    "--key",
+                    key,
+                    "--delete",
+                ],
+            )
+            .map(|_| ()),
+        }
+    }
+
+    fn kde_notify_reparse() {
+        let _ = Command::new("dbus-send")
+            .args([
+                "--session",
+                "--type=signal",
+                "/KIO/Scheduler",
+                "org.kde.KIO.Scheduler.reparseConfiguration",
+            ])
+            .output();
+    }
+
+    fn kde_is_usable() -> bool {
+        kde_read_key("ProxyType").is_ok()
+    }
+
+    fn get_gnome_system_proxy() -> Result<(bool, String, u16), String> {
+        let enabled = get_gnome_value(PROXY_SCHEMA, "mode")? == "'manual'";
+        let host = get_gnome_value(&format!("{PROXY_SCHEMA}.http"), "host")?
+            .trim_matches(['\'', '"'])
+            .to_string();
+        let port = get_gnome_value(&format!("{PROXY_SCHEMA}.http"), "port")?
+            .parse::<u16>()
+            .map_err(|e| format!("Failed to parse GNOME proxy port: {e}"))?;
+        Ok((enabled, host, port))
+    }
+
+    fn get_kde_system_proxy() -> Result<(bool, String, u16), String> {
+        let proxy_type = kde_read_key("ProxyType")?;
+        if proxy_type != "1" {
+            return Ok((false, String::new(), 0));
+        }
+        let raw_http = kde_read_key("httpProxy")?;
+        let (host, port) = super::parse_kde_proxy_endpoint(&raw_http).unwrap_or_default();
+        Ok((true, host, port))
+    }
+
+    fn snapshot_gnome() -> Result<serde_json::Value, String> {
+        let mut values = serde_json::Map::new();
+        values.insert(
+            "mode".to_string(),
+            serde_json::Value::String(get_gnome_value(PROXY_SCHEMA, "mode")?),
+        );
+        values.insert(
+            "ignore_hosts".to_string(),
+            serde_json::Value::String(get_gnome_value(PROXY_SCHEMA, "ignore-hosts")?),
+        );
+        for service in ["http", "https", "socks"] {
+            let schema = format!("{PROXY_SCHEMA}.{service}");
+            values.insert(
+                format!("{service}_host"),
+                serde_json::Value::String(get_gnome_value(&schema, "host")?),
+            );
+            values.insert(
+                format!("{service}_port"),
+                serde_json::Value::String(get_gnome_value(&schema, "port")?),
+            );
+        }
+        Ok(serde_json::Value::Object(values))
+    }
+
+    fn snapshot_kde() -> Result<serde_json::Value, String> {
+        let mut values = serde_json::Map::new();
+        values.insert(
+            "proxy_type".to_string(),
+            serde_json::Value::String(kde_read_key("ProxyType")?),
+        );
+        for key in ["httpProxy", "httpsProxy", "socksProxy", "NoProxyFor"] {
+            values.insert(
+                key.to_string(),
+                serde_json::Value::String(kde_read_key(key)?),
+            );
+        }
+        Ok(serde_json::Value::Object(values))
+    }
+
+    fn apply_gnome(port: u16) -> Result<(), String> {
+        for service in ["http", "https", "socks"] {
+            let schema = format!("{PROXY_SCHEMA}.{service}");
+            set_gnome_value(&schema, "host", "'127.0.0.1'")?;
+            set_gnome_value(&schema, "port", &port.to_string())?;
+        }
+        let existing_raw = get_gnome_value(PROXY_SCHEMA, "ignore-hosts").unwrap_or_default();
+        let merged =
+            super::merge_linux_ignore_hosts(&super::parse_gsettings_string_array(&existing_raw));
+        set_gnome_value(
+            PROXY_SCHEMA,
+            "ignore-hosts",
+            &super::format_gsettings_string_array(&merged),
+        )?;
+        set_gnome_value(PROXY_SCHEMA, "mode", "'manual'")
+    }
+
+    fn apply_kde(port: u16) -> Result<(), String> {
+        let http_url = format!("http://127.0.0.1:{port}");
+        let socks_url = format!("socks://127.0.0.1:{port}");
+        let existing_no_proxy = kde_read_key("NoProxyFor").unwrap_or_default();
+        let merged_no_proxy = super::merge_kde_no_proxy(&existing_no_proxy);
+
+        kde_write_key("httpProxy", Some(&http_url))?;
+        kde_write_key("httpsProxy", Some(&http_url))?;
+        kde_write_key("socksProxy", Some(&socks_url))?;
+        kde_write_key("NoProxyFor", Some(&merged_no_proxy))?;
+        kde_write_key("ProxyType", Some("1"))?;
+        kde_notify_reparse();
+        Ok(())
+    }
+
+    fn restore_gnome_object(
+        values: &serde_json::Map<String, serde_json::Value>,
+        expected_port: u16,
+        recorded_port: Option<u16>,
+        force: bool,
+    ) -> Result<(), String> {
+        if !force {
+            let (enabled, host, configured_port) = get_gnome_system_proxy()?;
+            let still_owned = enabled
+                && super::is_owned_proxy_endpoint(
+                    &host,
+                    configured_port,
+                    expected_port,
+                    recorded_port,
+                );
+            if !still_owned {
+                return Ok(());
+            }
+        }
         for service in ["http", "https", "socks"] {
             let schema = format!("{PROXY_SCHEMA}.{service}");
             let host = values
@@ -376,17 +987,101 @@ mod platform {
                 .get(&format!("{service}_port"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("0");
-            set_value(&schema, "host", host)?;
-            set_value(&schema, "port", service_port)?;
+            set_gnome_value(&schema, "host", host)?;
+            set_gnome_value(&schema, "port", service_port)?;
         }
-        if let Some(ignore_hosts) = values.get("ignore_hosts").and_then(|v| v.as_str()) {
-            set_value(PROXY_SCHEMA, "ignore-hosts", ignore_hosts)?;
+        if let Some(orig_raw) = values.get("ignore_hosts").and_then(|v| v.as_str()) {
+            let current_raw = get_gnome_value(PROXY_SCHEMA, "ignore-hosts").unwrap_or_default();
+            let orig_items = super::parse_gsettings_string_array(orig_raw);
+            let curr_items = super::parse_gsettings_string_array(&current_raw);
+            let restored = super::restore_linux_ignore_hosts(&orig_items, &curr_items);
+            set_gnome_value(
+                PROXY_SCHEMA,
+                "ignore-hosts",
+                &super::format_gsettings_string_array(&restored),
+            )?;
         }
         let mode = values
             .get("mode")
             .and_then(|v| v.as_str())
             .unwrap_or("'none'");
-        set_value(PROXY_SCHEMA, "mode", mode)?;
+        set_gnome_value(PROXY_SCHEMA, "mode", mode)
+    }
+
+    fn restore_kde_object(
+        values: &serde_json::Map<String, serde_json::Value>,
+        expected_port: u16,
+        recorded_port: Option<u16>,
+        force: bool,
+    ) -> Result<(), String> {
+        if !force {
+            let (enabled, host, configured_port) = get_kde_system_proxy()?;
+            let still_owned = enabled
+                && super::is_owned_proxy_endpoint(
+                    &host,
+                    configured_port,
+                    expected_port,
+                    recorded_port,
+                );
+            if !still_owned {
+                return Ok(());
+            }
+        }
+        for key in ["httpProxy", "httpsProxy", "socksProxy"] {
+            let orig = values.get(key).and_then(|v| v.as_str()).unwrap_or("");
+            kde_write_key(key, (!orig.is_empty()).then_some(orig))?;
+        }
+        if let Some(orig_no_proxy) = values.get("NoProxyFor").and_then(|v| v.as_str()) {
+            let current_no_proxy = kde_read_key("NoProxyFor").unwrap_or_default();
+            let restored = super::restore_kde_no_proxy(orig_no_proxy, &current_no_proxy);
+            kde_write_key(
+                "NoProxyFor",
+                (!restored.is_empty()).then_some(restored.as_str()),
+            )?;
+        }
+        let proxy_type = values
+            .get("proxy_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0");
+        kde_write_key(
+            "ProxyType",
+            Some(if proxy_type.is_empty() {
+                "0"
+            } else {
+                proxy_type
+            }),
+        )?;
+        kde_notify_reparse();
+        Ok(())
+    }
+
+    fn restore_backup(expected_port: u16, force: bool) -> Result<bool, String> {
+        let Some(payload) = super::load_platform_backup("linux") else {
+            return Ok(false);
+        };
+        let obj = payload
+            .as_object()
+            .ok_or_else(|| "Invalid Linux proxy backup".to_string())?;
+        let recorded_port = obj
+            .get("applied_port")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u16::try_from(v).ok())
+            .filter(|&p| p > 0);
+
+        // Support legacy flat GNOME backup objects alongside multi-desktop backups.
+        if obj.contains_key("mode") {
+            restore_gnome_object(obj, expected_port, recorded_port, force)?;
+            super::clear_platform_backup();
+            return Ok(true);
+        }
+
+        if let Some(gnome_obj) = obj.get("gnome").and_then(|v| v.as_object()) {
+            restore_gnome_object(gnome_obj, expected_port, recorded_port, force)?;
+        }
+        if let Some(kde_obj) = obj.get("kde").and_then(|v| v.as_object()) {
+            restore_kde_object(kde_obj, expected_port, recorded_port, force)?;
+        }
+
         super::clear_platform_backup();
         Ok(true)
     }
@@ -397,42 +1092,35 @@ mod platform {
 
     pub fn set_system_proxy(enable: bool, port: u16) -> Result<(), String> {
         if enable {
+            let use_gnome = gnome_is_usable();
+            let use_kde = (kde_is_session() || !use_gnome) && kde_is_usable();
+            if !use_gnome && !use_kde {
+                return Err(
+                    "No supported Linux desktop proxy backend found (checked gsettings and kwriteconfig6/kwriteconfig5)"
+                        .to_string(),
+                );
+            }
+
             if super::load_platform_backup("linux").is_none() {
-                let mut values = serde_json::Map::new();
-                values.insert(
-                    "mode".to_string(),
-                    serde_json::Value::String(get_value(PROXY_SCHEMA, "mode")?),
-                );
-                values.insert(
-                    "ignore_hosts".to_string(),
-                    serde_json::Value::String(get_value(PROXY_SCHEMA, "ignore-hosts")?),
-                );
-                for service in ["http", "https", "socks"] {
-                    let schema = format!("{PROXY_SCHEMA}.{service}");
-                    values.insert(
-                        format!("{service}_host"),
-                        serde_json::Value::String(get_value(&schema, "host")?),
-                    );
-                    values.insert(
-                        format!("{service}_port"),
-                        serde_json::Value::String(get_value(&schema, "port")?),
-                    );
+                let mut payload = serde_json::Map::new();
+                payload.insert("applied_port".to_string(), serde_json::json!(port));
+                if use_gnome {
+                    payload.insert("gnome".to_string(), snapshot_gnome()?);
                 }
-                super::save_platform_backup("linux", serde_json::Value::Object(values))?;
+                if use_kde {
+                    payload.insert("kde".to_string(), snapshot_kde()?);
+                }
+                super::save_platform_backup("linux", serde_json::Value::Object(payload))?;
             }
 
             let apply_result = (|| {
-                for service in ["http", "https", "socks"] {
-                    let schema = format!("{PROXY_SCHEMA}.{service}");
-                    set_value(&schema, "host", "'127.0.0.1'")?;
-                    set_value(&schema, "port", &port.to_string())?;
+                if use_gnome {
+                    apply_gnome(port)?;
                 }
-                set_value(
-                    PROXY_SCHEMA,
-                    "ignore-hosts",
-                    "['localhost', '127.0.0.1', '::1']",
-                )?;
-                set_value(PROXY_SCHEMA, "mode", "'manual'")
+                if use_kde {
+                    apply_kde(port)?;
+                }
+                Ok::<(), String>(())
             })();
             if let Err(error) = apply_result {
                 return match restore_backup(port, true) {
@@ -445,24 +1133,42 @@ mod platform {
             Ok(())
         } else {
             // No durable snapshot means this process did not own the proxy.
-            // Avoid disabling an unrelated manual proxy after a crash.
-            let (enabled, host, configured_port) = get_system_proxy()?;
-            if enabled && host == "127.0.0.1" && configured_port == port {
-                set_value(PROXY_SCHEMA, "mode", "'none'")?;
+            // Clean up only if configured to our exact localhost endpoint.
+            if let Ok((enabled, host, configured_port)) = get_gnome_system_proxy()
+                && enabled
+                && super::is_loopback_proxy_host(&host)
+                && port > 0
+                && configured_port == port
+            {
+                set_gnome_value(PROXY_SCHEMA, "mode", "'none'")?;
+            }
+            if (kde_is_session() || !gnome_is_usable())
+                && let Ok((enabled, host, configured_port)) = get_kde_system_proxy()
+                && enabled
+                && super::is_loopback_proxy_host(&host)
+                && port > 0
+                && configured_port == port
+            {
+                kde_write_key("ProxyType", Some("0"))?;
+                kde_notify_reparse();
             }
             Ok(())
         }
     }
 
     pub fn get_system_proxy() -> Result<(bool, String, u16), String> {
-        let enabled = get_value(PROXY_SCHEMA, "mode")? == "'manual'";
-        let host = get_value(&format!("{PROXY_SCHEMA}.http"), "host")?
-            .trim_matches(['\'', '"'])
-            .to_string();
-        let port = get_value(&format!("{PROXY_SCHEMA}.http"), "port")?
-            .parse::<u16>()
-            .map_err(|e| format!("Failed to parse GNOME proxy port: {e}"))?;
-        Ok((enabled, host, port))
+        let gnome_res = get_gnome_system_proxy();
+        if kde_is_session()
+            && let Ok(kde_state) = get_kde_system_proxy()
+        {
+            if kde_state.0 || gnome_res.is_err() {
+                return Ok(kde_state);
+            }
+        }
+        match gnome_res {
+            Ok(state) => Ok(state),
+            Err(gnome_err) => get_kde_system_proxy().map_err(|_| gnome_err),
+        }
     }
 }
 
@@ -487,52 +1193,43 @@ mod platform {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn service_for_interface(order: &str, device: &str) -> Option<String> {
-        let mut current_service = None;
-        for line in order.lines().map(str::trim) {
-            // `-listnetworkserviceorder` emits entries such as
-            // `(1) Wi-Fi` followed by `(Hardware Port: Wi-Fi, Device: en0)`.
-            if line.starts_with('(')
-                && !line.starts_with("(Hardware Port:")
-                && let Some((_, name)) = line.split_once(") ")
-            {
-                let name = name.trim().trim_start_matches('*').trim();
-                if !name.is_empty() {
-                    current_service = Some(name.to_string());
-                }
-            }
-            if let Some(device_value) = line.split_once("Device:").map(|(_, value)| value) {
-                let device_value = device_value.trim().trim_end_matches(')').trim();
-                if device_value == device {
-                    return current_service;
-                }
-            }
-        }
-        None
+        super::service_for_interface_in_order(order, device)
     }
 
     fn default_network_service() -> Result<String, String> {
-        if let Ok(route) = run("route", &["-n", "get", "default"])
-            && let Some(device) = String::from_utf8_lossy(&route.stdout)
-                .lines()
-                .find_map(|line| line.trim().strip_prefix("interface:"))
-                .map(str::trim)
+        let route_device = run("route", &["-n", "get", "default"])
+            .ok()
+            .and_then(|route| {
+                String::from_utf8_lossy(&route.stdout)
+                    .lines()
+                    .find_map(|line| line.trim().strip_prefix("interface:"))
+                    .map(|s| s.trim().to_string())
+            });
+
+        let order = run("networksetup", &["-listnetworkserviceorder"])?;
+        let services = super::parse_network_service_order(&String::from_utf8_lossy(&order.stdout));
+
+        if let Some(ref dev) = route_device
+            && !super::is_virtual_interface(dev)
+            && let Some((service, _)) = services.iter().find(|(service, s_dev)| {
+                s_dev.as_deref() == Some(dev.as_str()) && !super::is_secondary_service(service)
+            })
         {
-            if let Ok(order) = run("networksetup", &["-listnetworkserviceorder"])
-                && let Some(service) =
-                    service_for_interface(&String::from_utf8_lossy(&order.stdout), device)
-            {
-                return Ok(service);
-            }
+            return Ok(service.clone());
         }
 
-        let services = run("networksetup", &["-listallnetworkservices"])?;
-        String::from_utf8_lossy(&services.stdout)
-            .lines()
-            .map(str::trim)
-            .find(|line| {
-                !line.is_empty() && !line.starts_with("An asterisk") && !line.starts_with('*')
+        // When TUN (utun*) owns the default route, scan active physical interfaces once
+        // instead of blindly falling back to Thunderbolt Bridge / iPhone USB.
+        let active_devices = run("ifconfig", &[])
+            .ok()
+            .map(|out| {
+                super::parse_active_physical_devices_from_ifconfig(&String::from_utf8_lossy(
+                    &out.stdout,
+                ))
             })
-            .map(str::to_string)
+            .unwrap_or_default();
+
+        super::select_macos_service(&services, route_device.as_deref(), &active_devices)
             .ok_or_else(|| "No enabled macOS network service was found".to_string())
     }
 
@@ -605,13 +1302,22 @@ mod platform {
             .get("service")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "Invalid macOS proxy backup service".to_string())?;
+        let recorded_port = payload
+            .get("applied_port")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u16::try_from(v).ok())
+            .filter(|&p| p > 0);
         if !force {
             let output = run("networksetup", &["-getwebproxy", service])?;
             let (enabled, host, configured_port) =
                 parse_proxy(&String::from_utf8_lossy(&output.stdout))?;
             let still_owned = enabled
-                && matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1")
-                && configured_port == expected_port;
+                && super::is_owned_proxy_endpoint(
+                    &host,
+                    configured_port,
+                    expected_port,
+                    recorded_port,
+                );
             if !still_owned {
                 super::clear_platform_backup();
                 return Ok(true);
@@ -642,12 +1348,7 @@ mod platform {
             .get("bypass")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        let domains: Vec<String> = bypass
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with("There aren't"))
-            .map(str::to_string)
-            .collect();
+        let domains = super::parse_macos_bypass_domains(bypass);
         let mut args = vec!["-setproxybypassdomains".to_string(), service.to_string()];
         if domains.is_empty() {
             args.push("Empty".to_string());
@@ -668,22 +1369,24 @@ mod platform {
         if enable {
             // If the process is reapplying a proxy after a restart or a port
             // change, keep using the service captured in the durable snapshot.
-            // Resolving the current default service here could otherwise leave
-            // an old service configured and restore the wrong one on exit.
             let service = if let Some(saved) = backup_service()? {
                 saved
             } else {
                 default_network_service()?
             };
-            if super::load_platform_backup("macos").is_none() {
+            let mut snapshot_parsed: Option<Vec<(&'static str, (bool, String, u16))>> = None;
+            let current_bypass_raw = if super::load_platform_backup("macos").is_none() {
                 let mut kinds = serde_json::Map::new();
+                let mut parsed = Vec::with_capacity(3);
                 for kind in ["webproxy", "securewebproxy", "socksfirewallproxy"] {
                     let output = run("networksetup", &[&format!("-get{kind}"), &service])?;
-                    kinds.insert(
-                        kind.to_string(),
-                        serde_json::Value::String(String::from_utf8_lossy(&output.stdout).into()),
-                    );
+                    let raw = String::from_utf8_lossy(&output.stdout).into_owned();
+                    if let Ok(state) = parse_proxy(&raw) {
+                        parsed.push((kind, state));
+                    }
+                    kinds.insert(kind.to_string(), serde_json::Value::String(raw));
                 }
+                snapshot_parsed = Some(parsed);
                 let bypass = run("networksetup", &["-getproxybypassdomains", &service])
                     .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
                     .unwrap_or_default();
@@ -691,25 +1394,41 @@ mod platform {
                     "macos",
                     serde_json::json!({
                         "service": service,
+                        "applied_port": port,
                         "kinds": kinds,
                         "bypass": bypass,
                     }),
                 )?;
-            }
+                bypass
+            } else {
+                run("networksetup", &["-getproxybypassdomains", &service])
+                    .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+                    .unwrap_or_default()
+            };
+            let existing_domains = super::parse_macos_bypass_domains(&current_bypass_raw);
+            let merged_domains = super::merge_macos_bypass_domains(&current_bypass_raw);
             let apply_result = (|| {
                 for kind in ["webproxy", "securewebproxy", "socksfirewallproxy"] {
-                    set_proxy(&service, kind, true, port)?;
+                    let current = snapshot_parsed
+                        .as_ref()
+                        .and_then(|list| list.iter().find(|(k, _)| *k == kind))
+                        .map(|(_, s)| s);
+                    match current {
+                        Some((true, host, p)) if host == "127.0.0.1" && *p == port => {}
+                        Some((false, host, p)) if host == "127.0.0.1" && *p == port => {
+                            set_proxy_state(&service, kind, true)?;
+                        }
+                        _ => {
+                            set_proxy(&service, kind, true, port)?;
+                        }
+                    }
                 }
-                run(
-                    "networksetup",
-                    &[
-                        "-setproxybypassdomains",
-                        &service,
-                        "localhost",
-                        "127.0.0.1",
-                        "::1",
-                    ],
-                )?;
+                if merged_domains != existing_domains {
+                    let mut args = vec!["-setproxybypassdomains".to_string(), service.clone()];
+                    args.extend(merged_domains.iter().cloned());
+                    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                    run("networksetup", &refs)?;
+                }
                 Ok::<(), String>(())
             })();
             if let Err(error) = apply_result {
@@ -729,7 +1448,11 @@ mod platform {
             let output = run("networksetup", &["-getwebproxy", &service])?;
             let (enabled, host, configured_port) =
                 parse_proxy(&String::from_utf8_lossy(&output.stdout))?;
-            if enabled && host == "127.0.0.1" && configured_port == port {
+            if enabled
+                && super::is_loopback_proxy_host(&host)
+                && port > 0
+                && configured_port == port
+            {
                 for kind in ["webproxy", "securewebproxy", "socksfirewallproxy"] {
                     set_proxy_state(&service, kind, false)?;
                 }
@@ -762,6 +1485,118 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn ownership_port_check_rejects_foreign_local_proxy() {
+        // Expected port must match unless expected_port == 0 or recorded_port matches.
+        assert!(is_owned_proxy_endpoint("127.0.0.1", 2080, 2080, None));
+        assert!(!is_owned_proxy_endpoint("127.0.0.1", 7890, 2080, None));
+        assert!(is_owned_proxy_endpoint("localhost", 7890, 0, None));
+        assert!(is_owned_proxy_endpoint("::1", 2080, 2081, Some(2080)));
+        assert!(!is_owned_proxy_endpoint("10.0.0.1", 2080, 2080, None));
+    }
+
+    #[test]
+    fn windows_override_merge_and_restore_preserve_user_entries() {
+        let merged = merge_windows_proxy_override("*.corp.local;10.0.0.0/8;LOCALHOST");
+        assert_eq!(
+            merged,
+            "*.corp.local;10.0.0.0/8;LOCALHOST;127.0.0.1;::1;<local>"
+        );
+
+        let restored = restore_windows_proxy_override(
+            "*.corp.local",
+            "*.corp.local;10.0.0.0/8;localhost;127.0.0.1;::1;<local>",
+        );
+        assert_eq!(restored, "*.corp.local;10.0.0.0/8");
+    }
+
+    #[test]
+    fn linux_gnome_and_kde_bypass_merge_and_endpoint_parse() {
+        let existing = parse_gsettings_string_array("['*.corp.local', '10.0.0.0/8']");
+        assert_eq!(existing, vec!["*.corp.local", "10.0.0.0/8"]);
+        let merged = merge_linux_ignore_hosts(&existing);
+        assert_eq!(
+            format_gsettings_string_array(&merged),
+            "['*.corp.local', '10.0.0.0/8', 'localhost', '127.0.0.1', '::1']"
+        );
+        assert_eq!(parse_gsettings_string_array("@as []"), Vec::<String>::new());
+        assert_eq!(format_gsettings_string_array(&[]), "@as []");
+
+        assert_eq!(
+            merge_kde_no_proxy("*.internal, 192.168.0.0/16, localhost"),
+            "*.internal,192.168.0.0/16,localhost,127.0.0.1,::1"
+        );
+        assert_eq!(
+            restore_kde_no_proxy("*.internal", "*.internal,localhost,127.0.0.1,*.added"),
+            "*.internal,*.added"
+        );
+        assert_eq!(
+            parse_kde_proxy_endpoint("http://127.0.0.1:2080"),
+            Some(("127.0.0.1".to_string(), 2080))
+        );
+        assert_eq!(
+            parse_kde_proxy_endpoint("socks://[::1]:1080/"),
+            Some(("::1".to_string(), 1080))
+        );
+        assert_eq!(
+            parse_kde_proxy_endpoint("127.0.0.1 2080"),
+            Some(("127.0.0.1".to_string(), 2080))
+        );
+    }
+
+    #[test]
+    fn macos_service_selection_skips_virtual_and_inactive_interfaces() {
+        let order = "\
+An asterisk (*) denotes that a network service is disabled.
+(1) Thunderbolt Bridge
+(Hardware Port: Thunderbolt Bridge, Device: bridge0)
+(2) *Disabled USB
+(Hardware Port: USB LAN, Device: en5)
+(3) iPhone USB
+(Hardware Port: iPhone USB, Device: en9)
+(4) Wi-Fi
+(Hardware Port: Wi-Fi, Device: en0)
+";
+        let services = parse_network_service_order(order);
+        assert_eq!(
+            service_for_interface_in_order(order, "en0"),
+            Some("Wi-Fi".to_string())
+        );
+        assert_eq!(service_for_interface_in_order(order, "en5"), None);
+
+        let ifconfig = "\
+lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+\tinet 127.0.0.1 netmask 0xff000000
+bridge0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tstatus: inactive
+en9: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tstatus: inactive
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet 192.168.1.42 netmask 0xffffff00 broadcast 192.168.1.255
+\tstatus: active
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1500
+\tinet 172.19.0.1 --> 172.19.0.2 netmask 0xfffffffc
+";
+        let active = parse_active_physical_devices_from_ifconfig(ifconfig);
+        assert_eq!(active, vec!["en0".to_string()]);
+        assert_eq!(
+            select_macos_service(&services, Some("utun4"), &active),
+            Some("Wi-Fi".to_string())
+        );
+
+        let bypass = merge_macos_bypass_domains("*.local\n169.254/16\nlocalhost\n");
+        assert_eq!(
+            bypass,
+            vec!["*.local", "169.254/16", "localhost", "127.0.0.1", "::1"]
+        );
+        assert_eq!(
+            merge_macos_bypass_domains("There aren't any bypass domains set on Wi-Fi.\n"),
+            vec!["localhost", "127.0.0.1", "::1"]
+        );
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn parses_windows_proxy_server_formats() {
