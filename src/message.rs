@@ -74,10 +74,15 @@ pub enum Message {
         display_name: Option<String>,
         /// Source URL/path used for import (needed when registering a new profile).
         source_url: Option<String>,
+        is_subscription: bool,
+        ignored_settings: Vec<&'static str>,
+        from_auto_update: bool,
     },
     SelectProfile(String),
     ActiveNodesLoaded {
         profile_id: String,
+        is_native_json: bool,
+        ignored_settings: Vec<&'static str>,
         result: Result<Vec<crate::state::ProxyNode>, String>,
     },
     RequestDeleteProfile(String),
@@ -96,7 +101,10 @@ pub enum Message {
         error: Option<String>,
     },
     StartLatencyTest,
-    NodeLatencyBatch(Vec<(String, Option<u64>)>),
+    NodeLatencyBatch {
+        generation: u64,
+        results: Vec<(String, Option<u64>)>,
+    },
     Tick,
     ConfigSaved {
         saved_config: GuiConfig,
@@ -150,7 +158,7 @@ pub enum Message {
     CoreDownloaded(Result<(), String>),
     LatencyTestUrlChanged(String),
     LatencyTestTimeoutChanged(String),
-    LatencyTestComplete,
+    LatencyTestComplete(u64),
     CoreVersionFetched(Result<String, String>),
 
     MixedPortChanged(String),
@@ -215,9 +223,59 @@ pub enum Message {
     ToggleShowAllProxies,
     CoreLivenessChecked(bool),
     /// Async result of `core::start_core` (runs off the UI thread).
-    CoreStartFinished(Result<(), String>),
+    CoreStartFinished {
+        generation: u64,
+        result: Result<(), String>,
+    },
     /// Async result of `core::stop_core`.
     CoreStopFinished,
+    /// Structured download stage update from `core::subscribe_core_download_progress`.
+    CoreDownloadStageChanged(crate::core::CoreDownloadStage),
+    /// Deferred tray initialization after winit event loop resumes in `--minimized` mode.
+    InitMinimizedTray,
+    /// Checks whether tray initialized in normal startup when `--no-tray` or tray failure applies.
+    StartupTrayCheck,
+    /// Startup check for a detached `sing-box` instance left alive by `close_core_on_exit == false`.
+    StartupDetachedCoreChecked {
+        detached_running: bool,
+        stopped_result: Option<Result<bool, String>>,
+    },
+    /// Async result of stopping a detached `sing-box` process.
+    DetachedCoreStopped {
+        for_exit: bool,
+        for_update: bool,
+        result: Result<bool, String>,
+    },
+    /// Off-thread check of active native JSON profile for ignored GUI settings.
+    NativeJsonIgnoredChecked(Vec<&'static str>),
+    /// Off-thread validation result for `RuntimeSettingsDraft` (path/TUN checks).
+    SaveSettingsValidated {
+        draft: crate::state::RuntimeSettingsDraft,
+        core_path_valid: bool,
+        core_installed: bool,
+        tun_capable: bool,
+        for_exit: bool,
+    },
+    /// Off-thread Linux TUN capability check before starting core in TUN mode.
+    CoreStartCapabilityChecked {
+        generation: u64,
+        tun_capable: bool,
+    },
+    /// Off-thread local file existence validation when saving profile edits.
+    ProfileEditValidated {
+        id: String,
+        name: String,
+        url: String,
+        valid: bool,
+    },
+    /// Off-thread writability check of install directory before app update download.
+    UpdateDirChecked {
+        tag: String,
+        url: String,
+        sha256: String,
+        size: u64,
+        writable: bool,
+    },
     SortConnections(crate::state::ConnectionSort),
     SetProxySort(crate::state::ProxySort),
 }

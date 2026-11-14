@@ -67,6 +67,32 @@ pub fn get_traffic_tx() -> mpsc::Sender<api::TrafficInfo> {
         .clone()
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct LaunchOptions {
+    start_minimized: bool,
+    no_tray: bool,
+}
+
+fn parse_launch_options<I, S>(args: I) -> LaunchOptions
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut opts = LaunchOptions::default();
+    for arg in args.into_iter().skip(1) {
+        match arg.as_ref() {
+            "--minimized" | "--hidden" => opts.start_minimized = true,
+            "--no-tray" => opts.no_tray = true,
+            _ => {}
+        }
+    }
+    #[cfg(feature = "ui-smoke")]
+    if std::env::var_os("SINGBOX_UI_SMOKE_TRAY").is_some_and(|v| v == "0") {
+        opts.no_tray = true;
+    }
+    opts
+}
+
 struct App {
     #[cfg(feature = "ui-smoke")]
     smoke: Option<smoke::Runner>,
@@ -83,6 +109,7 @@ struct App {
     active_profile_nodes: Vec<ProxyNode>,
     selected_node_tag: Option<String>,
     latency_testing: bool,
+    latency_test_gen: u64,
     downloading: bool,
     /// Which subscription id an in-flight update belongs to (None for a new
     /// import) — lets the Profiles page mark only that card as downloading.
@@ -160,6 +187,14 @@ struct App {
     pending_settings_save_feedback: bool,
     system_proxy_busy: bool,
     autostart_busy: bool,
+    settings_validation_in_flight: bool,
+    detached_core_running: bool,
+    core_start_gen: u64,
+    no_tray: bool,
+    pending_tray_check_sync: bool,
+    active_profile_is_native: bool,
+    notify_native_on_load: bool,
+    auto_update_failures: std::collections::HashMap<String, (u32, std::time::Instant)>,
 
     connections_sort: state::ConnectionSort,
     connections_sort_desc: bool,
@@ -255,10 +290,26 @@ impl App {
         } else {
             config::load_gui_config()
         };
-        Self::new_with_config(gui_config)
+        let launch_opts = if is_ui_smoke() {
+            parse_launch_options(["sing-box-gui"])
+        } else {
+            let args: Vec<String> = std::env::args_os()
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect();
+            parse_launch_options(args)
+        };
+        Self::new_with_launch_options(gui_config, launch_opts)
     }
 
+    #[cfg(test)]
     fn new_with_config(gui_config: GuiConfig) -> (Self, Task<Message>) {
+        Self::new_with_launch_options(gui_config, LaunchOptions::default())
+    }
+
+    fn new_with_launch_options(
+        gui_config: GuiConfig,
+        launch_opts: LaunchOptions,
+    ) -> (Self, Task<Message>) {
         // The native theme task and subscription work on GNOME, KDE, Windows
         // and macOS without polling shell commands or assuming a desktop.
         let cached_system_is_light = false;
@@ -284,6 +335,7 @@ impl App {
             active_profile_nodes: Vec::new(),
             selected_node_tag,
             latency_testing: false,
+            latency_test_gen: 0,
             downloading: false,
             updating_profile_id: None,
             url_input: String::new(),
@@ -344,6 +396,14 @@ impl App {
             pending_settings_save_feedback: false,
             system_proxy_busy: false,
             autostart_busy: false,
+            settings_validation_in_flight: false,
+            detached_core_running: false,
+            core_start_gen: 0,
+            no_tray: launch_opts.no_tray,
+            pending_tray_check_sync: false,
+            active_profile_is_native: false,
+            notify_native_on_load: false,
+            auto_update_failures: std::collections::HashMap::new(),
             connections_sort: state::ConnectionSort::None,
             connections_sort_desc: false,
             proxy_sort: state::ProxySort::Latency,
@@ -408,8 +468,34 @@ impl App {
                 Message::CoreVersionFetched,
             ));
         }
+        let cfg_detached = app.gui_config.clone();
+        tasks.push(Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let running = core::is_detached_core_running(&cfg_detached);
+                    let stopped_result = if running && cfg_detached.close_core_on_exit {
+                        Some(core::stop_detached_core(&cfg_detached))
+                    } else {
+                        None
+                    };
+                    (running, stopped_result)
+                })
+                .await
+                .unwrap_or((false, None))
+            },
+            |(detached_running, stopped_result)| Message::StartupDetachedCoreChecked {
+                detached_running,
+                stopped_result,
+            },
+        ));
 
-        tasks.push(app.open_main_window());
+        if launch_opts.start_minimized && !launch_opts.no_tray {
+            // Defer Tray creation until `App::update` runs after winit `resumed()`,
+            // then fall back to opening the main window if no tray is available.
+            tasks.push(Task::done(Message::InitMinimizedTray));
+        } else {
+            tasks.push(app.open_main_window());
+        }
         (app, Task::batch(tasks))
     }
 
@@ -419,24 +505,42 @@ impl App {
         };
         let result_profile_id = profile_id.clone();
         let path = config::get_profile_path(&profile_id);
+        let cfg = self.gui_config.clone();
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || {
-                    let content = std::fs::read_to_string(&path)
-                        .map_err(|error| format!("Failed to read active profile: {error}"))?;
-                    let normalized = config::normalize_profile_content(&content);
-                    let trimmed = normalized.trim();
-                    if trimmed.starts_with('{') || trimmed.starts_with('[') {
-                        config::parse_native_json_nodes(trimmed)
+                    let content = match std::fs::read_to_string(&path) {
+                        Ok(c) => c,
+                        Err(error) => {
+                            return (
+                                false,
+                                Vec::new(),
+                                Err(format!("Failed to read active profile: {error}")),
+                            );
+                        }
+                    };
+                    let is_native = config::is_native_json_profile(&content);
+                    let ignored = if is_native {
+                        config::native_json_ignored_settings(&content, &cfg)
                     } else {
-                        config::parse_clash_yaml_nodes(&normalized)
-                    }
+                        Vec::new()
+                    };
+                    let parsed = config::parse_nodes_from_content(&content);
+                    (is_native, ignored, parsed)
                 })
                 .await
-                .map_err(|error| format!("Profile parse task failed: {error}"))?
+                .unwrap_or_else(|error| {
+                    (
+                        false,
+                        Vec::new(),
+                        Err(format!("Profile parse task failed: {error}")),
+                    )
+                })
             },
-            move |result| Message::ActiveNodesLoaded {
+            move |(is_native_json, ignored_settings, result)| Message::ActiveNodesLoaded {
                 profile_id: result_profile_id.clone(),
+                is_native_json,
+                ignored_settings,
                 result,
             },
         )
@@ -455,6 +559,63 @@ impl App {
         if let Some(tray) = &self.tray {
             tray.update(self.tray_state());
         }
+    }
+
+    fn force_update_tray_menu(&self) {
+        if let Some(tray) = &self.tray {
+            tray.force_update(self.tray_state());
+        }
+    }
+
+    fn reveal_window_on_tray_error(&mut self) -> Task<Message> {
+        if self.window_id.is_none() {
+            self.show_main_window()
+        } else {
+            Task::none()
+        }
+    }
+
+    fn check_native_json_ignored_task(&self) -> Task<Message> {
+        let Some(profile_id) = self.gui_config.active_profile_id.clone() else {
+            return Task::none();
+        };
+        let path = config::get_profile_path(&profile_id);
+        let cfg = self.gui_config.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let Ok(content) = std::fs::read_to_string(&path) else {
+                        return Vec::new();
+                    };
+                    if config::is_native_json_profile(&content) {
+                        config::native_json_ignored_settings(&content, &cfg)
+                    } else {
+                        Vec::new()
+                    }
+                })
+                .await
+                .unwrap_or_default()
+            },
+            Message::NativeJsonIgnoredChecked,
+        )
+    }
+
+    fn task_stop_detached_core(&mut self, for_exit: bool, for_update: bool) -> Task<Message> {
+        self.core_stopping = true;
+        let cfg = self.gui_config.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || core::stop_detached_core(&cfg))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| r)
+            },
+            move |result| Message::DetachedCoreStopped {
+                for_exit,
+                for_update,
+                result,
+            },
+        )
     }
 
     fn core_busy(&self) -> bool {
@@ -518,27 +679,28 @@ impl App {
             return self.show_main_window();
         }
         self.pending_exit = true;
-        let settings_task = match self.commit_runtime_settings(true) {
-            Ok(task) => task,
-            Err(()) => {
+        if self.settings_draft.has_pending_changes(&self.gui_config) {
+            if self.validate_runtime_settings_syntax().is_err() {
                 // Exiting abandons an invalid settings draft instead of
                 // silently refusing to quit behind a hidden validation toast.
                 self.settings_draft = RuntimeSettingsDraft::from_config(&self.gui_config);
                 self.settings_errors.clear();
-                match self.commit_runtime_settings(true) {
-                    Ok(task) => task,
-                    Err(()) => {
-                        self.pending_exit = false;
-                        return Task::none();
-                    }
-                }
+            } else {
+                return self.start_settings_validation(true);
             }
-        };
-        Task::batch(vec![settings_task, self.continue_exit()])
+        } else {
+            self.settings_errors.clear();
+        }
+        let save_task = self.start_config_save();
+        Task::batch(vec![save_task, self.continue_exit()])
     }
 
     fn continue_exit(&mut self) -> Task<Message> {
-        if self.autostart_busy || self.config_save_in_flight || self.system_proxy_busy {
+        if self.autostart_busy
+            || self.settings_validation_in_flight
+            || self.config_save_in_flight
+            || self.system_proxy_busy
+        {
             return Task::none();
         }
         if self.config_dirty {
@@ -555,6 +717,9 @@ impl App {
             if self.core_running || core::is_core_running_fast() {
                 return self.task_stop_core();
             }
+            if self.detached_core_running {
+                return self.task_stop_detached_core(true, false);
+            }
         }
         if self.gui_config.system_proxy_owned || sysproxy::is_system_proxy_owned() {
             return self.task_set_system_proxy(false, message::SystemProxyContext::Exit);
@@ -563,14 +728,27 @@ impl App {
     }
 
     fn fail_pending_update(&mut self, pending: PendingAppUpdate, error: String) -> Task<Message> {
-        if let Err(cleanup_error) = std::fs::remove_file(&pending.path)
-            && cleanup_error.kind() != std::io::ErrorKind::NotFound
-        {
-            self.push_log(format!(
-                "[GUI] Failed to remove staged update {}: {cleanup_error}",
-                pending.path.display()
-            ));
-        }
+        let remove_path = pending.path.clone();
+        let cleanup_task = Task::perform(
+            async move {
+                match tokio::fs::remove_file(&remove_path).await {
+                    Ok(()) => None,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(e) => Some(format!(
+                        "[GUI] Failed to remove staged update {}: {e}",
+                        remove_path.display()
+                    )),
+                }
+            },
+            |maybe_log| {
+                if let Some(msg) = maybe_log
+                    && let Err(e) = get_log_tx().try_send(msg)
+                {
+                    let _ = e;
+                }
+                Message::NoOp
+            },
+        );
         self.update_status = state::UpdateStatus::NewVersion {
             tag: pending.tag,
             download_url: Some(pending.url),
@@ -579,7 +757,7 @@ impl App {
         };
         self.push_log(format!("[GUI] Failed to apply update: {error}"));
         self.toast_error(format!("{}: {error}", self.tr("update_apply_failed")));
-        Task::none()
+        cleanup_task
     }
 
     fn continue_update_install(&mut self) -> Task<Message> {
@@ -595,6 +773,9 @@ impl App {
         }
         if self.core_running || core::is_core_running_fast() {
             return self.task_stop_core();
+        }
+        if self.detached_core_running {
+            return self.task_stop_detached_core(false, true);
         }
         if self.gui_config.system_proxy_owned || sysproxy::is_system_proxy_owned() {
             return self.task_set_system_proxy(false, message::SystemProxyContext::Update);
@@ -660,10 +841,23 @@ impl App {
         )
     }
 
-    fn validate_runtime_settings(
+    fn validate_runtime_settings_syntax(
         &self,
     ) -> Result<RuntimeSettingsCommit, std::collections::BTreeMap<&'static str, &'static str>> {
-        let draft = &self.settings_draft;
+        Self::validate_runtime_draft(
+            &self.settings_draft,
+            &self.gui_config,
+            self.sys_proxy_enabled,
+            true,
+        )
+    }
+
+    fn validate_runtime_draft(
+        draft: &RuntimeSettingsDraft,
+        current: &GuiConfig,
+        sys_proxy_enabled: bool,
+        core_path_valid: bool,
+    ) -> Result<RuntimeSettingsCommit, std::collections::BTreeMap<&'static str, &'static str>> {
         let mut errors = std::collections::BTreeMap::new();
         let mixed_port = match parse_runtime_port(&draft.mixed_port) {
             Ok(value) => Some(value),
@@ -703,19 +897,19 @@ impl App {
             }
         };
         let core_path = draft.core_path.trim();
-        if !core_path.is_empty() && !std::path::Path::new(core_path).is_file() {
+        if !core_path.is_empty() && !core_path_valid {
             errors.insert("core_path", "invalid_core_path");
         }
         if !errors.is_empty() {
             return Err(errors);
         }
 
-        let mut next = self.gui_config.clone();
+        let mut next = current.clone();
         let mixed_port = mixed_port.expect("validated mixed port");
         let api_port = api_port.expect("validated API port");
         let latency_timeout = latency_timeout.expect("validated latency timeout");
         let proxy_reapply_required = next.mixed_port != mixed_port
-            && self.sys_proxy_enabled
+            && sys_proxy_enabled
             && (next.system_proxy_owned || sysproxy::is_system_proxy_owned());
         let restart_required = next.mixed_port != mixed_port
             || next.api_port != api_port
@@ -755,40 +949,70 @@ impl App {
         })
     }
 
-    fn commit_runtime_settings(&mut self, for_exit: bool) -> Result<Task<Message>, ()> {
-        if !self.settings_draft.has_pending_changes(&self.gui_config) {
-            self.settings_errors.clear();
-            return Ok(self.start_config_save());
-        }
-        let commit = match self.validate_runtime_settings() {
-            Ok(commit) => commit,
-            Err(errors) => {
-                self.settings_errors = errors;
-                let key = self
-                    .settings_errors
-                    .values()
-                    .next()
-                    .copied()
-                    .unwrap_or("settings_invalid");
-                self.toast_error(self.tr(key));
-                return Err(());
-            }
+    fn start_settings_validation(&mut self, for_exit: bool) -> Task<Message> {
+        let Ok(candidate) = self.validate_runtime_settings_syntax() else {
+            return Task::none();
         };
+        let draft = self.settings_draft.clone();
+        self.settings_validation_in_flight = true;
+        let cfg_preview = candidate.config;
+        Task::perform(
+            async move {
+                let draft_for_check = draft.clone();
+                let (core_path_valid, core_installed, tun_capable) =
+                    tokio::task::spawn_blocking(move || {
+                        let custom = draft_for_check.core_path.trim();
+                        let core_path_valid =
+                            custom.is_empty() || std::path::Path::new(custom).is_file();
+                        let core_installed = core::is_core_installed(&cfg_preview);
+                        let tun_path = core::get_core_path(&cfg_preview);
+                        let tun_capable =
+                            !cfg_preview.tun_mode || platform::is_tun_capable(Some(&tun_path));
+                        (core_path_valid, core_installed, tun_capable)
+                    })
+                    .await
+                    .unwrap_or((false, false, false));
+                (draft, core_path_valid, core_installed, tun_capable)
+            },
+            move |(draft, core_path_valid, core_installed, tun_capable)| {
+                Message::SaveSettingsValidated {
+                    draft,
+                    core_path_valid,
+                    core_installed,
+                    tun_capable,
+                    for_exit,
+                }
+            },
+        )
+    }
 
+    fn commit_runtime_settings(
+        &mut self,
+        commit: RuntimeSettingsCommit,
+        core_installed: bool,
+        tun_capable: bool,
+        for_exit: bool,
+    ) -> Task<Message> {
         self.settings_errors.clear();
         self.gui_config = commit.config;
-        self.core_installed = core::is_core_installed(&self.gui_config);
+        self.core_installed = core_installed;
         self.config_dirty = true;
         self.pending_restart_after_save =
             !for_exit && commit.restart_required && (self.core_running || self.core_starting);
         self.pending_proxy_reapply_after_save = !for_exit && commit.proxy_reapply_required;
-        if self.gui_config.tun_mode && !platform::is_running_elevated() {
+        if self.gui_config.tun_mode && !tun_capable {
+            #[cfg(target_os = "linux")]
+            self.toast_info(self.tr("tun_privilege_required"));
+            #[cfg(not(target_os = "linux"))]
             self.toast_info(self.tr("tun_admin_banner"));
         }
 
+        // Normalize draft fields up front so AutostartSetFinished never overwrites concurrent edits.
+        self.settings_draft = RuntimeSettingsDraft::from_config(&self.gui_config);
+
         if let Some(target) = commit.autostart_target {
             self.autostart_busy = true;
-            return Ok(Task::perform(
+            return Task::perform(
                 async move {
                     tokio::task::spawn_blocking(move || platform::set_autostart(target))
                         .await
@@ -796,11 +1020,16 @@ impl App {
                         .and_then(|result| result)
                 },
                 move |result| Message::AutostartSetFinished { target, result },
-            ));
+            );
         }
 
-        self.settings_draft = RuntimeSettingsDraft::from_config(&self.gui_config);
-        Ok(self.start_config_save())
+        let save_task = self.start_config_save();
+        if !for_exit && self.active_profile_is_native && self.gui_config.active_profile_id.is_some()
+        {
+            Task::batch(vec![save_task, self.check_native_json_ignored_task()])
+        } else {
+            save_task
+        }
     }
 
     /// Schedule an async core stop (runs off the UI thread).
@@ -816,23 +1045,52 @@ impl App {
 
     /// Schedule an async core start with a snapshot of current config.
     fn task_start_core(&mut self) -> Task<Message> {
+        self.core_start_gen = self.core_start_gen.wrapping_add(1);
+        let generation = self.core_start_gen;
         self.core_starting = true;
+        if self.gui_config.tun_mode {
+            let cfg = self.gui_config.clone();
+            return Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        let tun_path = core::get_core_path(&cfg);
+                        platform::is_tun_capable(Some(&tun_path))
+                    })
+                    .await
+                    .unwrap_or(false)
+                },
+                move |tun_capable| Message::CoreStartCapabilityChecked {
+                    generation,
+                    tun_capable,
+                },
+            );
+        }
+        self.spawn_core_start_task(generation)
+    }
+
+    fn spawn_core_start_task(&mut self, generation: u64) -> Task<Message> {
         let cfg = self.gui_config.clone();
         let log_tx = get_log_tx();
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || core::start_core(&cfg, log_tx))
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|r| r)
+                tokio::task::spawn_blocking(move || {
+                    if core::is_detached_core_running(&cfg) {
+                        let _ = core::stop_detached_core(&cfg);
+                    }
+                    core::start_core(&cfg, log_tx)
+                })
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|r| r)
             },
-            Message::CoreStartFinished,
+            move |result| Message::CoreStartFinished { generation, result },
         )
     }
 
     /// Apply post-start side effects (traffic monitor, optional system proxy).
     fn on_core_started_ok(&mut self) -> Task<Message> {
         self.core_running = true;
+        self.detached_core_running = false;
         self.push_log("[GUI] sing-box core started successfully.".to_string());
 
         if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
@@ -873,6 +1131,8 @@ impl App {
     /// state, and hand the system proxy back so traffic isn't black-holed.
     fn handle_unexpected_core_exit(&mut self) -> Task<Message> {
         self.core_running = false;
+        self.latency_testing = false;
+        self.latency_test_gen = self.latency_test_gen.wrapping_add(1);
         if let Some(msg) = core::take_unexpected_core_exit() {
             let detail = redact_log_line(&msg);
             self.push_log(format!("[GUI] {detail}"));
@@ -899,6 +1159,9 @@ impl App {
     /// Tear down traffic monitor and optionally disable system proxy after stop.
     fn on_core_stopped_cleanup(&mut self) {
         self.core_running = false;
+        self.detached_core_running = false;
+        self.latency_testing = false;
+        self.latency_test_gen = self.latency_test_gen.wrapping_add(1);
         if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
             let _ = cancel_tx.send(());
         }
@@ -907,6 +1170,49 @@ impl App {
         self.total_downloaded = 0;
         self.clear_api_snapshots();
         self.push_log("[GUI] sing-box core stopped.".to_string());
+    }
+
+    fn trigger_core_download(&mut self, force: bool) -> Task<Message> {
+        if self.app_update_busy() {
+            self.toast_info(self.tr("operation_in_progress"));
+            return Task::none();
+        }
+        if self.core_running || self.core_busy() || self.detached_core_running {
+            self.toast_info(self.tr("core_download_requires_stop"));
+            return Task::none();
+        }
+        if !matches!(
+            &self.core_install_state,
+            state::CoreInstallState::Idle
+                | state::CoreInstallState::Installed
+                | state::CoreInstallState::Error(_)
+        ) {
+            return Task::none();
+        }
+        let log_tx = get_log_tx();
+        let custom_core_path = self
+            .gui_config
+            .core_path
+            .as_deref()
+            .is_some_and(|p| !p.trim().is_empty());
+        let dest_path = core::get_core_path(&self.gui_config);
+        let msg = if force {
+            "[GUI] Force reinstalling sing-box core..."
+        } else {
+            "[GUI] Starting sing-box core download..."
+        };
+        self.push_log(msg.to_string());
+        self.core_install_state = state::CoreInstallState::Downloading;
+        Task::perform(
+            async move {
+                if custom_core_path {
+                    core::download_core_to(&dest_path, log_tx, force).await
+                } else {
+                    core::download_core(log_tx, force).await
+                }
+            },
+            Message::CoreDownloaded,
+        )
     }
 
     fn restart_core(&mut self) -> Task<Message> {
@@ -972,19 +1278,84 @@ impl App {
             return Task::none();
         }
         if let Some(id) = self.pending_auto_updates.pop_front() {
-            Task::done(Message::UpdateSubscription(id))
+            self.start_profile_update(id, true)
         } else {
+            Task::none()
+        }
+    }
+
+    fn start_profile_update(&mut self, id: String, from_auto_update: bool) -> Task<Message> {
+        if self.downloading {
+            if !from_auto_update {
+                self.toast_info(self.tr("operation_in_progress"));
+            }
+            return Task::none();
+        }
+        self.confirm_delete_profile_id = None;
+        let sub = self.gui_config.subscriptions.iter().find(|p| p.id == id);
+        if let Some(profile) = sub {
+            let url = profile.url.clone();
+            let id_clone = id.clone();
+            let id_for_err = id.clone();
+            let cfg = self.gui_config.clone();
+            self.downloading = true;
+            self.updating_profile_id = Some(id);
+            self.profile_error = None;
+            self.push_log(format!(
+                "[GUI] Updating subscription: {}",
+                ui::profiles::mask_sensitive_url(&url)
+            ));
+
+            Task::perform(
+                async move { fetch_and_save_subscription(url, id_clone, cfg).await },
+                move |res| match res {
+                    Ok(r) => Message::SubscriptionDownloaded {
+                        id: r.id,
+                        error: None,
+                        traffic_upload: r.traffic_upload,
+                        traffic_download: r.traffic_download,
+                        traffic_total: r.traffic_total,
+                        expire_at: r.expire_at,
+                        display_name: r.display_name,
+                        source_url: Some(r.source_url),
+                        is_subscription: r.is_subscription,
+                        ignored_settings: r.ignored_settings,
+                        from_auto_update,
+                    },
+                    Err(e) => Message::SubscriptionDownloaded {
+                        id: id_for_err,
+                        error: Some(e),
+                        traffic_upload: None,
+                        traffic_download: None,
+                        traffic_total: None,
+                        expire_at: None,
+                        display_name: None,
+                        source_url: None,
+                        is_subscription: false,
+                        ignored_settings: Vec::new(),
+                        from_auto_update,
+                    },
+                },
+            )
+        } else {
+            self.push_log("[GUI] Subscription not found.".to_string());
             Task::none()
         }
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle_update(message);
-        if self.core_running != self.last_core_running
+        if self.pending_tray_check_sync
+            || self.core_running != self.last_core_running
             || self.sys_proxy_enabled != self.last_sys_proxy_enabled
             || self.gui_config.routing_mode != self.last_routing_mode
         {
-            self.update_tray_menu();
+            if self.pending_tray_check_sync {
+                self.force_update_tray_menu();
+                self.pending_tray_check_sync = false;
+            } else {
+                self.update_tray_menu();
+            }
             self.last_core_running = self.core_running;
             self.last_sys_proxy_enabled = self.sys_proxy_enabled;
             self.last_routing_mode = self.gui_config.routing_mode;
@@ -1000,21 +1371,127 @@ impl App {
             Message::TrayIconClicked => self.show_main_window(),
             Message::TrayMenuClicked(id_str) => match id_str.as_str() {
                 "show_window" => self.show_main_window(),
-                "toggle_core" => Task::done(Message::ToggleCore),
-                "toggle_system_proxy" => Task::done(Message::ToggleSystemProxy),
-                "mode_rule" => Task::done(Message::RoutingModeChanged(state::RoutingMode::Rule)),
+                "toggle_core" => {
+                    self.pending_tray_check_sync = true;
+                    Task::done(Message::ToggleCore)
+                }
+                "toggle_system_proxy" => {
+                    self.pending_tray_check_sync = true;
+                    Task::done(Message::ToggleSystemProxy)
+                }
+                "mode_rule" => {
+                    self.pending_tray_check_sync = true;
+                    Task::done(Message::RoutingModeChanged(state::RoutingMode::Rule))
+                }
                 "mode_global" => {
+                    self.pending_tray_check_sync = true;
                     Task::done(Message::RoutingModeChanged(state::RoutingMode::Global))
                 }
                 "mode_direct" => {
+                    self.pending_tray_check_sync = true;
                     Task::done(Message::RoutingModeChanged(state::RoutingMode::Direct))
                 }
                 "exit_app" => self.request_exit(),
                 _ => Task::none(),
             },
+            Message::InitMinimizedTray => {
+                if !self.no_tray && self.tray.is_none() {
+                    self.tray = Some(tray::Tray::new(self.tray_state()));
+                }
+                let tray_ready =
+                    !self.no_tray && self.tray.as_ref().is_some_and(tray::Tray::available);
+                if !tray_ready && self.window_id.is_none() {
+                    return self.open_main_window();
+                }
+                Task::perform(
+                    async {
+                        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                    },
+                    |_| Message::StartupTrayCheck,
+                )
+            }
+            Message::StartupTrayCheck => {
+                let tray_ready =
+                    !self.no_tray && self.tray.as_ref().is_some_and(tray::Tray::available);
+                if !tray_ready && self.window_id.is_none() {
+                    return self.open_main_window();
+                }
+                Task::none()
+            }
+            Message::StartupDetachedCoreChecked {
+                detached_running,
+                stopped_result,
+            } => {
+                if let Some(res) = stopped_result {
+                    match res {
+                        Ok(true) => {
+                            self.detached_core_running = false;
+                            self.push_log(
+                                "[GUI] Stopped stale detached sing-box core from previous session."
+                                    .to_string(),
+                            );
+                        }
+                        Ok(false) => {
+                            self.detached_core_running = false;
+                        }
+                        Err(e) => {
+                            self.detached_core_running = detached_running;
+                            let detail = redact_log_line(&e);
+                            self.push_log(format!(
+                                "[GUI] Failed to stop stale detached core: {detail}"
+                            ));
+                            self.toast_error(format!(
+                                "{}: {detail}",
+                                self.tr("detached_core_detected")
+                            ));
+                        }
+                    }
+                } else if detached_running {
+                    self.detached_core_running = true;
+                    self.push_log(
+                        "[GUI] Detected detached sing-box core running from previous session."
+                            .to_string(),
+                    );
+                    self.toast_info(self.tr("detached_core_detected"));
+                }
+                Task::none()
+            }
+            Message::DetachedCoreStopped {
+                for_exit,
+                for_update,
+                result,
+            } => {
+                self.core_stopping = false;
+                match result {
+                    Ok(_) => {
+                        self.detached_core_running = false;
+                        self.on_core_stopped_cleanup();
+                        if for_update && self.pending_update.is_some() {
+                            return self.continue_update_install();
+                        }
+                        if for_exit && self.pending_exit {
+                            return self.continue_exit();
+                        }
+                    }
+                    Err(e) => {
+                        let detail = redact_log_line(&e);
+                        self.push_log(format!("[GUI] Failed to stop detached core: {detail}"));
+                        self.toast_error(format!("{}: {detail}", self.tr("core_start_failed")));
+                        self.pending_tray_check_sync = true;
+                        if for_exit {
+                            self.pending_exit = false;
+                            return self.reveal_window_on_tray_error();
+                        }
+                        if for_update && let Some(pending) = self.pending_update.take() {
+                            return self.fail_pending_update(pending, detail);
+                        }
+                    }
+                }
+                Task::none()
+            }
             Message::WindowOpened(id) => {
                 self.window_id = Some(id);
-                if self.tray.is_none() {
+                if !self.no_tray && self.tray.is_none() {
                     self.tray = Some(tray::Tray::new(self.tray_state()));
                 }
                 #[cfg(feature = "ui-smoke")]
@@ -1187,7 +1664,8 @@ impl App {
                     if let Some(g_info) = self.proxy_groups.get_mut(&group) {
                         g_info.now = Some(node.clone());
                     }
-                    if group == "Proxy" {
+                    let primary = resolve_primary_selector_group(&self.proxy_groups);
+                    if group == "Proxy" || primary.as_deref() == Some(group.as_str()) {
                         self.selected_node_tag = Some(node.clone());
                         self.gui_config.selected_node_tag = Some(node.clone());
                         self.config_dirty = true;
@@ -1247,7 +1725,12 @@ impl App {
                     state::RuleTarget::Proxy => self.proxy_rule_input.clear(),
                 }
                 self.config_dirty = true;
-                self.restart_core()
+                let restart_task = self.restart_core();
+                if self.active_profile_is_native {
+                    Task::batch(vec![restart_task, self.check_native_json_ignored_task()])
+                } else {
+                    restart_task
+                }
             }
             Message::RemoveRule { field, index } => {
                 let list = self.rule_list_mut(field);
@@ -1275,12 +1758,20 @@ impl App {
                         if self.proxy_groups != groups_map {
                             self.proxy_groups = groups_map;
                         }
-                        if self.selected_group.is_empty() && !self.proxy_groups.is_empty() {
-                            if self.proxy_groups.contains_key("Proxy") {
-                                self.selected_group = "Proxy".to_string();
-                            } else if let Some(k) = self.proxy_groups.keys().next() {
-                                self.selected_group = k.clone();
-                            }
+                        if (self.selected_group.is_empty()
+                            || !self.proxy_groups.contains_key(&self.selected_group))
+                            && !self.proxy_groups.is_empty()
+                        {
+                            self.selected_group =
+                                resolve_primary_selector_group(&self.proxy_groups)
+                                    .unwrap_or_default();
+                        }
+                        if let Some(primary) = resolve_primary_selector_group(&self.proxy_groups)
+                            && let Some(now) =
+                                self.proxy_groups.get(&primary).and_then(|g| g.now.as_ref())
+                            && self.selected_node_tag.as_deref() != Some(now.as_str())
+                        {
+                            self.selected_node_tag = Some(now.clone());
                         }
                     }
                     Err(_e) => {
@@ -1292,9 +1783,22 @@ impl App {
             Message::ToggleCore => {
                 if self.maintenance_busy() {
                     self.toast_info(self.tr("operation_in_progress"));
-                    return Task::none();
+                    self.pending_tray_check_sync = true;
+                    return self.reveal_window_on_tray_error();
                 }
-                if self.core_busy() {
+                if self.core_starting {
+                    // Cancel in-flight startup immediately instead of ignoring ToggleCore.
+                    self.core_start_gen = self.core_start_gen.wrapping_add(1);
+                    self.core_starting = false;
+                    self.force_stop_after_start = false;
+                    self.pending_core_restart = false;
+                    self.push_log("[GUI] Cancelling core startup...".to_string());
+                    self.toast_info(self.tr("core_start_cancelled"));
+                    self.pending_tray_check_sync = true;
+                    return self.task_stop_core();
+                }
+                if self.core_stopping {
+                    self.pending_tray_check_sync = true;
                     return Task::none();
                 }
                 if self.core_running {
@@ -1304,9 +1808,31 @@ impl App {
                     self.task_start_core()
                 }
             }
-            Message::CoreStartFinished(res) => {
+            Message::CoreStartCapabilityChecked {
+                generation,
+                tun_capable,
+            } => {
+                if generation != self.core_start_gen || !self.core_starting {
+                    return Task::none();
+                }
+                if self.gui_config.tun_mode && !tun_capable {
+                    self.push_log(
+                        "[GUI] Warning: TUN mode is enabled without administrator or cap_net_admin privileges."
+                            .to_string(),
+                    );
+                    #[cfg(target_os = "linux")]
+                    self.toast_info(self.tr("tun_privilege_required"));
+                    #[cfg(not(target_os = "linux"))]
+                    self.toast_info(self.tr("tun_admin_banner"));
+                }
+                self.spawn_core_start_task(generation)
+            }
+            Message::CoreStartFinished { generation, result } => {
+                if generation != self.core_start_gen {
+                    return Task::none();
+                }
                 self.core_starting = false;
-                match res {
+                match result {
                     Ok(()) => {
                         if self.force_stop_after_start {
                             self.force_stop_after_start = false;
@@ -1330,10 +1856,14 @@ impl App {
                         self.toast_error(self.tr("core_start_failed").to_string() + ": " + &detail);
                         // Drop pending restart so we don't loop on a broken config.
                         self.pending_core_restart = false;
+                        self.pending_tray_check_sync = true;
                         if self.pending_exit {
-                            return self.continue_exit();
+                            return Task::batch(vec![
+                                self.reveal_window_on_tray_error(),
+                                self.continue_exit(),
+                            ]);
                         }
-                        Task::none()
+                        self.reveal_window_on_tray_error()
                     }
                 }
             }
@@ -1360,17 +1890,54 @@ impl App {
                 }
                 Task::none()
             }
-            Message::NewLogBatch(lines) => {
-                for line in lines {
-                    if line.contains("Downloading sing-box core") {
-                        self.core_install_state = state::CoreInstallState::Downloading;
-                    } else if line.contains("Verifying core") {
+            Message::CoreDownloadStageChanged(stage) => {
+                match stage {
+                    core::CoreDownloadStage::Idle => {}
+                    core::CoreDownloadStage::Starting
+                    | core::CoreDownloadStage::FetchingMetadata
+                    | core::CoreDownloadStage::Downloading { .. } => {
+                        if self.core_install_busy()
+                            || matches!(
+                                self.core_install_state,
+                                state::CoreInstallState::Idle
+                                    | state::CoreInstallState::Installed
+                                    | state::CoreInstallState::Error(_)
+                            )
+                        {
+                            self.core_install_state = state::CoreInstallState::Downloading;
+                        }
+                    }
+                    core::CoreDownloadStage::Verifying => {
                         self.core_install_state = state::CoreInstallState::Verifying;
-                    } else if line.contains("Extracting core") {
+                    }
+                    core::CoreDownloadStage::Extracting => {
                         self.core_install_state = state::CoreInstallState::Extracting;
-                    } else if line.contains("Installing core") {
+                    }
+                    core::CoreDownloadStage::Installing => {
                         self.core_install_state = state::CoreInstallState::Installing;
                     }
+                    core::CoreDownloadStage::Completed => {
+                        self.core_installed = true;
+                        self.core_install_state = state::CoreInstallState::Installed;
+                    }
+                    core::CoreDownloadStage::Failed(err) => {
+                        self.core_install_state =
+                            state::CoreInstallState::Error(redact_log_line(&err));
+                    }
+                }
+                Task::none()
+            }
+            Message::NativeJsonIgnoredChecked(ignored) => {
+                if !ignored.is_empty() {
+                    self.toast_info(
+                        self.tr("native_json_ignored_toast")
+                            .replace("{}", &ignored.join(", ")),
+                    );
+                }
+                Task::none()
+            }
+            Message::NewLogBatch(lines) => {
+                for line in lines {
                     // Trimmed once after the batch below.
                     self.log_lines
                         .push_back(truncate_log_line(&redact_log_line(&line)));
@@ -1503,56 +2070,8 @@ impl App {
                 Task::done(Message::DownloadSubscription)
             }
             Message::LocalFilePicked(None) => Task::none(),
-            Message::TriggerCoreDownload => {
-                if self.app_update_busy() {
-                    self.toast_info(self.tr("operation_in_progress"));
-                    return Task::none();
-                }
-                if self.core_running || self.core_busy() {
-                    self.toast_info(self.tr("core_download_requires_stop"));
-                    return Task::none();
-                }
-                if !matches!(
-                    &self.core_install_state,
-                    state::CoreInstallState::Idle
-                        | state::CoreInstallState::Installed
-                        | state::CoreInstallState::Error(_)
-                ) {
-                    return Task::none();
-                }
-                let log_tx = get_log_tx();
-                self.push_log("[GUI] Starting sing-box core download...".to_string());
-                self.core_install_state = state::CoreInstallState::Downloading;
-                Task::perform(
-                    async move { core::download_core(log_tx, false).await },
-                    Message::CoreDownloaded,
-                )
-            }
-            Message::ForceCoreDownload => {
-                if self.app_update_busy() {
-                    self.toast_info(self.tr("operation_in_progress"));
-                    return Task::none();
-                }
-                if self.core_running || self.core_busy() {
-                    self.toast_info(self.tr("core_download_requires_stop"));
-                    return Task::none();
-                }
-                if !matches!(
-                    &self.core_install_state,
-                    state::CoreInstallState::Idle
-                        | state::CoreInstallState::Installed
-                        | state::CoreInstallState::Error(_)
-                ) {
-                    return Task::none();
-                }
-                let log_tx = get_log_tx();
-                self.push_log("[GUI] Force reinstalling sing-box core...".to_string());
-                self.core_install_state = state::CoreInstallState::Downloading;
-                Task::perform(
-                    async move { core::download_core(log_tx, true).await },
-                    Message::CoreDownloaded,
-                )
-            }
+            Message::TriggerCoreDownload => self.trigger_core_download(false),
+            Message::ForceCoreDownload => self.trigger_core_download(true),
             Message::LatencyTestUrlChanged(url) => {
                 self.settings_draft.latency_test_url = url;
                 self.settings_errors.remove("latency_url");
@@ -1601,6 +2120,7 @@ impl App {
             }
             Message::ToggleSystemProxy => {
                 if self.system_proxy_busy {
+                    self.pending_tray_check_sync = true;
                     return Task::none();
                 }
                 let target = !self.sys_proxy_enabled;
@@ -1625,8 +2145,9 @@ impl App {
                 self.downloading = true;
                 self.profile_error = None;
                 let url = self.url_input.clone();
+                let cfg = self.gui_config.clone();
 
-                Task::perform(download_profile(url), |res| match res {
+                Task::perform(download_profile(url, cfg), |res| match res {
                     Ok(r) => Message::SubscriptionDownloaded {
                         id: r.id,
                         source_url: Some(r.source_url),
@@ -1636,6 +2157,9 @@ impl App {
                         traffic_total: r.traffic_total,
                         expire_at: r.expire_at,
                         display_name: r.display_name,
+                        is_subscription: r.is_subscription,
+                        ignored_settings: r.ignored_settings,
+                        from_auto_update: false,
                     },
                     Err(e) => Message::SubscriptionDownloaded {
                         id: String::new(),
@@ -1646,6 +2170,9 @@ impl App {
                         expire_at: None,
                         display_name: None,
                         source_url: None,
+                        is_subscription: false,
+                        ignored_settings: Vec::new(),
+                        from_auto_update: false,
                     },
                 })
             }
@@ -1658,6 +2185,9 @@ impl App {
                 expire_at,
                 display_name,
                 source_url,
+                is_subscription,
+                ignored_settings,
+                from_auto_update,
             } => {
                 self.downloading = false;
                 self.updating_profile_id = None;
@@ -1666,11 +2196,42 @@ impl App {
                     let detail = redact_log_line(&err);
                     self.profile_error =
                         Some(format!("{}: {detail}", self.tr("profile_download_failed")));
-                    self.push_log(format!("[GUI] Download failed: {detail}"));
-                    self.toast_error(format!("{}: {detail}", self.tr("profile_download_failed")));
+                    if from_auto_update && !id.is_empty() {
+                        let (attempts, retry_mins) = {
+                            let now = std::time::Instant::now();
+                            let entry = self
+                                .auto_update_failures
+                                .entry(id.clone())
+                                .or_insert((0, now));
+                            entry.0 = entry.0.saturating_add(1);
+                            let backoff = auto_update_backoff_duration(entry.0);
+                            entry.1 = now + backoff;
+                            (entry.0, backoff.as_secs() / 60)
+                        };
+                        self.push_log(format!(
+                            "[GUI] Auto-update failed for {id} (attempt {attempts}, retry in {retry_mins}m): {detail}",
+                        ));
+                        if attempts <= 1 {
+                            self.toast_error(format!(
+                                "{}: {detail}",
+                                self.tr("profile_download_failed")
+                            ));
+                        }
+                    } else {
+                        self.push_log(format!("[GUI] Download failed: {detail}"));
+                        self.toast_error(format!(
+                            "{}: {detail}",
+                            self.tr("profile_download_failed")
+                        ));
+                    }
                 } else {
                     self.profile_error = None;
-                    self.url_input.clear();
+                    if !from_auto_update {
+                        self.url_input.clear();
+                    }
+                    if !id.is_empty() {
+                        self.auto_update_failures.remove(&id);
+                    }
 
                     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                     // Mutate in-memory config only (profile file already written by fetch task).
@@ -1683,6 +2244,7 @@ impl App {
                             .find(|p| p.id == id)
                         {
                             p.updated_at = now;
+                            p.is_subscription = is_subscription;
                             if traffic_upload.is_some() {
                                 p.traffic_upload = traffic_upload;
                             }
@@ -1695,11 +2257,7 @@ impl App {
                             if expire_at.is_some() {
                                 p.expire_at = expire_at;
                             }
-                            if let Some(ref name) = display_name
-                                && !name.is_empty()
-                            {
-                                p.name = name.clone();
-                            }
+                            // Preserve user-customized p.name across subscription refreshes.
                         } else {
                             let name =
                                 display_name.filter(|n| !n.is_empty()).unwrap_or_else(|| {
@@ -1712,7 +2270,7 @@ impl App {
                                 name,
                                 url,
                                 file_path: path.to_string_lossy().to_string(),
-                                is_subscription: true,
+                                is_subscription,
                                 updated_at: now,
                                 traffic_upload,
                                 traffic_download,
@@ -1733,15 +2291,26 @@ impl App {
                         load_nodes = true;
                     }
                     self.push_log("[GUI] Subscription downloaded successfully.".to_string());
-                    self.toast_success(self.tr("toast_sub_ok"));
+                    if !from_auto_update {
+                        self.toast_success(self.tr("toast_sub_ok"));
+                    }
                 }
                 let next_update = self.kick_pending_auto_update();
                 let save_task = self.start_config_save();
                 let is_active = self.gui_config.active_profile_id.as_deref() == Some(id.as_str());
                 let mut tasks = vec![next_update, save_task];
                 if load_nodes {
+                    self.latency_testing = false;
+                    self.latency_test_gen = self.latency_test_gen.wrapping_add(1);
+                    if !from_auto_update && !ignored_settings.is_empty() {
+                        self.toast_info(
+                            self.tr("native_json_ignored_toast")
+                                .replace("{}", &ignored_settings.join(", ")),
+                        );
+                    }
+                    self.notify_native_on_load = false;
                     tasks.push(self.load_active_nodes_task());
-                    if is_active && self.core_running {
+                    if is_active && (self.core_running || self.core_starting) {
                         tasks.push(self.restart_core());
                     }
                 }
@@ -1755,8 +2324,12 @@ impl App {
                     return Task::none();
                 }
                 self.confirm_delete_profile_id = None;
+                self.latency_testing = false;
+                self.latency_test_gen = self.latency_test_gen.wrapping_add(1);
+                self.notify_native_on_load = true;
                 self.gui_config.active_profile_id = Some(id);
                 self.gui_config.selected_node_tag = None;
+                self.selected_node_tag = None;
                 self.active_profile_nodes.clear();
                 self.proxy_groups.clear();
                 self.selected_group.clear();
@@ -1772,9 +2345,22 @@ impl App {
                     self.restart_core(),
                 ])
             }
-            Message::ActiveNodesLoaded { profile_id, result } => {
+            Message::ActiveNodesLoaded {
+                profile_id,
+                is_native_json,
+                ignored_settings,
+                result,
+            } => {
                 if self.gui_config.active_profile_id.as_deref() != Some(profile_id.as_str()) {
                     return Task::none();
+                }
+                self.active_profile_is_native = is_native_json;
+                let notify_native = std::mem::take(&mut self.notify_native_on_load);
+                if notify_native && !ignored_settings.is_empty() {
+                    self.toast_info(
+                        self.tr("native_json_ignored_toast")
+                            .replace("{}", &ignored_settings.join(", ")),
+                    );
                 }
                 self.active_profile_nodes = result.unwrap_or_default();
                 Task::none()
@@ -1851,9 +2437,11 @@ impl App {
                 }
                 let tag_clone = tag.clone();
                 let api_port = self.gui_config.api_port;
+                let group = resolve_primary_selector_group(&self.proxy_groups)
+                    .unwrap_or_else(|| "Proxy".to_string());
 
                 Task::perform(
-                    async move { api::select_proxy(api_port, "Proxy", &tag_clone).await },
+                    async move { api::select_proxy(api_port, &group, &tag_clone).await },
                     move |res| match res {
                         Ok(_) => Message::NodeSelected {
                             tag: tag.clone(),
@@ -1874,6 +2462,11 @@ impl App {
                 } else {
                     self.selected_node_tag = Some(tag.clone());
                     self.gui_config.selected_node_tag = Some(tag.clone());
+                    if let Some(primary) = resolve_primary_selector_group(&self.proxy_groups)
+                        && let Some(g_info) = self.proxy_groups.get_mut(&primary)
+                    {
+                        g_info.now = Some(tag.clone());
+                    }
                     self.config_dirty = true;
                     self.push_log(format!("[GUI] Selected node: {}", tag));
                     return self.start_config_save();
@@ -1893,10 +2486,12 @@ impl App {
                     return Task::none();
                 }
                 self.latency_testing = true;
+                self.latency_test_gen = self.latency_test_gen.wrapping_add(1);
+                let generation = self.latency_test_gen;
                 let api_port = self.gui_config.api_port;
                 let test_url = self.gui_config.latency_test_url.clone();
                 let timeout_ms = self.gui_config.latency_test_timeout_ms;
-                // Cap concurrent delay probes so Clash API / UI are not stampeded.
+                // Cap concurrent delay probes via Semaphore(8) + FuturesUnordered.
                 let node_tags: Vec<String> = self
                     .active_profile_nodes
                     .iter()
@@ -1904,35 +2499,58 @@ impl App {
                     .map(|node| node.name.clone())
                     .collect();
 
-                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
-                let chunks = node_tags.chunks(20).map(|c| c.to_vec()).collect::<Vec<_>>();
-                let tasks = chunks
-                    .into_iter()
-                    .map(|chunk| {
-                        let test_url = test_url.clone();
-                        let sem = std::sync::Arc::clone(&sem);
-                        Task::perform(
-                            async move {
-                                let mut results = Vec::with_capacity(chunk.len());
-                                for tag in chunk {
-                                    let _permit = sem.acquire().await;
-                                    let latency = api::test_node_latency(
-                                        api_port, &tag, &test_url, timeout_ms,
-                                    )
+                let stream = iced::stream::channel(
+                    16,
+                    move |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
+                        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+                        let mut futs = iced::futures::stream::FuturesUnordered::new();
+                        for tag in node_tags {
+                            let test_url = test_url.clone();
+                            let sem = std::sync::Arc::clone(&sem);
+                            futs.push(async move {
+                                let _permit = sem.acquire().await;
+                                let latency =
+                                    api::test_node_latency(api_port, &tag, &test_url, timeout_ms)
+                                        .await;
+                                (tag, Some(latency.unwrap_or(9999)))
+                            });
+                        }
+                        let mut batch = Vec::with_capacity(8);
+                        while let Some(item) = futs.next().await {
+                            batch.push(item);
+                            if batch.len() >= 8 {
+                                let _ = output
+                                    .send(Message::NodeLatencyBatch {
+                                        generation,
+                                        results: std::mem::take(&mut batch),
+                                    })
                                     .await;
-                                    results.push((tag, Some(latency.unwrap_or(9999))));
+                                if output.is_closed() {
+                                    break;
                                 }
-                                results
-                            },
-                            Message::NodeLatencyBatch,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
-                Task::batch(tasks).chain(Task::done(Message::LatencyTestComplete))
+                            }
+                        }
+                        if !batch.is_empty() && !output.is_closed() {
+                            let _ = output
+                                .send(Message::NodeLatencyBatch {
+                                    generation,
+                                    results: batch,
+                                })
+                                .await;
+                        }
+                        let _ = output.send(Message::LatencyTestComplete(generation)).await;
+                    },
+                );
+                Task::run(stream, std::convert::identity)
             }
-            Message::NodeLatencyBatch(batch) => {
-                for (tag, latency) in batch {
+            Message::NodeLatencyBatch {
+                generation,
+                results,
+            } => {
+                if generation != self.latency_test_gen {
+                    return Task::none();
+                }
+                for (tag, latency) in results {
                     for node in &mut self.active_profile_nodes {
                         if node.name == tag {
                             node.latency = latency;
@@ -1941,59 +2559,15 @@ impl App {
                 }
                 Task::none()
             }
-            Message::LatencyTestComplete => {
+            Message::LatencyTestComplete(generation) => {
+                if generation != self.latency_test_gen {
+                    return Task::none();
+                }
                 self.latency_testing = false;
                 self.toast_success(self.tr("toast_latency_done"));
                 Task::none()
             }
-            Message::UpdateSubscription(id) => {
-                if self.downloading {
-                    self.toast_info(self.tr("operation_in_progress"));
-                    return Task::none();
-                }
-                self.confirm_delete_profile_id = None;
-                let sub = self.gui_config.subscriptions.iter().find(|p| p.id == id);
-                if let Some(profile) = sub {
-                    let url = profile.url.clone();
-                    let id_clone = id.clone();
-                    self.downloading = true;
-                    self.updating_profile_id = Some(id.clone());
-                    self.profile_error = None;
-                    self.push_log(format!(
-                        "[GUI] Updating subscription: {}",
-                        ui::profiles::mask_sensitive_url(&url)
-                    ));
-
-                    Task::perform(
-                        async move { fetch_and_save_subscription(url, id_clone).await },
-                        |res| match res {
-                            Ok(r) => Message::SubscriptionDownloaded {
-                                id: r.id,
-                                error: None,
-                                traffic_upload: r.traffic_upload,
-                                traffic_download: r.traffic_download,
-                                traffic_total: r.traffic_total,
-                                expire_at: r.expire_at,
-                                display_name: r.display_name,
-                                source_url: Some(r.source_url),
-                            },
-                            Err(e) => Message::SubscriptionDownloaded {
-                                id: String::new(),
-                                error: Some(e),
-                                traffic_upload: None,
-                                traffic_download: None,
-                                traffic_total: None,
-                                expire_at: None,
-                                display_name: None,
-                                source_url: None,
-                            },
-                        },
-                    )
-                } else {
-                    self.push_log("[GUI] Subscription not found.".to_string());
-                    Task::none()
-                }
-            }
+            Message::UpdateSubscription(id) => self.start_profile_update(id, false),
             Message::AutoUpdateDue(ids) => {
                 if ids.is_empty() {
                     return Task::none();
@@ -2060,7 +2634,12 @@ impl App {
                     self.auto_update_tick_counter = 0;
                     let hours = self.gui_config.auto_update_interval_hours;
                     if hours > 0 && !self.downloading {
-                        let due = collect_due_subscription_ids(&self.gui_config, hours);
+                        let due = collect_due_subscription_ids(
+                            &self.gui_config,
+                            hours,
+                            &self.auto_update_failures,
+                            std::time::Instant::now(),
+                        );
                         if !due.is_empty() {
                             tasks.push(Task::done(Message::AutoUpdateDue(due)));
                         }
@@ -2119,6 +2698,7 @@ impl App {
                         } else {
                             if self.pending_settings_save_feedback
                                 && !self.pending_proxy_reapply_after_save
+                                && !self.autostart_busy
                             {
                                 self.pending_settings_save_feedback = false;
                                 self.toast_success(self.tr("settings_saved_toast"));
@@ -2153,6 +2733,7 @@ impl App {
                         if self.pending_exit {
                             self.pending_exit = false;
                             self.toast_error(format!("{}: {error}", self.tr("config_save_failed")));
+                            tasks.push(self.reveal_window_on_tray_error());
                         } else if let Some(pending) = self.pending_update.take() {
                             tasks.push(self.fail_pending_update(
                                 pending,
@@ -2188,22 +2769,37 @@ impl App {
                 self.autostart_busy = false;
                 match result {
                     Ok(()) => {
-                        self.settings_draft = RuntimeSettingsDraft::from_config(&self.gui_config);
-                        let save_task = self.start_config_save();
-                        if self.pending_exit {
-                            Task::batch(vec![save_task, self.continue_exit()])
-                        } else {
-                            save_task
+                        // Do NOT reset `self.settings_draft` here; the user may
+                        // have edited other fields while `set_autostart` ran.
+                        let mut tasks = vec![self.start_config_save()];
+                        if !self.pending_exit
+                            && self.active_profile_is_native
+                            && self.gui_config.active_profile_id.is_some()
+                        {
+                            tasks.push(self.check_native_json_ignored_task());
                         }
+                        if self.pending_exit {
+                            tasks.push(self.continue_exit());
+                        }
+                        Task::batch(tasks)
                     }
                     Err(error) => {
                         self.gui_config.start_on_boot = !target;
-                        self.settings_draft.start_on_boot = !target;
+                        if self.settings_draft.start_on_boot == target {
+                            self.settings_draft.start_on_boot = !target;
+                        }
+                        self.pending_settings_save_feedback = false;
+                        self.config_dirty = true;
                         self.settings_errors
                             .insert("autostart", "autostart_apply_failed");
                         self.toast_error(format!("{}: {error}", self.tr("autostart_apply_failed")));
-                        self.pending_exit = false;
-                        self.start_config_save()
+                        let was_pending_exit = std::mem::replace(&mut self.pending_exit, false);
+                        let save_task = self.start_config_save();
+                        if was_pending_exit {
+                            Task::batch(vec![save_task, self.reveal_window_on_tray_error()])
+                        } else {
+                            save_task
+                        }
                     }
                 }
             }
@@ -2251,6 +2847,15 @@ impl App {
                             "{}: {error}",
                             self.tr("system_proxy_apply_failed")
                         ));
+                        self.pending_tray_check_sync = true;
+                        let reveal = if matches!(
+                            context,
+                            message::SystemProxyContext::Manual | message::SystemProxyContext::Exit
+                        ) {
+                            self.reveal_window_on_tray_error()
+                        } else {
+                            Task::none()
+                        };
                         if context == message::SystemProxyContext::Exit {
                             self.pending_exit = false;
                         }
@@ -2264,19 +2869,22 @@ impl App {
                             let save_task = self.start_config_save();
                             if self.pending_restart_after_save {
                                 self.pending_restart_after_save = false;
-                                return Task::batch(vec![save_task, self.restart_core()]);
+                                return Task::batch(vec![save_task, self.restart_core(), reveal]);
                             }
-                            return save_task;
+                            return Task::batch(vec![save_task, reveal]);
                         }
                         if context == message::SystemProxyContext::Update
                             && let Some(pending) = self.pending_update.take()
                         {
-                            return self.fail_pending_update(
-                                pending,
-                                format!("{}: {error}", self.tr("system_proxy_apply_failed")),
-                            );
+                            return Task::batch(vec![
+                                self.fail_pending_update(
+                                    pending,
+                                    format!("{}: {error}", self.tr("system_proxy_apply_failed")),
+                                ),
+                                reveal,
+                            ]);
                         }
-                        Task::none()
+                        reveal
                     }
                 }
             }
@@ -2388,9 +2996,11 @@ impl App {
             Message::RoutingModeChanged(mode) => {
                 if self.core_busy() || self.pending_routing_mode.is_some() {
                     self.toast_info(self.tr("operation_in_progress"));
-                    return Task::none();
+                    self.pending_tray_check_sync = true;
+                    return self.reveal_window_on_tray_error();
                 }
                 if mode == self.gui_config.routing_mode {
+                    self.pending_tray_check_sync = true;
                     return Task::none();
                 }
                 if self.core_running {
@@ -2412,10 +3022,12 @@ impl App {
             }
             Message::ModeSet { mode, result } => {
                 if self.pending_routing_mode != Some(mode) {
+                    self.pending_tray_check_sync = true;
                     return Task::none();
                 }
                 self.pending_routing_mode = None;
                 if !self.core_running || self.core_busy() {
+                    self.pending_tray_check_sync = true;
                     return Task::none();
                 }
                 match result {
@@ -2430,11 +3042,12 @@ impl App {
                         self.start_config_save()
                     }
                     Err(error) => {
+                        self.pending_tray_check_sync = true;
                         self.toast_error(
                             self.tr("routing_mode_failed")
                                 .replace("{}", &redact_log_line(&error)),
                         );
-                        Task::none()
+                        self.reveal_window_on_tray_error()
                     }
                 }
             }
@@ -2482,19 +3095,26 @@ impl App {
                 Task::none()
             }
             Message::BrowseCorePath => {
-                let start_dir = {
+                let raw_parent = {
                     let trimmed = self.settings_draft.core_path.trim();
                     if trimmed.is_empty() {
                         None
                     } else {
                         std::path::Path::new(trimmed)
                             .parent()
-                            .filter(|p| p.exists())
-                            .map(|p| p.to_path_buf())
+                            .map(std::path::Path::to_path_buf)
                     }
                 };
                 Task::perform(
                     async move {
+                        let start_dir = match raw_parent {
+                            Some(dir) => tokio::task::spawn_blocking(move || {
+                                if dir.exists() { Some(dir) } else { None }
+                            })
+                            .await
+                            .unwrap_or(None),
+                            None => None,
+                        };
                         let dialog = rfd::AsyncFileDialog::new();
                         #[cfg(target_os = "windows")]
                         let dialog = dialog.add_filter("Executable", &["exe"]);
@@ -2579,31 +3199,71 @@ impl App {
                         self.toast_error(self.tr("profile_name_required"));
                         return Task::none();
                     }
-                    if !is_valid_profile_source(&url) {
+                    if url.is_empty() || url.len() > 4096 {
                         self.toast_error(self.tr("profile_url_invalid"));
                         return Task::none();
                     }
-                    if let Some(profile) = self
-                        .gui_config
-                        .subscriptions
-                        .iter_mut()
-                        .find(|p| p.id == id)
-                    {
-                        let url_changed = profile.url != url;
-                        profile.name = name;
-                        profile.url = url;
-                        self.config_dirty = true;
-                        if url_changed {
-                            self.toast_info(self.tr("profile_url_update_required"));
-                        }
+                    if is_http_profile_source(&url) {
+                        return Task::done(Message::ProfileEditValidated {
+                            id,
+                            name,
+                            url,
+                            valid: true,
+                        });
                     }
-                    self.editing_profile_id = None;
-                    // Profile edits are an explicit save action. Persist them
-                    // immediately instead of waiting for the next one-second
-                    // tick (the retry path still handles a transient failure).
-                    return self.start_config_save();
+                    let url_for_check = url.clone();
+                    return Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                is_valid_profile_source(&url_for_check)
+                            })
+                            .await
+                            .unwrap_or(false)
+                        },
+                        move |valid| Message::ProfileEditValidated {
+                            id,
+                            name,
+                            url,
+                            valid,
+                        },
+                    );
                 }
                 Task::none()
+            }
+            Message::ProfileEditValidated {
+                id,
+                name,
+                url,
+                valid,
+            } => {
+                if self.editing_profile_id.as_deref() != Some(id.as_str()) {
+                    return Task::none();
+                }
+                if !valid {
+                    self.toast_error(self.tr("profile_url_invalid"));
+                    return Task::none();
+                }
+                if let Some(profile) = self
+                    .gui_config
+                    .subscriptions
+                    .iter_mut()
+                    .find(|p| p.id == id)
+                {
+                    let url_changed = profile.url != url;
+                    profile.name = name;
+                    profile.url = url.clone();
+                    profile.is_subscription = is_http_profile_source(&url);
+                    self.config_dirty = true;
+                    if url_changed {
+                        self.auto_update_failures.remove(&id);
+                        self.toast_info(self.tr("profile_url_update_required"));
+                    }
+                }
+                self.editing_profile_id = None;
+                // Profile edits are an explicit save action. Persist them
+                // immediately instead of waiting for the next one-second
+                // tick (the retry path still handles a transient failure).
+                self.start_config_save()
             }
             Message::CancelProfileEdit => {
                 self.editing_profile_id = None;
@@ -2677,24 +3337,86 @@ impl App {
                 Task::none()
             }
             Message::SaveSettings => {
-                if self.autostart_busy {
-                    // A second commit while set_autostart runs would race the
-                    // first writer and can leave the OS state opposite the UI.
+                if self.autostart_busy || self.settings_validation_in_flight {
+                    // A second commit while set_autostart/validation runs would race
+                    // the writer and can leave the OS state opposite the UI.
                     self.toast_info(self.tr("operation_in_progress"));
                     return Task::none();
                 }
-                self.pending_settings_save_feedback = true;
-                match self.commit_runtime_settings(false) {
-                    Ok(task) => {
-                        if !self.config_dirty && !self.autostart_busy {
-                            self.pending_settings_save_feedback = false;
-                            self.toast_success(self.tr("settings_saved_toast"));
-                        }
-                        task
+                if !self.settings_draft.has_pending_changes(&self.gui_config) {
+                    self.settings_errors.clear();
+                    self.pending_settings_save_feedback = false;
+                    if self.config_dirty {
+                        self.pending_settings_save_feedback = true;
+                        return self.start_config_save();
                     }
-                    Err(()) => {
-                        self.pending_settings_save_feedback = false;
-                        Task::none()
+                    self.toast_success(self.tr("settings_saved_toast"));
+                    return Task::none();
+                }
+                if let Err(errors) = self.validate_runtime_settings_syntax() {
+                    self.settings_errors = errors;
+                    let key = self
+                        .settings_errors
+                        .values()
+                        .next()
+                        .copied()
+                        .unwrap_or("settings_invalid");
+                    self.toast_error(self.tr(key));
+                    return Task::none();
+                }
+                self.pending_settings_save_feedback = true;
+                self.start_settings_validation(false)
+            }
+            Message::SaveSettingsValidated {
+                draft,
+                core_path_valid,
+                core_installed,
+                tun_capable,
+                for_exit,
+            } => {
+                self.settings_validation_in_flight = false;
+                if !for_exit && draft != self.settings_draft {
+                    // User changed the draft while async path checks ran; revalidate on next Save.
+                    self.pending_settings_save_feedback = false;
+                    return Task::none();
+                }
+                match Self::validate_runtime_draft(
+                    &draft,
+                    &self.gui_config,
+                    self.sys_proxy_enabled,
+                    core_path_valid,
+                ) {
+                    Ok(commit) => {
+                        let task = self.commit_runtime_settings(
+                            commit,
+                            core_installed,
+                            tun_capable,
+                            for_exit,
+                        );
+                        if for_exit {
+                            Task::batch(vec![task, self.continue_exit()])
+                        } else {
+                            task
+                        }
+                    }
+                    Err(errors) => {
+                        if for_exit {
+                            self.settings_draft =
+                                RuntimeSettingsDraft::from_config(&self.gui_config);
+                            self.settings_errors.clear();
+                            self.continue_exit()
+                        } else {
+                            self.settings_errors = errors;
+                            self.pending_settings_save_feedback = false;
+                            let key = self
+                                .settings_errors
+                                .values()
+                                .next()
+                                .copied()
+                                .unwrap_or("settings_invalid");
+                            self.toast_error(self.tr(key));
+                            Task::none()
+                        }
                     }
                 }
             }
@@ -2744,6 +3466,46 @@ impl App {
                     return Task::none();
                 }
                 self.update_status = state::UpdateStatus::Downloading { tag: tag.clone() };
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(|| {
+                            std::env::current_exe()
+                                .ok()
+                                .is_some_and(|p| is_install_dir_writable(&p))
+                        })
+                        .await
+                        .unwrap_or(false)
+                    },
+                    move |writable| Message::UpdateDirChecked {
+                        tag,
+                        url,
+                        sha256,
+                        size,
+                        writable,
+                    },
+                )
+            }
+            Message::UpdateDirChecked {
+                tag,
+                url,
+                sha256,
+                size,
+                writable,
+            } => {
+                if !writable {
+                    self.update_status = state::UpdateStatus::NewVersion {
+                        tag: tag.clone(),
+                        download_url: Some(url),
+                        sha256: Some(sha256),
+                        size: Some(size),
+                    };
+                    self.push_log(
+                        "[GUI] Install directory is read-only; opening GitHub release page."
+                            .to_string(),
+                    );
+                    self.toast_error(self.tr("update_dir_readonly"));
+                    return Task::done(Message::OpenUrl(official_release_page_url(&tag)));
+                }
                 self.toast_info(self.tr("toast_update_downloading"));
                 let url_for_msg = url.clone();
                 let digest_for_msg = sha256.clone();
@@ -3270,9 +4032,10 @@ impl App {
             }),
         ];
 
-        // Live streams for logs, traffic stats, and tray events
+        // Live streams for logs, traffic stats, core downloads, and tray events
         subs.push(Subscription::run(log_subscription));
         subs.push(Subscription::run(traffic_subscription));
+        subs.push(Subscription::run(core_download_progress_subscription));
         subs.push(Subscription::run(tray::events));
         // Global shortcuts also work while a text field has focus. In
         // particular, Escape cancels an edit instead of only blurring it.
@@ -3387,9 +4150,70 @@ fn traffic_subscription() -> impl iced::futures::Stream<Item = Message> {
     )
 }
 
+fn core_download_progress_subscription() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(
+        16,
+        |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
+            let mut rx = core::subscribe_core_download_progress();
+            while rx.changed().await.is_ok() {
+                let stage = rx.borrow_and_update().clone();
+                if output
+                    .send(Message::CoreDownloadStageChanged(stage))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        },
+    )
+}
+
+fn resolve_primary_selector_group(
+    proxy_groups: &std::collections::HashMap<String, crate::api::ProxyInfo>,
+) -> Option<String> {
+    if proxy_groups.contains_key("Proxy") {
+        return Some("Proxy".to_string());
+    }
+    let mut selectors: Vec<&str> = proxy_groups
+        .iter()
+        .filter(|(_, info)| {
+            info.proxy_type.eq_ignore_ascii_case("Selector")
+                && !info.all.as_deref().unwrap_or(&[]).is_empty()
+        })
+        .map(|(name, _)| name.as_str())
+        .collect();
+    selectors.sort_unstable();
+    if let Some(first) = selectors.first() {
+        return Some((*first).to_string());
+    }
+    let mut non_empty: Vec<&str> = proxy_groups
+        .iter()
+        .filter(|(_, info)| !info.all.as_deref().unwrap_or(&[]).is_empty())
+        .map(|(name, _)| name.as_str())
+        .collect();
+    non_empty.sort_unstable();
+    non_empty
+        .first()
+        .copied()
+        .map(str::to_string)
+        .or_else(|| proxy_groups.keys().min().cloned())
+}
+
+fn auto_update_backoff_duration(consecutive_failures: u32) -> std::time::Duration {
+    match consecutive_failures {
+        0 => std::time::Duration::ZERO,
+        1 => std::time::Duration::from_secs(5 * 60),
+        2 => std::time::Duration::from_secs(15 * 60),
+        _ => std::time::Duration::from_secs(60 * 60),
+    }
+}
+
 struct ProfileFetchResult {
     id: String,
     source_url: String,
+    is_subscription: bool,
+    ignored_settings: Vec<&'static str>,
     display_name: Option<String>,
     traffic_upload: Option<u64>,
     traffic_download: Option<u64>,
@@ -3405,14 +4229,28 @@ const SUBSCRIPTION_USER_AGENT: &str = "clash.meta";
 
 /// Download or open a profile URL/path and write the profile file only.
 /// The GUI thread owns `gui_config` mutations (avoids load/save races).
-async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
+async fn download_profile(
+    url: String,
+    gui_config: GuiConfig,
+) -> Result<ProfileFetchResult, String> {
     let url = url.trim().to_string();
     let (content, meta) = load_profile_content(&url).await?;
     config::validate_profile_content(&content)?;
+    let ignored_settings = if config::is_native_json_profile(&content) {
+        config::native_json_ignored_settings(&content, &gui_config)
+    } else {
+        Vec::new()
+    };
+
+    let is_subscription = is_http_profile_source(&url);
+    let is_local_file = !is_subscription
+        && tokio::fs::metadata(&url)
+            .await
+            .is_ok_and(|metadata| metadata.is_file());
 
     let id = chrono::Utc::now().timestamp_millis().to_string();
     let name = meta.display_name.clone().unwrap_or_else(|| {
-        if std::path::Path::new(&url).exists() {
+        if is_local_file {
             std::path::Path::new(&url)
                 .file_name()
                 .and_then(|f| f.to_str())
@@ -3426,7 +4264,7 @@ async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
     let path = config::get_profile_path(&id);
     // Inline imports contain credentials. Persist their saved file as the
     // source instead of copying the entire payload into GUI metadata/labels.
-    let source_url = if is_http_profile_source(&url) || std::path::Path::new(&url).is_file() {
+    let source_url = if is_subscription || is_local_file {
         url
     } else {
         path.to_string_lossy().into_owned()
@@ -3439,6 +4277,8 @@ async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
     Ok(ProfileFetchResult {
         id,
         source_url,
+        is_subscription,
+        ignored_settings,
         display_name: Some(name),
         traffic_upload: meta.traffic_upload,
         traffic_download: meta.traffic_download,
@@ -3451,10 +4291,17 @@ async fn download_profile(url: String) -> Result<ProfileFetchResult, String> {
 async fn fetch_and_save_subscription(
     url: String,
     id: String,
+    gui_config: GuiConfig,
 ) -> Result<ProfileFetchResult, String> {
     let url = url.trim().to_string();
     let (content, meta) = load_profile_content(&url).await?;
     config::validate_profile_content(&content)?;
+    let is_subscription = is_http_profile_source(&url);
+    let ignored_settings = if config::is_native_json_profile(&content) {
+        config::native_json_ignored_settings(&content, &gui_config)
+    } else {
+        Vec::new()
+    };
     let path = config::get_profile_path(&id);
     let write_path = path.clone();
     tokio::task::spawn_blocking(move || config::atomic_write(&write_path, content.as_bytes()))
@@ -3463,6 +4310,8 @@ async fn fetch_and_save_subscription(
     Ok(ProfileFetchResult {
         id,
         source_url: url,
+        is_subscription,
+        ignored_settings,
         display_name: meta.display_name,
         traffic_upload: meta.traffic_upload,
         traffic_download: meta.traffic_download,
@@ -3527,7 +4376,10 @@ async fn load_profile_content(url: &str) -> Result<(String, ProfileContentMeta),
         expire_at: None,
     };
 
-    if std::path::Path::new(url).is_file() {
+    if tokio::fs::metadata(url)
+        .await
+        .is_ok_and(|metadata| metadata.is_file())
+    {
         use tokio::io::AsyncReadExt;
         let file = tokio::fs::File::open(url)
             .await
@@ -3669,23 +4521,31 @@ fn enqueue_pending_updates(
     }
 }
 
-fn collect_due_subscription_ids(gui_config: &GuiConfig, hours: u32) -> Vec<String> {
+fn collect_due_subscription_ids(
+    gui_config: &GuiConfig,
+    hours: u32,
+    failures: &std::collections::HashMap<String, (u32, std::time::Instant)>,
+    now_instant: std::time::Instant,
+) -> Vec<String> {
     let threshold = chrono::Duration::hours(hours as i64);
     let now = chrono::Local::now();
     let mut due = Vec::new();
     for p in &gui_config.subscriptions {
-        if p.url.is_empty() || std::path::Path::new(&p.url).exists() {
-            continue; // skip pure local files without remote URL
+        if !p.is_subscription || !is_http_profile_source(&p.url) {
+            continue;
         }
-        if p.url.starts_with("http://") || p.url.starts_with("https://") {
-            let stale = chrono::NaiveDateTime::parse_from_str(&p.updated_at, "%Y-%m-%d %H:%M:%S")
-                .ok()
-                .and_then(|ndt| ndt.and_local_timezone(chrono::Local).single())
-                .map(|dt| now.signed_duration_since(dt) >= threshold)
-                .unwrap_or(true);
-            if stale {
-                due.push(p.id.clone());
-            }
+        if let Some((_, retry_after)) = failures.get(&p.id)
+            && now_instant < *retry_after
+        {
+            continue;
+        }
+        let stale = chrono::NaiveDateTime::parse_from_str(&p.updated_at, "%Y-%m-%d %H:%M:%S")
+            .ok()
+            .and_then(|ndt| ndt.and_local_timezone(chrono::Local).single())
+            .map(|dt| now.signed_duration_since(dt) >= threshold)
+            .unwrap_or(true);
+        if stale {
+            due.push(p.id.clone());
         }
     }
     due
@@ -4074,7 +4934,8 @@ mod tests {
             traffic_total: None,
             expire_at: None,
         });
-        let due = collect_due_subscription_ids(&cfg, 6);
+        let failures = std::collections::HashMap::new();
+        let due = collect_due_subscription_ids(&cfg, 6, &failures, std::time::Instant::now());
         assert!(due.contains(&"remote-stale".to_string()));
         assert!(!due.iter().any(|id| id == "local-file"));
     }
@@ -4417,6 +5278,388 @@ mod tests {
             "v2026.7.13-2"
         ));
     }
+
+    #[test]
+    fn parse_launch_options_handles_minimized_hidden_and_no_tray() {
+        assert_eq!(
+            parse_launch_options(["sing-box-gui"]),
+            LaunchOptions {
+                start_minimized: false,
+                no_tray: false,
+            }
+        );
+        assert_eq!(
+            parse_launch_options(["sing-box-gui", "--minimized"]),
+            LaunchOptions {
+                start_minimized: true,
+                no_tray: false,
+            }
+        );
+        assert_eq!(
+            parse_launch_options(["sing-box-gui", "--hidden", "--no-tray"]),
+            LaunchOptions {
+                start_minimized: true,
+                no_tray: true,
+            }
+        );
+
+        let (minimized_app, _) = App::new_with_launch_options(
+            GuiConfig::default(),
+            LaunchOptions {
+                start_minimized: true,
+                no_tray: false,
+            },
+        );
+        assert!(minimized_app.window_id.is_none());
+
+        let (no_tray_app, _) = App::new_with_launch_options(
+            GuiConfig::default(),
+            LaunchOptions {
+                start_minimized: true,
+                no_tray: true,
+            },
+        );
+        assert!(no_tray_app.window_id.is_some());
+    }
+
+    #[test]
+    fn resolve_primary_selector_and_group_node_selected_support_custom_selectors() {
+        let mut groups = std::collections::HashMap::new();
+        groups.insert(
+            "AutoFallback".to_string(),
+            api::ProxyInfo {
+                name: "AutoFallback".to_string(),
+                proxy_type: "URLTest".to_string(),
+                udp: None,
+                history: None,
+                now: Some("node-a".to_string()),
+                all: Some(vec!["node-a".to_string(), "node-b".to_string()]),
+            },
+        );
+        groups.insert(
+            "MainSelect".to_string(),
+            api::ProxyInfo {
+                name: "MainSelect".to_string(),
+                proxy_type: "Selector".to_string(),
+                udp: None,
+                history: None,
+                now: Some("node-a".to_string()),
+                all: Some(vec!["node-a".to_string(), "node-b".to_string()]),
+            },
+        );
+        assert_eq!(
+            resolve_primary_selector_group(&groups).as_deref(),
+            Some("MainSelect")
+        );
+
+        let (mut app, _) = App::new_with_config(GuiConfig::default());
+        app.proxy_groups = groups;
+        let _ = app.update(Message::GroupNodeSelected {
+            group: "MainSelect".to_string(),
+            node: "node-b".to_string(),
+            error: None,
+        });
+        assert_eq!(app.selected_node_tag.as_deref(), Some("node-b"));
+        assert_eq!(app.gui_config.selected_node_tag.as_deref(), Some("node-b"));
+        assert!(app.config_dirty);
+
+        // When "Proxy" exists, secondary selectors must not clobber selected_node_tag.
+        app.proxy_groups.insert(
+            "Proxy".to_string(),
+            api::ProxyInfo {
+                name: "Proxy".to_string(),
+                proxy_type: "Selector".to_string(),
+                udp: None,
+                history: None,
+                now: Some("node-a".to_string()),
+                all: Some(vec!["node-a".to_string(), "node-b".to_string()]),
+            },
+        );
+        assert_eq!(
+            resolve_primary_selector_group(&app.proxy_groups).as_deref(),
+            Some("Proxy")
+        );
+        let _ = app.update(Message::GroupNodeSelected {
+            group: "MainSelect".to_string(),
+            node: "node-a".to_string(),
+            error: None,
+        });
+        assert_eq!(app.selected_node_tag.as_deref(), Some("node-b"));
+    }
+
+    #[test]
+    fn latency_test_generation_ignores_stale_results_and_clears_on_stop() {
+        let (mut app, _) = App::new_with_config(GuiConfig::default());
+        app.active_profile_nodes = vec![ProxyNode {
+            name: "Node-1".to_string(),
+            node_type: "vless".to_string(),
+            server: "1.1.1.1".to_string(),
+            port: 443,
+            latency: None,
+            selectable: true,
+        }];
+        app.latency_testing = true;
+        app.latency_test_gen = 2;
+
+        // Stale batch and completion from generation 1 must be ignored.
+        let _ = app.update(Message::NodeLatencyBatch {
+            generation: 1,
+            results: vec![("Node-1".to_string(), Some(123))],
+        });
+        assert_eq!(app.active_profile_nodes[0].latency, None);
+        let _ = app.update(Message::LatencyTestComplete(1));
+        assert!(app.latency_testing);
+
+        // Matching generation updates latency, and stopping clears testing state & bumps gen.
+        let _ = app.update(Message::NodeLatencyBatch {
+            generation: 2,
+            results: vec![("Node-1".to_string(), Some(45))],
+        });
+        assert_eq!(app.active_profile_nodes[0].latency, Some(45));
+        let _ = app.update(Message::CoreStopFinished);
+        assert!(!app.latency_testing);
+        assert_eq!(app.latency_test_gen, 3);
+    }
+
+    #[test]
+    fn auto_update_backoff_escalates_and_skips_failing_subscriptions() {
+        assert_eq!(
+            auto_update_backoff_duration(1),
+            std::time::Duration::from_secs(5 * 60)
+        );
+        assert_eq!(
+            auto_update_backoff_duration(2),
+            std::time::Duration::from_secs(15 * 60)
+        );
+        assert_eq!(
+            auto_update_backoff_duration(3),
+            std::time::Duration::from_secs(60 * 60)
+        );
+
+        let mut cfg = GuiConfig::default();
+        cfg.subscriptions.push(Profile {
+            id: "sub-1".into(),
+            name: "Sub".into(),
+            url: "https://example.com/sub".into(),
+            file_path: String::new(),
+            is_subscription: true,
+            updated_at: "2000-01-01 00:00:00".into(),
+            traffic_upload: None,
+            traffic_download: None,
+            traffic_total: None,
+            expire_at: None,
+        });
+        let (mut app, _) = App::new_with_config(cfg);
+
+        // Auto-update failure records backoff and suppresses due selection until expiry.
+        let _ = app.update(Message::SubscriptionDownloaded {
+            id: "sub-1".into(),
+            error: Some("timeout".into()),
+            traffic_upload: None,
+            traffic_download: None,
+            traffic_total: None,
+            expire_at: None,
+            display_name: None,
+            source_url: None,
+            is_subscription: false,
+            ignored_settings: Vec::new(),
+            from_auto_update: true,
+        });
+        assert_eq!(app.auto_update_failures["sub-1"].0, 1);
+        let due_now = collect_due_subscription_ids(
+            &app.gui_config,
+            6,
+            &app.auto_update_failures,
+            std::time::Instant::now(),
+        );
+        assert!(due_now.is_empty());
+
+        // Subsequent success clears backoff.
+        let _ = app.update(Message::SubscriptionDownloaded {
+            id: "sub-1".into(),
+            error: None,
+            traffic_upload: None,
+            traffic_download: None,
+            traffic_total: None,
+            expire_at: None,
+            display_name: Some("Server Title".into()),
+            source_url: Some("https://example.com/sub".into()),
+            is_subscription: true,
+            ignored_settings: Vec::new(),
+            from_auto_update: true,
+        });
+        assert!(!app.auto_update_failures.contains_key("sub-1"));
+    }
+
+    #[test]
+    fn subscription_downloaded_preserves_manual_rename_and_source_classification() {
+        assert!(is_http_profile_source("https://sub.example.com/api/v1"));
+        assert!(!is_http_profile_source(
+            "http://user:pass@1.2.3.4:8080#node"
+        ));
+        assert!(!is_http_profile_source("vless://uuid@1.2.3.4:443#n"));
+        assert!(!is_http_profile_source("C:\\profiles\\local.json"));
+
+        let mut cfg = GuiConfig {
+            active_profile_id: Some("p-1".into()),
+            ..GuiConfig::default()
+        };
+        cfg.subscriptions.push(Profile {
+            id: "p-1".into(),
+            name: "Custom User Name".into(),
+            url: "https://example.com/sub".into(),
+            file_path: "profiles/p-1.json".into(),
+            is_subscription: true,
+            updated_at: "2026-01-01 00:00:00".into(),
+            traffic_upload: None,
+            traffic_download: None,
+            traffic_total: None,
+            expire_at: None,
+        });
+        let (mut app, _) = App::new_with_config(cfg);
+        app.core_starting = true;
+
+        let _ = app.update(Message::SubscriptionDownloaded {
+            id: "p-1".into(),
+            error: None,
+            traffic_upload: Some(10),
+            traffic_download: Some(20),
+            traffic_total: Some(100),
+            expire_at: None,
+            display_name: Some("Upstream Overwrite Attempt".into()),
+            source_url: Some("https://example.com/sub".into()),
+            is_subscription: true,
+            ignored_settings: Vec::new(),
+            from_auto_update: false,
+        });
+        assert_eq!(app.gui_config.subscriptions[0].name, "Custom User Name");
+        assert!(app.pending_core_restart);
+
+        // Local/inline bundle must be classified as non-subscription.
+        let _ = app.update(Message::SubscriptionDownloaded {
+            id: "p-local".into(),
+            error: None,
+            traffic_upload: None,
+            traffic_download: None,
+            traffic_total: None,
+            expire_at: None,
+            display_name: Some("Local Node".into()),
+            source_url: Some("profiles/p-local.json".into()),
+            is_subscription: false,
+            ignored_settings: Vec::new(),
+            from_auto_update: false,
+        });
+        let local = app
+            .gui_config
+            .subscriptions
+            .iter()
+            .find(|p| p.id == "p-local")
+            .unwrap();
+        assert!(!local.is_subscription);
+    }
+
+    #[test]
+    fn autostart_finished_preserves_concurrent_draft_and_clears_feedback_on_error() {
+        let (mut app, _) = App::new_with_config(GuiConfig::default());
+        app.autostart_busy = true;
+        app.gui_config.start_on_boot = true;
+        app.settings_draft.start_on_boot = true;
+        // Simulate concurrent user edit while set_autostart runs.
+        app.settings_draft.mixed_port = "9999".into();
+        let _ = app.update(Message::AutostartSetFinished {
+            target: true,
+            result: Ok(()),
+        });
+        assert!(!app.autostart_busy);
+        assert_eq!(app.settings_draft.mixed_port, "9999");
+
+        // Error case must clear pending_settings_save_feedback and reveal hidden window on exit.
+        app.autostart_busy = true;
+        app.pending_settings_save_feedback = true;
+        app.pending_exit = true;
+        app.window_id = None;
+        let _ = app.update(Message::AutostartSetFinished {
+            target: true,
+            result: Err("permission denied".into()),
+        });
+        assert!(!app.pending_settings_save_feedback);
+        assert!(!app.gui_config.start_on_boot);
+        assert!(!app.pending_exit);
+        assert!(app.window_id.is_some());
+    }
+
+    #[test]
+    fn toggle_core_while_starting_cancels_startup_and_ignores_stale_finish() {
+        let (mut app, _) = App::new_with_config(GuiConfig::default());
+        app.core_starting = true;
+        app.core_start_gen = 1;
+        app.pending_core_restart = true;
+        app.force_stop_after_start = true;
+
+        let _ = app.update(Message::ToggleCore);
+        assert!(!app.core_starting);
+        assert!(app.core_stopping);
+        assert!(!app.pending_core_restart);
+        assert!(!app.force_stop_after_start);
+        assert_eq!(app.core_start_gen, 2);
+        app.toasts.clear();
+
+        // Stale CoreStartFinished from cancelled attempt must be ignored silently.
+        let _ = app.update(Message::CoreStartFinished {
+            generation: 1,
+            result: Err("Core startup cancelled".into()),
+        });
+        assert!(!app.core_running);
+        assert!(app.toasts.is_empty());
+    }
+
+    #[test]
+    fn hidden_window_errors_and_tray_sync_reveal_window_and_set_resync() {
+        let (mut app, _) = App::new_with_config(GuiConfig::default());
+        app.window_id = None;
+        app.core_starting = true;
+        app.core_start_gen = 5;
+
+        let _ = app.update(Message::CoreStartFinished {
+            generation: 5,
+            result: Err("port in use".into()),
+        });
+        assert!(app.window_id.is_some());
+        assert!(!app.toasts.is_empty());
+
+        app.window_id = None;
+        app.core_running = true;
+        app.pending_routing_mode = Some(state::RoutingMode::Global);
+        let _ = app.update(Message::ModeSet {
+            mode: state::RoutingMode::Global,
+            result: Err("api refused".into()),
+        });
+        assert!(app.window_id.is_some());
+    }
+
+    #[test]
+    fn updater_cleanup_writability_and_script_guards_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake_exe = dir.path().join("sing-box-gui.exe");
+        std::fs::write(&fake_exe, b"bin").unwrap();
+        assert!(is_install_dir_writable(&fake_exe));
+
+        let stale_bin = dir.path().join(".sing-box-gui.update-123-456.bin");
+        let stale_ps1 = dir.path().join(".sing-box-gui-update-123.ps1");
+        let keep = dir.path().join("sing-box-gui.exe");
+        std::fs::write(&stale_bin, b"stale").unwrap();
+        std::fs::write(&stale_ps1, b"stale").unwrap();
+        cleanup_stale_app_update_files_in_dir(dir.path());
+        assert!(!stale_bin.exists());
+        assert!(!stale_ps1.exists());
+        assert!(keep.exists());
+
+        let source = include_str!("main.rs");
+        assert!(source.contains("is_some_and(|n| n != expected_size)"));
+        assert!(source.contains("$waited -lt 60"));
+        assert!(source.contains("Start-Process -FilePath $Target"));
+        assert!(source.contains("WAITED -lt 60"));
+    }
 }
 
 /// Whether Tick should poll proxies / connections for the given tab and tick.
@@ -4550,18 +5793,134 @@ fn pick_release_asset_url(assets: &[GithubAsset], suffix: &str) -> Option<String
         .map(|asset| asset.browser_download_url.clone())
 }
 
-async fn check_app_update() -> Result<message::AppUpdateInfo, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+fn official_release_page_url(tag: &str) -> String {
+    let tag = tag.trim();
+    if tag.is_empty() {
+        "https://github.com/zangge8855/sing-box-gui/releases/latest".to_string()
+    } else {
+        format!("https://github.com/zangge8855/sing-box-gui/releases/tag/{tag}")
+    }
+}
 
-    let res = client
-        .get("https://api.github.com/repos/zangge8855/sing-box-gui/releases/latest")
+fn is_install_dir_writable(exe_path: &std::path::Path) -> bool {
+    let Some(dir) = exe_path.parent() else {
+        return false;
+    };
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let probe = dir.join(format!(
+        ".sing-box-gui.write-probe-{}-{nonce}",
+        std::process::id()
+    ));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(file) => {
+            drop(file);
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn cleanup_stale_app_update_files_in_dir(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with(".sing-box-gui.update-")
+            || name_str.starts_with(".sing-box-gui-update-")
+            || name_str.starts_with(".sing-box-gui.write-probe-")
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn cleanup_stale_app_update_files() {
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        cleanup_stale_app_update_files_in_dir(dir);
+    }
+    cleanup_stale_app_update_files_in_dir(&std::env::temp_dir());
+}
+
+fn write_updater_script(
+    current: &std::path::Path,
+    file_name: &str,
+    script: &str,
+) -> Result<std::path::PathBuf, String> {
+    let primary = current.with_file_name(file_name);
+    match std::fs::write(&primary, script) {
+        Ok(()) => Ok(primary),
+        Err(primary_err) => {
+            let _ = std::fs::remove_file(&primary);
+            let fallback = std::env::temp_dir().join(file_name);
+            match std::fs::write(&fallback, script) {
+                Ok(()) => Ok(fallback),
+                Err(fallback_err) => {
+                    let _ = std::fs::remove_file(&fallback);
+                    Err(format!(
+                        "Failed to write update script (beside exe: {primary_err}; temp: {fallback_err})"
+                    ))
+                }
+            }
+        }
+    }
+}
+
+async fn github_get_with_no_proxy_fallback(
+    url: &str,
+    timeout: std::time::Duration,
+    redirect_limit: usize,
+) -> Result<reqwest::Response, String> {
+    let build_client = |no_proxy: bool| {
+        let mut builder = reqwest::Client::builder()
+            .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::limited(redirect_limit));
+        if no_proxy {
+            builder = builder.no_proxy();
+        }
+        builder.build()
+    };
+    let primary = build_client(false).map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+    match primary
+        .get(url)
         .header("User-Agent", "sing-box-gui")
         .send()
         .await
-        .map_err(|e| format!("Network request failed: {}", e))?;
+    {
+        Ok(res) => Ok(res),
+        Err(primary_err) => {
+            let direct = build_client(true)
+                .map_err(|e| format!("Failed to build direct HTTP client: {e}"))?;
+            direct
+                .get(url)
+                .header("User-Agent", "sing-box-gui")
+                .send()
+                .await
+                .map_err(|direct_err| {
+                    format!("Request failed: {primary_err} (direct retry failed: {direct_err})")
+                })
+        }
+    }
+}
+
+async fn check_app_update() -> Result<message::AppUpdateInfo, String> {
+    let res = github_get_with_no_proxy_fallback(
+        "https://api.github.com/repos/zangge8855/sing-box-gui/releases/latest",
+        std::time::Duration::from_secs(15),
+        10,
+    )
+    .await?;
 
     // 404 from /releases/latest = the repo has published *no* GitHub release yet.
     let status = res.status();
@@ -4616,24 +5975,14 @@ async fn download_app_update_binary(
     if !is_official_update_asset_url(&parsed_url, &tag) {
         return Err("Update URL is not an official sing-box-gui release asset".to_string());
     }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
-
-    let res = client
-        .get(&url)
-        .header("User-Agent", "sing-box-gui")
-        .send()
-        .await
-        .map_err(|e| format!("Download request failed: {}", e))?;
+    let res =
+        github_get_with_no_proxy_fallback(&url, std::time::Duration::from_secs(300), 10).await?;
 
     if !res.status().is_success() {
         return Err(format!("Download failed with status: {}", res.status()));
     }
 
-    if res.content_length() != Some(expected_size) {
+    if res.content_length().is_some_and(|n| n != expected_size) {
         return Err("Update asset size does not match release metadata".to_string());
     }
 
@@ -4737,8 +6086,7 @@ fn apply_update_and_restart(new_binary: &std::path::Path) -> Result<(), String> 
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        let script_path =
-            current.with_file_name(format!(".sing-box-gui-update-{}.ps1", std::process::id()));
+        let script_name = format!(".sing-box-gui-update-{}.ps1", std::process::id());
         let bak = current.with_extension("exe.bak");
         // PowerShell receives paths as arguments, so quotes and shell
         // metacharacters in an installation directory are never interpolated
@@ -4752,8 +6100,13 @@ fn apply_update_and_restart(new_binary: &std::path::Path) -> Result<(), String> 
 $ErrorActionPreference = 'Stop'
 $replaced = $false
 try {
-    while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    $waited = 0
+    while ((Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) -and ($waited -lt 60)) {
         Start-Sleep -Milliseconds 250
+        $waited++
+    }
+    if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+        throw "Timed out waiting for application process to exit"
     }
     if (Test-Path -LiteralPath $Backup) { Remove-Item -LiteralPath $Backup -Force }
     if (Test-Path -LiteralPath $Target) { Move-Item -LiteralPath $Target -Destination $Backup -Force }
@@ -4773,6 +6126,7 @@ try {
         }
         if (Test-Path -LiteralPath $Backup) {
             Move-Item -LiteralPath $Backup -Destination $Target -Force
+            Start-Process -FilePath $Target | Out-Null
         }
     } catch { }
     exit 1
@@ -4781,10 +6135,7 @@ try {
     Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 }
 "#;
-        if let Err(error) = std::fs::write(&script_path, script) {
-            let _ = std::fs::remove_file(&script_path);
-            return Err(format!("Failed to write update script: {}", error));
-        }
+        let script_path = write_updater_script(&current, &script_name, script)?;
 
         let spawn_result = std::process::Command::new("powershell.exe")
             .args([
@@ -4816,8 +6167,7 @@ try {
 
     #[cfg(unix)]
     {
-        let script_path =
-            current.with_file_name(format!(".sing-box-gui-update-{}.sh", std::process::id()));
+        let script_name = format!(".sing-box-gui-update-{}.sh", std::process::id());
         fn shell_quote(value: &std::path::Path) -> String {
             format!("'{}'", value.to_string_lossy().replace('\'', "'\\''"))
         }
@@ -4831,16 +6181,27 @@ cleanup() {{
   rm -f -- "$0" "$NEW"
 }}
 trap cleanup EXIT
-while kill -0 "$PID" 2>/dev/null; do sleep 0.25; done
+WAITED=0
+while kill -0 "$PID" 2>/dev/null && [ "$WAITED" -lt 60 ]; do
+  sleep 0.25
+  WAITED=$((WAITED + 1))
+done
+if kill -0 "$PID" 2>/dev/null; then
+  exit 1
+fi
 rm -f -- "$BACKUP"
 if [ -e "$TARGET" ]; then mv -f -- "$TARGET" "$BACKUP" || exit 1; fi
 if ! mv -f -- "$NEW" "$TARGET"; then
-  [ -e "$BACKUP" ] && mv -f -- "$BACKUP" "$TARGET"
+  if [ -e "$BACKUP" ] && mv -f -- "$BACKUP" "$TARGET"; then
+    "$TARGET" &
+  fi
   exit 1
 fi
 if ! chmod +x -- "$TARGET"; then
   rm -f -- "$TARGET"
-  [ -e "$BACKUP" ] && mv -f -- "$BACKUP" "$TARGET"
+  if [ -e "$BACKUP" ] && mv -f -- "$BACKUP" "$TARGET"; then
+    "$TARGET" &
+  fi
   exit 1
 fi
 "$TARGET" &
@@ -4854,17 +6215,16 @@ wait "$NEW_PID" 2>/dev/null || true
 if [ -e "$TARGET" ]; then
   rm -f -- "$TARGET"
 fi
-[ -e "$BACKUP" ] && mv -f -- "$BACKUP" "$TARGET"
+if [ -e "$BACKUP" ] && mv -f -- "$BACKUP" "$TARGET"; then
+  "$TARGET" &
+fi
 exit 1
 "#,
             current = shell_quote(&current),
             new = shell_quote(new_binary),
             pid = pid,
         );
-        if let Err(error) = std::fs::write(&script_path, &script) {
-            let _ = std::fs::remove_file(&script_path);
-            return Err(format!("Failed to write update script: {}", error));
-        }
+        let script_path = write_updater_script(&current, &script_name, &script)?;
         use std::os::unix::fs::PermissionsExt;
         let mut perms = match std::fs::metadata(&script_path) {
             Ok(metadata) => metadata.permissions(),
@@ -4926,6 +6286,7 @@ fn main() -> iced::Result {
     if !is_ui_smoke() {
         core::cleanup_stale_temp_binaries();
         config::cleanup_stale_temp_files();
+        cleanup_stale_app_update_files();
     }
 
     let default_panic = std::panic::take_hook();
@@ -4933,15 +6294,32 @@ fn main() -> iced::Result {
         // Only a main-thread panic tears the app down; tokio catches worker
         // panics and the app keeps running, so cleaning up there would
         // silently desync the OS proxy from the still-alive UI.
+        // Run cleanup in a bounded helper thread so a held mutex on the
+        // panicking thread can never deadlock the panic hook.
         if !is_ui_smoke() && std::thread::current().name() == Some("main") {
-            let config = config::load_gui_config();
-            if config.system_proxy_owned
-                || sysproxy::is_system_proxy_owned()
-                || sysproxy::has_persisted_backup()
+            let (tx, rx) = std::sync::mpsc::channel();
+            if std::thread::Builder::new()
+                .name("panic-cleanup".to_string())
+                .spawn(move || {
+                    let config = config::load_gui_config();
+                    if config.system_proxy_owned
+                        || sysproxy::is_system_proxy_owned()
+                        || sysproxy::has_persisted_backup()
+                    {
+                        let _ = sysproxy::set_system_proxy(false, config.mixed_port);
+                    }
+                    if config.close_core_on_exit {
+                        core::stop_core();
+                        if core::is_detached_core_running(&config) {
+                            let _ = core::stop_detached_core(&config);
+                        }
+                    }
+                    let _ = tx.send(());
+                })
+                .is_ok()
             {
-                let _ = sysproxy::set_system_proxy(false, config.mixed_port);
+                let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
             }
-            core::stop_core();
         }
         default_panic(info);
     }));
@@ -4978,6 +6356,9 @@ fn main() -> iced::Result {
         }
         if config.close_core_on_exit {
             core::stop_core();
+            if core::is_detached_core_running(&config) {
+                let _ = core::stop_detached_core(&config);
+            }
         }
         let _ = tx.send(());
     });

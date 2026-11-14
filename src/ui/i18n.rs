@@ -179,6 +179,17 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "btn_reset_filters",
     "logs_count_fmt",
     "profile_kind_local",
+    "native_json_ignored_toast",
+    "update_dir_readonly",
+    "core_start_cancelled",
+    "detached_core_detected",
+    "tun_privilege_required",
+    "core_dl_starting",
+    "core_dl_fetching",
+    "core_dl_downloading",
+    "core_dl_verifying",
+    "core_dl_extracting",
+    "core_dl_installing",
 ];
 
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
@@ -559,6 +570,23 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_reset_filters" => "Reset Filters",
             "logs_count_fmt" => "{} / {} lines",
             "profile_kind_local" => "Local / Share Link",
+            "native_json_ignored_toast" => "Native sing-box JSON active; GUI settings skipped: {}",
+            "update_dir_readonly" => {
+                "Install folder is read-only; opened release page to download and replace manually."
+            }
+            "core_start_cancelled" => "Core startup cancelled",
+            "detached_core_detected" => {
+                "Detected an active background sing-box instance; disconnect before re-starting."
+            }
+            "tun_privilege_required" => {
+                "TUN mode requires administrator privileges or cap_net_admin on sing-box."
+            }
+            "core_dl_starting" => "Preparing download...",
+            "core_dl_fetching" => "Fetching release metadata...",
+            "core_dl_downloading" => "Downloading sing-box ({})...",
+            "core_dl_verifying" => "Verifying package checksum...",
+            "core_dl_extracting" => "Extracting sing-box...",
+            "core_dl_installing" => "Installing sing-box...",
 
             _ => key,
         },
@@ -912,6 +940,21 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_reset_filters" => "重置筛选",
             "logs_count_fmt" => "{} / {} 条日志",
             "profile_kind_local" => "本地配置 / 分享链接",
+            "native_json_ignored_toast" => "当前为原生 sing-box JSON 配置，以下 GUI 设置不生效：{}",
+            "update_dir_readonly" => "安装目录为只读，已打开下载页面，请手动下载并替换程序。",
+            "core_start_cancelled" => "已取消启动内核",
+            "detached_core_detected" => {
+                "检测到后台独立运行的 sing-box 内核，如需重启请先断开停止。"
+            }
+            "tun_privilege_required" => {
+                "TUN 模式需要管理员权限或为 sing-box 授予 cap_net_admin 权限。"
+            }
+            "core_dl_starting" => "正在准备下载…",
+            "core_dl_fetching" => "正在获取版本信息…",
+            "core_dl_downloading" => "正在下载 sing-box ({})…",
+            "core_dl_verifying" => "正在校验安装包…",
+            "core_dl_extracting" => "正在解压 sing-box…",
+            "core_dl_installing" => "正在安装 sing-box…",
 
             _ => key,
         },
