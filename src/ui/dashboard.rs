@@ -4,7 +4,8 @@ use crate::ui::i18n::tr;
 use crate::ui::page_header;
 use crate::ui::theme;
 use crate::ui::util::{
-    format_size, format_speed, labelled_size, traffic_usage_ratio, truncate_width,
+    LIGHT_WIDTH, SEMIBOLD_WIDTH, fit_width, format_size, format_speed, labelled_size, text_width,
+    traffic_usage_ratio,
 };
 use iced::widget::{
     Space, button, column, container, responsive, row, stack, text, text_input, toggler, tooltip,
@@ -171,13 +172,6 @@ pub fn render<'a>(
                 .style(|t| theme::badge_colored(theme::WARNING, t))
                 .into(),
             );
-        } else if has_profile {
-            status_items.push(
-                text(format!("· {}", tr(lang, "dash_current_node")))
-                    .size(theme::TYPE_CAPTION)
-                    .color(text_tertiary)
-                    .into(),
-            );
         }
         let status_line = iced::widget::Row::with_children(status_items)
             .spacing(crate::ui::SP_12)
@@ -240,13 +234,21 @@ pub fn render<'a>(
         };
         // Size and truncation follow the room actually left beside the
         // controls, so a long node name never pushes them off the card.
-        let headline_size = if is_compact || identity_w < 320.0 {
-            theme::TYPE_TITLE
+        // A long name steps down a size before it is cut: a slightly smaller
+        // headline reads better than "Premiu…". The ghost button insets the
+        // text 8px on each side.
+        let headline_room = (identity_w - 16.0).max(80.0);
+        let headline_sizes: &[f32] = if is_compact || identity_w < 320.0 {
+            &[theme::TYPE_TITLE, theme::TYPE_TITLE_SM]
         } else {
-            theme::TYPE_DISPLAY
+            &[theme::TYPE_DISPLAY, theme::TYPE_TITLE, theme::TYPE_TITLE_SM]
         };
-        let headline_cols = ((identity_w - 16.0) / (headline_size * 0.6)).max(8.0) as usize;
-        let headline_short = truncate_width(&headline, headline_cols);
+        let headline_size = headline_sizes
+            .iter()
+            .copied()
+            .find(|&s| text_width(&headline, s * LIGHT_WIDTH) <= headline_room)
+            .unwrap_or(theme::TYPE_TITLE_SM);
+        let headline_short = fit_width(&headline, headline_room, headline_size * LIGHT_WIDTH);
         let headline_truncated = headline_short != headline;
         let headline_text = text(headline_short)
             .size(headline_size)
@@ -276,82 +278,69 @@ pub fn render<'a>(
         };
 
         // Quiet facts beneath the headline: label in grey, value in ink.
+        // Every fact sits in the same 8px inset as the headline button, so a
+        // wrapped second line starts on the same edge as the first.
+        let fact = |label: &'static str, value: String| {
+            row![
+                text(tr(lang, label))
+                    .size(theme::TYPE_CAPTION)
+                    .color(text_tertiary),
+                text(value)
+                    .size(theme::TYPE_BTN_SM)
+                    .font(theme::metric_font())
+                    .color(text_primary),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+        };
         let mut fact_items: Vec<Element<'_, Message>> = Vec::new();
         if let Some(desc) = subline {
-            fact_items.push(text(desc).size(theme::TYPE_BTN_SM).color(text_muted).into());
+            fact_items.push(
+                container(text(desc).size(theme::TYPE_BTN_SM).color(text_muted))
+                    .padding([2, 8])
+                    .into(),
+            );
         } else {
             fact_items.push(
-                button(
-                    row![
-                        text(tr(lang, "dash_connections"))
-                            .size(theme::TYPE_CAPTION)
-                            .color(text_tertiary),
-                        text(active_connections.to_string())
-                            .size(theme::TYPE_BTN_SM)
-                            .font(theme::metric_font())
-                            .color(text_primary),
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center),
-                )
-                .padding([2, 8])
-                .style(theme::button_ghost)
-                .on_press(Message::TabChanged(Tab::Connections))
-                .into(),
-            );
-            if let Some(profile) = active_profile {
-                fact_items.push(
-                    text(format!(
-                        "{}: {}",
-                        tr(lang, "fact_profile"),
-                        truncate_width(&profile.name, 16)
-                    ))
-                    .size(theme::TYPE_CAPTION)
-                    .color(text_tertiary)
+                button(fact("dash_connections", active_connections.to_string()))
+                    .padding([2, 8])
+                    .style(theme::button_ghost)
+                    .on_press(Message::TabChanged(Tab::Connections))
                     .into(),
-                );
-            }
+            );
+            // The active profile has its own strip below; the hero keeps to
+            // what the core is doing right now.
             fact_items.push(
-                text(format!(
-                    "{}: {}",
-                    tr(lang, "fact_port"),
-                    gui_config.mixed_port
-                ))
-                .size(theme::TYPE_CAPTION)
-                .font(theme::metric_font())
-                .color(text_tertiary)
-                .into(),
+                container(fact("fact_port", gui_config.mixed_port.to_string()))
+                    .padding([2, 8])
+                    .into(),
             );
             if gui_config.tun_mode {
                 fact_items.push(
                     container(
-                        text("TUN")
-                            .size(theme::TYPE_MICRO)
-                            .font(theme::ui_font(iced::font::Weight::Semibold))
-                            .color(theme::badge_text(theme::INFO, theme)),
+                        container(
+                            text("TUN")
+                                .size(theme::TYPE_MICRO)
+                                .font(theme::ui_font(iced::font::Weight::Semibold))
+                                .color(theme::badge_text(theme::INFO, theme)),
+                        )
+                        .padding([2, 6])
+                        .style(|t| theme::badge_colored(theme::INFO, t)),
                     )
-                    .padding([2, 6])
-                    .style(|t| theme::badge_colored(theme::INFO, t))
+                    .padding([2, 8])
                     .into(),
                 );
             }
         }
         let facts = iced::widget::Row::with_children(fact_items)
-            .spacing(crate::ui::SP_12)
+            .spacing(4)
             .align_y(Alignment::Center)
             .wrap()
-            .vertical_spacing(4);
+            .vertical_spacing(2);
 
-        let identity = column![
-            container(status_line).padding([0, 8]),
-            headline_el,
-            container(facts).padding(iced::Padding {
-                left: if subline.is_some() { 8.0 } else { 0.0 },
-                ..Default::default()
-            }),
-        ]
-        .spacing(6)
-        .width(Length::Fill);
+        let identity = column![container(status_line).padding([0, 8]), headline_el, facts,]
+            .spacing(6)
+            .width(Length::Fill);
 
         // ── Controls: routing mode and system proxy, beside the power ─────
         let label_w = match lang {
@@ -591,25 +580,14 @@ pub fn render<'a>(
                     ..Default::default()
                 })
         };
-        let peak = history.iter().map(|&(u, d)| u.max(d)).max().unwrap_or(0);
-        let mut chart_header = row![
+        // Peaks are labelled on the chart's own axis; the header just names
+        // the card and keys the two series.
+        let chart_header = row![
             text(tr(lang, "speed_history_chart"))
                 .size(theme::TYPE_HEADING)
                 .font(theme::ui_font(iced::font::Weight::Semibold))
                 .color(text_primary),
             Space::new().width(Length::Fill),
-        ]
-        .spacing(crate::ui::SP_12)
-        .align_y(Alignment::Center);
-        if peak > 0 {
-            chart_header = chart_header.push(
-                text(format!("{} {}", tr(lang, "chart_peak"), format_speed(peak)))
-                    .size(theme::TYPE_CAPTION)
-                    .font(theme::metric_font())
-                    .color(text_tertiary),
-            );
-        }
-        chart_header = chart_header.push(
             row![
                 legend_swatch(down_color),
                 text(tr(lang, "chart_legend_down"))
@@ -623,7 +601,9 @@ pub fn render<'a>(
             ]
             .spacing(6)
             .align_y(Alignment::Center),
-        );
+        ]
+        .spacing(crate::ui::SP_12)
+        .align_y(Alignment::Center);
 
         let idle = !core_running || history.iter().all(|&(u, d)| u == 0 && d == 0);
         let chart_el: Element<'_, Message> = if fill_height {
@@ -698,6 +678,7 @@ pub fn render<'a>(
                 downloading,
                 updating_profile_id == Some(profile.id.as_str()),
                 is_compact,
+                content_w,
             ));
         }
 
@@ -829,10 +810,10 @@ fn onboarding_card<'a>(
     // Step 2: Import profile or subscription
     let has_profile = active_profile.is_some();
     let step2_body: Element<'a, Message> = if let Some(profile) = active_profile {
-        text(format!(
-            "{}: {}",
+        text(crate::ui::util::labelled(
+            lang,
             tr(lang, "onboarding_step2_ready"),
-            profile.name
+            &profile.name,
         ))
         .size(theme::TYPE_CAPTION)
         .color(theme::success_text(theme))
@@ -1015,10 +996,25 @@ fn profile_strip<'a>(
     downloading: bool,
     updating: bool,
     is_compact: bool,
+    content_w: f32,
 ) -> Element<'a, Message> {
     let text_primary = theme::text_primary(theme);
     let text_muted = theme::text_muted(theme);
     let caption = |s: String| text(s).size(theme::TYPE_CAPTION).color(text_muted);
+
+    // Wide: the name gets a fixed column beside the meter. Compact: it shares
+    // a row with the Update button only.
+    let ident_w = (content_w * 0.24).clamp(180.0, 280.0);
+    let name_room = if is_compact {
+        content_w - theme::CARD_PAD_DENSE * 2.0 - 120.0
+    } else {
+        ident_w
+    } - 16.0;
+    let name = fit_width(
+        &profile.name,
+        name_room.max(60.0),
+        theme::TYPE_BODY * SEMIBOLD_WIDTH,
+    );
 
     let ident = column![
         container(
@@ -1028,15 +1024,12 @@ fn profile_strip<'a>(
         )
         .padding([0, 6]),
         button(
-            text(truncate_width(
-                &profile.name,
-                if is_compact { 30 } else { 24 }
-            ))
-            .size(theme::TYPE_BODY)
-            .font(theme::ui_font(iced::font::Weight::Semibold))
-            .shaping(text::Shaping::Advanced)
-            .wrapping(text::Wrapping::None)
-            .color(text_primary),
+            text(name)
+                .size(theme::TYPE_BODY)
+                .font(theme::ui_font(iced::font::Weight::Semibold))
+                .shaping(text::Shaping::Advanced)
+                .wrapping(text::Wrapping::None)
+                .color(text_primary),
         )
         .padding([2, 6])
         .style(theme::button_ghost)
@@ -1125,14 +1118,22 @@ fn profile_strip<'a>(
         b
     });
 
+    // The profile name is a ghost button whose 6px padding insets its text;
+    // the card's left inset gives those 6px back so the label, the name and
+    // the usage line all start on the card margin.
+    const GHOST_INSET: f32 = 6.0;
     let body: Element<'a, Message> = if is_compact {
         let mut top = row![ident, Space::new().width(Length::Fill)].align_y(Alignment::Center);
         if let Some(b) = update_btn {
             top = top.push(b);
         }
+        let usage = container(usage).padding(iced::Padding {
+            left: GHOST_INSET,
+            ..Default::default()
+        });
         column![top, usage].spacing(crate::ui::SP_12).into()
     } else {
-        let mut line = row![ident.width(Length::Fixed(200.0)), usage]
+        let mut line = row![ident.width(Length::Fixed(ident_w)), usage]
             .spacing(crate::ui::SP_20)
             .align_y(Alignment::Center);
         if let Some(b) = update_btn {
@@ -1142,7 +1143,10 @@ fn profile_strip<'a>(
     };
 
     container(body)
-        .padding(theme::CARD_PAD_DENSE)
+        .padding(iced::Padding {
+            left: theme::CARD_PAD_DENSE - GHOST_INSET,
+            ..iced::Padding::new(theme::CARD_PAD_DENSE)
+        })
         .width(Length::Fill)
         .style(theme::card_bg)
         .into()
@@ -1151,7 +1155,8 @@ fn profile_strip<'a>(
 /// Splits the plot height around the 1px baseline: `(down_area, up_area,
 /// px_per_byte)`. Both directions share one scale; the area each side gets
 /// follows its peak, so a download-heavy window doesn't leave the upload half
-/// as dead space. Each side keeps at least 22% so the quiet one stays legible.
+/// as dead space. Each side keeps at least 14%: room for its peak label
+/// without parking an empty band under a quiet upload.
 fn waveform_split(peak_down: u64, peak_up: u64, height: f32) -> (f32, f32, f32) {
     // 2px breath between each bar and the baseline.
     const BREATH: f32 = 2.0;
@@ -1160,7 +1165,7 @@ fn waveform_split(peak_down: u64, peak_up: u64, height: f32) -> (f32, f32, f32) 
     let share = if sum == 0 {
         0.5
     } else {
-        (peak_down as f32 / sum as f32).clamp(0.22, 0.78)
+        (peak_down as f32 / sum as f32).clamp(0.14, 0.86)
     };
     let down_reach = (usable * share).floor().max(1.0);
     let up_reach = (usable - down_reach).max(1.0);
@@ -1188,7 +1193,7 @@ fn traffic_waveform<'a>(
     let text_tertiary = theme::text_tertiary(theme);
 
     // Reserved Y-axis rail width so peak labels fit beside scale ticks on one line.
-    const Y_AXIS_W: f32 = 88.0;
+    const Y_AXIS_W: f32 = 80.0;
     let plot_width = (chart_width - Y_AXIS_W - crate::ui::SP_8).max(80.0);
     let n = history.len().max(1);
     let peak_up = history.iter().map(|&(u, _)| u).max().unwrap_or(0);
@@ -1329,48 +1334,46 @@ fn traffic_waveform<'a>(
     .width(Length::Fill)
     .height(height);
 
-    let y_axis = column![
+    // Each peak label rides level with the tallest bar it describes, so a
+    // quiet upload side is labelled next to its bars rather than at the
+    // bottom of an otherwise empty band.
+    const LABEL_H: f32 = 14.0;
+    let reach = |peak: u64, area: f32| {
+        if peak == 0 {
+            0.0
+        } else {
+            (peak as f32 * scale).clamp(2.0, (area - 5.0).max(2.0))
+        }
+    };
+    let down_top = (down_area - 2.0 - reach(peak_down, down_area) - LABEL_H / 2.0)
+        .clamp(0.0, (down_area - LABEL_H).max(0.0));
+    let up_top = (down_area + 3.0 + reach(peak_up, up_area) - LABEL_H / 2.0)
+        .clamp(down_area + 1.0, (height - LABEL_H).max(down_area + 1.0));
+    let axis_label = |label: String, color: Color| {
         container(
-            text(if peak_down > 0 {
-                format!("↓ {}", format_speed(peak_down))
-            } else {
-                String::new()
-            })
-            .size(theme::TYPE_MICRO)
-            .font(theme::metric_font())
-            .wrapping(text::Wrapping::None)
-            .color(down_color),
-        )
-        .height((down_area - 8.0).max(12.0))
-        .width(Length::Fill)
-        .align_x(Alignment::End)
-        .align_y(Alignment::Start),
-        container(
-            text("0")
+            text(label)
                 .size(theme::TYPE_MICRO)
                 .font(theme::metric_font())
                 .wrapping(text::Wrapping::None)
-                .color(text_tertiary),
+                .color(color),
         )
-        .height(16)
+        .height(LABEL_H)
         .width(Length::Fill)
         .align_x(Alignment::End)
-        .align_y(Alignment::Center),
-        container(
-            text(if peak_up > 0 {
-                format!("↑ {}", format_speed(peak_up))
-            } else {
-                String::new()
-            })
-            .size(theme::TYPE_MICRO)
-            .font(theme::metric_font())
-            .wrapping(text::Wrapping::None)
-            .color(up_color),
-        )
-        .height((up_area - 8.0).max(12.0))
-        .width(Length::Fill)
-        .align_x(Alignment::End)
-        .align_y(Alignment::End),
+        .align_y(Alignment::Center)
+    };
+    let peak_label = |arrow: &str, peak: u64| {
+        if peak > 0 {
+            format!("{arrow} {}", format_speed(peak))
+        } else {
+            String::new()
+        }
+    };
+    let y_axis = column![
+        Space::new().height(down_top),
+        axis_label(peak_label("↓", peak_down), down_color),
+        Space::new().height((up_top - down_top - LABEL_H).max(0.0)),
+        axis_label(peak_label("↑", peak_up), up_color),
     ]
     .width(Length::Fixed(Y_AXIS_W))
     .height(height);
@@ -1392,7 +1395,7 @@ mod tests {
             let (d, u, scale) = waveform_split(down, up, 148.0);
             assert_eq!(d + u + 1.0, 148.0, "areas plus baseline fill the plot");
             assert!(
-                d >= 0.22 * 143.0 && u >= 0.22 * 143.0,
+                d >= 0.14 * 143.0 && u >= 0.14 * 143.0,
                 "quiet side stays legible"
             );
             // Neither peak overflows its side at the shared scale.

@@ -29,8 +29,9 @@ pub fn render<'a>(
         } else {
             (content_w - theme::GRID_GAP) / 2.0
         };
-        // Text column inside rule item row: card_w - 2*CARD_PAD - pad_l(10) - pad_r(4) - tag(~42) - del(26) - spacing(24).
-        let item_cols = ((card_w - theme::CARD_PAD * 2.0 - 106.0) / 7.2).max(12.0) as usize;
+        // Rule text room: card minus padding, row insets (10 + 4), the close
+        // button (~24) and two 12px gaps. The kind tag is subtracted per row.
+        let item_px = card_w - theme::CARD_PAD * 2.0 - 14.0 - 24.0 - 24.0;
         let theme = &theme_cloned;
 
         // What the built-in rules already cover, as one quiet line rather
@@ -79,7 +80,7 @@ pub fn render<'a>(
             direct_input,
             direct_lists,
             !is_compact && direct_rows < proxy_rows,
-            item_cols,
+            item_px,
             lang,
             theme,
         );
@@ -88,7 +89,7 @@ pub fn render<'a>(
             proxy_input,
             proxy_lists,
             !is_compact && proxy_rows < direct_rows,
-            item_cols,
+            item_px,
             lang,
             theme,
         );
@@ -118,7 +119,7 @@ fn rule_card<'a>(
     input_value: &'a str,
     lists: [(RuleField, &'a [String]); 2],
     stretch: bool,
-    item_cols: usize,
+    item_px: f32,
     lang: Language,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
@@ -194,14 +195,15 @@ fn rule_card<'a>(
         for (index, item) in items.iter().enumerate() {
             // Quiet until hovered, like the connection table's close glyph.
             let delete = button(
-                text(crate::ui::icons::ICON_DELETE)
+                text(crate::ui::icons::ICON_CLOSE)
                     .font(iced::Font::with_name("Material Icons"))
                     .size(crate::ui::ICON_SIZE),
             )
             .style(theme::button_dismiss)
             .padding(3)
             .on_press(Message::RemoveRule { field, index });
-            let short_item = crate::ui::util::truncate_width(item, item_cols);
+            let room = item_px - crate::ui::util::text_width(tag, theme::TYPE_MICRO);
+            let short_item = crate::ui::util::fit_mono(item, room.max(60.0), theme::TYPE_BTN_SM);
             let is_truncated = short_item != *item;
             let item_text = container(
                 text(short_item)

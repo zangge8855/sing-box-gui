@@ -344,8 +344,8 @@ pub fn render<'a>(
                 };
                 let mut col = column![caption(
                     format!(
-                        "{}: {tag} · {current_version}",
-                        tr(lang, "status_new_version")
+                        "{} · {current_version}",
+                        crate::ui::util::labelled(lang, tr(lang, "status_new_version"), tag)
                     ),
                     theme::warning_text(theme),
                 )]
@@ -401,14 +401,14 @@ pub fn render<'a>(
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
                 container(inline("app_language", None, None, lang_picker.into()))
-                    .padding([10, 0])
+                    .padding([12, 0])
                     .width(Length::Fill),
                 container(Space::new())
                     .width(Length::Fill)
                     .height(1)
                     .style(theme::hairline),
                 container(inline("app_theme", None, None, theme_picker.into()))
-                    .padding([10, 0])
+                    .padding([12, 0])
                     .width(Length::Fill),
             ]
             .width(Length::Fill),
@@ -903,29 +903,10 @@ pub fn render<'a>(
             .spacing(theme::GRID_GAP)
             .width(Length::Fill);
 
-        let mut save_btn = button(text(tr(lang, "btn_save_apply")).size(theme::TYPE_BTN_MD))
-            .padding(theme::BTN_PAD_MD)
-            .style(theme::button_primary);
-        let mut header_actions = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
-        if has_pending_changes {
-            save_btn = save_btn.on_press(Message::SaveSettings);
-            header_actions = header_actions.push(
-                button(text(tr(lang, "btn_discard_changes")).size(theme::TYPE_BTN_MD))
-                    .padding(theme::BTN_PAD_MD)
-                    .style(theme::button_secondary)
-                    .on_press(Message::DiscardSettings),
-            );
-        }
-        header_actions = header_actions.push(save_btn);
-
+        // Save / Discard live only in the pending-changes bar: they appear the
+        // moment there is something to save, and never twice on screen.
         let pad_compact = crate::ui::is_pad_compact(size.width);
-        let header = page_header(
-            "tab_settings",
-            lang,
-            Some(header_actions.into()),
-            theme,
-            pad_compact,
-        );
+        let header = page_header("tab_settings", lang, None, theme, pad_compact);
         let pinned_header: Element<'_, Message> = if has_pending_changes {
             let dirty_bar = container(
                 row![

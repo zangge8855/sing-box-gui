@@ -72,6 +72,7 @@ pub fn mono_font() -> iced::Font {
 // ── Type scale (f32 for iced::Pixels) ────────────────────────────────────────
 pub const TYPE_DISPLAY: f32 = 30.0; // hero node name, large speeds
 pub const TYPE_TITLE: f32 = 24.0; // page titles
+pub const TYPE_TITLE_SM: f32 = 20.0; // hero headline step-down for long names
 pub const TYPE_HEADING: f32 = 15.0; // card titles — semibold primary
 pub const TYPE_BODY: f32 = 14.0;
 pub const TYPE_SECTION: f32 = 14.0; // labels inside cards
@@ -1618,7 +1619,8 @@ mod tests {
     #[test]
     fn type_scale_is_ordered() {
         assert!(TYPE_DISPLAY > TYPE_TITLE);
-        assert!(TYPE_TITLE > TYPE_HEADING);
+        assert!(TYPE_TITLE > TYPE_TITLE_SM);
+        assert!(TYPE_TITLE_SM > TYPE_HEADING);
         assert!(TYPE_HEADING > TYPE_BODY);
         assert!(TYPE_BODY >= TYPE_SECTION);
         assert!(TYPE_SECTION >= TYPE_BTN_MD);

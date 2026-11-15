@@ -1,7 +1,7 @@
 use crate::message::Message;
 use crate::state::ProxyNode;
 use crate::ui::theme;
-use crate::ui::util::truncate_width;
+use crate::ui::util::{SEMIBOLD_WIDTH, fit_width};
 use crate::ui::{PAGE_COMPACT_W, SCROLL_GUTTER, empty_state, page_header};
 use iced::widget::{
     Column, Row, Space, button, column, container, responsive, row, scrollable, text, text_input,
@@ -209,7 +209,7 @@ pub fn render<'a>(
             column![
                 search_input.width(Length::Fill),
                 row![
-                    text(format!("{}:", tr(lang, "sort_nodes_by")))
+                    text(crate::ui::util::with_colon(lang, tr(lang, "sort_nodes_by")))
                         .size(theme::TYPE_CAPTION)
                         .color(text_muted),
                     sort_picker.width(Length::Fill),
@@ -225,7 +225,7 @@ pub fn render<'a>(
         } else {
             row![
                 search_input,
-                text(format!("{}:", tr(lang, "sort_nodes_by")))
+                text(crate::ui::util::with_colon(lang, tr(lang, "sort_nodes_by")))
                     .size(theme::TYPE_CAPTION)
                     .color(text_muted),
                 sort_picker.width(Length::Fixed(120.0)),
@@ -296,7 +296,7 @@ pub fn render<'a>(
                                 } else {
                                     text_primary
                                 }),
-                            text(truncate_width(active_node, 16))
+                            text(fit_width(active_node, 132.0, theme::TYPE_CAPTION))
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active {
                                     theme::accent_text(theme)
@@ -332,15 +332,21 @@ pub fn render<'a>(
 
                     let g_btn = button(
                         column![
-                            text(g.name.clone())
-                                .size(theme::TYPE_SECTION)
-                                .font(theme::ui_font(iced::font::Weight::Bold))
-                                .color(if is_active {
-                                    theme::accent_text(theme)
-                                } else {
-                                    text_primary
-                                }),
-                            text(truncate_width(active_node, 20))
+                            text(fit_width(
+                                &g.name,
+                                136.0,
+                                theme::TYPE_SECTION * SEMIBOLD_WIDTH
+                            ))
+                            .wrapping(text::Wrapping::None)
+                            .size(theme::TYPE_SECTION)
+                            .font(theme::ui_font(iced::font::Weight::Bold))
+                            .color(if is_active {
+                                theme::accent_text(theme)
+                            } else {
+                                text_primary
+                            }),
+                            text(fit_width(active_node, 136.0, theme::TYPE_CAPTION))
+                                .wrapping(text::Wrapping::None)
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active {
                                     theme::accent_text(theme)
@@ -776,7 +782,7 @@ fn render_proxy_card<'a>(
 ) -> Element<'a, Message> {
     use crate::ui::i18n::tr;
     use crate::ui::theme;
-    use crate::ui::util::truncate_width;
+    use crate::ui::util::text_width;
     use iced::widget::{button, column, container, row, text, tooltip};
     use iced::{Alignment, Length};
 
@@ -801,6 +807,7 @@ fn render_proxy_card<'a>(
         ),
         None => ("—".to_string(), theme::text_tertiary(theme)),
     };
+    let latency_w = 12.0 + text_width(&latency_label, theme::TYPE_CAPTION) * 1.04;
     let latency_el = row![
         container(Space::new())
             .width(6)
@@ -825,9 +832,14 @@ fn render_proxy_card<'a>(
     .align_y(Alignment::Center);
 
     let proto_color = theme::protocol_color(node_type);
-    let proto_label = node_type.to_uppercase();
+    let proto_label = fit_width(
+        &node_type.to_uppercase(),
+        96.0,
+        theme::TYPE_MICRO * SEMIBOLD_WIDTH,
+    );
+    let chip_w = 12.0 + text_width(&proto_label, theme::TYPE_MICRO) * SEMIBOLD_WIDTH;
     let type_tag = container(
-        text(truncate_width(&proto_label, 12))
+        text(proto_label)
             .size(theme::TYPE_MICRO)
             .color(theme::badge_text(proto_color, theme))
             .font(theme::ui_font(iced::font::Weight::Semibold)),
@@ -845,11 +857,9 @@ fn render_proxy_card<'a>(
         _ => None,
     };
     if let Some(addr) = server_label {
-        let chip_w = 14.0 + proto_label.chars().count().min(12) as f32 * 7.0;
-        let server_px = card_w - pad * 2.0 - chip_w - 72.0 - crate::ui::SP_8 * 2.0;
-        let server_cols = (server_px / 6.6).max(6.0) as usize;
+        let server_px = card_w - pad * 2.0 - chip_w - latency_w - crate::ui::SP_8 * 2.0 - 4.0;
         meta_row = meta_row.push(
-            text(truncate_width(&addr, server_cols))
+            text(fit_width(&addr, server_px.max(40.0), theme::TYPE_CAPTION))
                 .color(theme::text_tertiary(theme))
                 .size(theme::TYPE_CAPTION)
                 .wrapping(text::Wrapping::None)
@@ -868,13 +878,17 @@ fn render_proxy_card<'a>(
     let flag_opt = theme::detect_region_code(node_name);
 
     // Budget the name to one line: card width minus padding, region chip and
-    // the selection mark, at ~7.4px per Latin column for 14px text.
+    // the selection mark (each with its 8px gap).
     let name_px = card_w
         - pad * 2.0
-        - if flag_opt.is_some() { 34.0 } else { 0.0 }
-        - if is_selected { 26.0 } else { 0.0 };
-    let name_cols = (name_px / 7.4).max(8.0) as usize;
-    let display_name = truncate_width(clean_name, name_cols);
+        - if flag_opt.is_some() { 32.0 } else { 0.0 }
+        - if is_selected { 26.0 } else { 0.0 }
+        - 2.0;
+    let display_name = fit_width(
+        clean_name,
+        name_px.max(48.0),
+        theme::TYPE_SECTION * SEMIBOLD_WIDTH,
+    );
     let name_truncated = display_name != clean_name;
     let name_text = text(display_name)
         .shaping(text::Shaping::Advanced)

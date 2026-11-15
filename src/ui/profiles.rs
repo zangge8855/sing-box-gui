@@ -1,7 +1,9 @@
 use crate::message::Message;
 use crate::state::GuiConfig;
 use crate::ui::theme;
-use crate::ui::util::{format_size, labelled_size, traffic_usage_ratio, truncate_width};
+use crate::ui::util::{
+    SEMIBOLD_WIDTH, fit_mono, fit_width, format_size, labelled_size, traffic_usage_ratio,
+};
 use crate::ui::{PAGE_COMPACT_W, page_header};
 use iced::widget::{Column, Space, button, column, container, responsive, row, text, text_input};
 use iced::{Alignment, Element, Length};
@@ -33,6 +35,12 @@ pub fn render<'a>(
     let main_content = responsive(move |size| {
         let theme = &theme_cloned;
         let is_compact = size.width < PAGE_COMPACT_W;
+        // Room for a card's name and URL: the card's inner width, less the
+        // action buttons that share the row on wide layouts.
+        let card_inner = crate::ui::page_content_width(size.width, is_compact)
+            - crate::ui::SCROLL_GUTTER
+            - 4.0
+            - theme::CARD_PAD * 2.0;
         let text_primary = theme::text_primary(theme);
         let text_muted = theme::text_muted(theme);
 
@@ -87,19 +95,19 @@ pub fn render<'a>(
                 .on_press(msg)
         };
 
+        // A wrapping row would push the Fill spacer, and with it both
+        // buttons, onto a second line; the title takes the slack instead.
         let add_header = row![
             text(tr(lang, "import_sub"))
                 .color(text_primary)
                 .size(theme::TYPE_HEADING)
-                .font(theme::ui_font(iced::font::Weight::Semibold)),
-            Space::new().width(Length::Fill),
+                .font(theme::ui_font(iced::font::Weight::Semibold))
+                .width(Length::Fill),
             source_btn("btn_import_clipboard", Message::ImportFromClipboard),
             source_btn("btn_import_file", Message::ImportLocalFile),
         ]
         .spacing(crate::ui::SP_8)
-        .align_y(Alignment::Center)
-        .wrap()
-        .vertical_spacing(crate::ui::SP_8);
+        .align_y(Alignment::Center);
 
         let add_form = container(
             column![
@@ -258,7 +266,12 @@ pub fn render<'a>(
                 };
 
                 let masked_url = mask_sensitive_url(&profile.url);
-                let display_url = truncate_width(&masked_url, if is_compact { 42 } else { 54 });
+                let info_w = if is_compact {
+                    card_inner
+                } else {
+                    card_inner - if is_active { 200.0 } else { 260.0 }
+                };
+                let display_url = fit_mono(&masked_url, info_w, theme::TYPE_CAPTION);
 
                 let is_editing = editing_id.as_deref() == Some(profile.id.as_str());
 
@@ -418,9 +431,10 @@ pub fn render<'a>(
                     // Status reads as a small pill beside the name, not as a
                     // control-sized block that looks like a disabled button.
                     let mut name_row = row![
-                        text(truncate_width(
+                        text(fit_width(
                             &profile.name,
-                            if is_compact { 34 } else { 42 }
+                            info_w - if is_active { 100.0 } else { 0.0 },
+                            theme::TYPE_HEADING * SEMIBOLD_WIDTH,
                         ))
                         .color(text_primary)
                         .size(theme::TYPE_HEADING)
@@ -540,12 +554,13 @@ pub fn render<'a>(
         );
         main_layout_col = main_layout_col.push(grid_content);
 
+        // A single small action fits beside the title even at 640px.
         let header = page_header(
             "tab_profiles",
             lang,
             Some(open_folder_btn.into()),
             theme,
-            is_compact,
+            false,
         );
 
         // Scroll the import form with the records, leaving a slight right margin

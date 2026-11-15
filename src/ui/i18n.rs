@@ -22,7 +22,6 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "toast_latency_done",
     "toast_clipboard_empty",
     "chart_waiting_traffic",
-    "chart_peak",
     "chart_now",
     "chart_seconds_ago",
     "sys_proxy_desc",
@@ -35,7 +34,6 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "proxies_no_core_hint",
     "btn_reinstall_core",
     "latency_test_url_label",
-    "latency_test_settings",
     "col_process",
     "empty_connections_hint",
     "empty_logs_start_hint",
@@ -49,7 +47,6 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "status_downloading_update",
     "toast_update_downloading",
     "toast_update_installing",
-    "more_nodes_hint",
     "sort_connections_by",
     "sort_nodes_by",
     "sort_latency",
@@ -139,7 +136,6 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "placeholder_rule",
     "rule_tag_domain",
     "rule_tag_ip",
-    "settings_general",
     "settings_proxy",
     "settings_advanced",
     "settings_core",
@@ -168,7 +164,6 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "onboarding_step3_title",
     "onboarding_step3_ready",
     "onboarding_step3_waiting",
-    "fact_profile",
     "fact_port",
     "showing_nodes_cap",
     "showing_nodes_all",
@@ -176,7 +171,6 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "btn_show_less",
     "appearance_instant_hint",
     "settings_behavior",
-    "settings_draft_banner",
     "btn_browse",
     "btn_copy",
     "toast_copied",
@@ -188,12 +182,6 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "core_start_cancelled",
     "detached_core_detected",
     "tun_privilege_required",
-    "core_dl_starting",
-    "core_dl_fetching",
-    "core_dl_downloading",
-    "core_dl_verifying",
-    "core_dl_extracting",
-    "core_dl_installing",
 ];
 
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
@@ -255,7 +243,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "proxies_no_core_hint" => {
                 "Install the sing-box core in Settings to start and load proxy groups."
             }
-            "dash_current_node" => "Current Node",
             "dash_connections" => "Active Connections",
             "dash_no_node" => "Not selected",
             "log_search_placeholder" => "Filter log text…",
@@ -265,7 +252,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "log_filter_warn" => "Warn+",
             "log_filter_error" => "Error",
             "no_matching_logs" => "No log lines match the current filter.",
-            "more_nodes_hint" => "… and {} more nodes. Use search or Show All to view.",
             "rules_builtin_desc" => {
                 "Rule mode already bypasses private LAN and China mainland (geosite-cn / geoip-cn). Custom rules below are applied on top and restart the core automatically."
             }
@@ -317,7 +303,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "port_conflict_error" => "Proxy and controller ports must be different.",
             "settings_saved_toast" => "Settings saved and applied.",
             "profile_selected_toast" => "Active profile updated.",
-            "settings_pending" => "Unsaved changes — Save & Apply to use them, or Discard",
+            "settings_pending" => "You have unsaved changes",
             "settings_invalid" => "Please fix the highlighted settings.",
             "invalid_latency_url" => "Enter a valid HTTP(S) latency URL.",
             "invalid_latency_timeout" => "Latency timeout must be between 500 and 30000 ms.",
@@ -452,7 +438,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "chart_legend_down" => "Download",
             "chart_legend_up" => "Upload",
             "chart_waiting_traffic" => "Waiting for traffic…",
-            "chart_peak" => "Peak",
             "chart_now" => "Now",
             "chart_seconds_ago" => "{}s ago",
             "sys_proxy_desc" => "Point system HTTP/HTTPS traffic at the local mixed port.",
@@ -460,7 +445,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_clear_search" => "Clear search",
             "btn_reinstall_core" => "Reinstall Core",
             "latency_test_url_label" => "Latency test URL",
-            "latency_test_settings" => "Connection Tests",
             "latency_test_timeout_label" => "Latency timeout (ms)",
             "help_latency_test" => {
                 "Requested when testing node latency; a lightweight 204 page works best."
@@ -496,16 +480,16 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             // Software Update
             "app_update" => "Software Update",
             "btn_check_update" => "Check for Updates",
-            "status_not_checked" => "Not checked yet.",
+            "status_not_checked" => "Not checked yet",
             "status_checking" => "Checking for updates…",
-            "status_uptodate" => "You are running the latest version.",
+            "status_uptodate" => "Up to date",
             "status_new_version" => "New version available",
             "btn_view_release_on_github" => "View Release on GitHub",
             "btn_download_install" => "Download & Restart",
             "status_downloading_update" => "Downloading update…",
             "toast_update_downloading" => "Downloading update in the background…",
             "toast_update_installing" => "Installing update and restarting…",
-            "status_check_failed" => "Check failed:",
+            "status_check_failed" => "Update check failed",
 
             // Sorting
             "sort_connections_by" => "Sort by",
@@ -532,7 +516,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "placeholder_rule" => "e.g. example.com, 10.0.0.0/8",
             "rule_tag_domain" => "Domain",
             "rule_tag_ip" => "IP",
-            "settings_general" => "General",
             "settings_proxy" => "Proxy",
             "settings_advanced" => "Advanced",
             "settings_core" => "Core",
@@ -547,7 +530,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_open" => "Open",
             "core_status_installed" => "Installed",
             "core_status_missing" => "Not installed",
-            "app_version_current" => "Current version {}",
+            "app_version_current" => "Version {}",
             "help_config_preview" => "The full configuration handed to sing-box.",
 
             // UI polish additions
@@ -564,7 +547,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "onboarding_step3_title" => "3. Connect",
             "onboarding_step3_ready" => "Ready — click Power to start proxying.",
             "onboarding_step3_waiting" => "Finish the steps above to connect.",
-            "fact_profile" => "Profile",
             "fact_port" => "Port",
             "showing_nodes_cap" => "Showing {} of {} matching nodes",
             "showing_nodes_all" => "Showing all {} matching nodes",
@@ -572,7 +554,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_show_less" => "Show Top 120",
             "appearance_instant_hint" => "Applied immediately — no save required.",
             "settings_behavior" => "Startup & Updates",
-            "settings_draft_banner" => "Unsaved changes",
             "btn_browse" => "Browse…",
             "btn_copy" => "Copy",
             "toast_copied" => "Copied to clipboard",
@@ -590,12 +571,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tun_privilege_required" => {
                 "TUN mode requires administrator privileges or cap_net_admin on sing-box."
             }
-            "core_dl_starting" => "Preparing download...",
-            "core_dl_fetching" => "Fetching release metadata...",
-            "core_dl_downloading" => "Downloading sing-box ({})...",
-            "core_dl_verifying" => "Verifying package checksum...",
-            "core_dl_extracting" => "Extracting sing-box...",
-            "core_dl_installing" => "Installing sing-box...",
 
             _ => key,
         },
@@ -648,7 +623,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_goto_settings" => "打开系统设置",
             "proxies_no_profile_hint" => "请先导入或选择一个配置以查看代理节点。",
             "proxies_no_core_hint" => "请先在系统设置中安装 sing-box 内核，再启动以加载策略组。",
-            "dash_current_node" => "当前节点",
             "dash_connections" => "活动连接数",
             "dash_no_node" => "未选择节点",
             "log_search_placeholder" => "搜索日志内容…",
@@ -703,7 +677,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "port_conflict_error" => "代理端口与控制端口不能相同。",
             "settings_saved_toast" => "设置已保存并应用。",
             "profile_selected_toast" => "已切换活动配置。",
-            "settings_pending" => "有未保存的更改：点击“保存并应用”生效，或“放弃更改”还原",
+            "settings_pending" => "有尚未保存的更改",
             "settings_invalid" => "请修正标红的设置项。",
             "invalid_latency_url" => "请输入有效的 HTTP(S) 延迟测试网址。",
             "invalid_latency_timeout" => "延迟超时必须在 500 到 30000 毫秒之间。",
@@ -783,8 +757,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "mixed_port" => "混合代理端口",
             "api_port" => "控制端口",
             "dns_servers" => "DNS",
-            "dns_local" => "本地 DNS (直连)",
-            "dns_remote" => "远程 DNS (代理)",
+            "dns_local" => "本地 DNS（直连）",
+            "dns_remote" => "远程 DNS（代理）",
             "app_language" => "界面语言",
             "app_theme" => "应用主题",
             "theme_auto" => "跟随系统",
@@ -824,7 +798,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_less" => "收起",
             "placeholder_profile_name" => "配置文件名称",
             "placeholder_profile_url" => "订阅链接网址",
-            "core_config_preview" => "内核配置预览 (只读)",
+            "core_config_preview" => "内核配置预览（只读）",
             "btn_show_preview" => "显示配置预览",
             "btn_hide_preview" => "隐藏配置预览",
             "traffic_used" => "已用",
@@ -832,7 +806,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "chart_legend_down" => "下载",
             "chart_legend_up" => "上传",
             "chart_waiting_traffic" => "等待流量数据…",
-            "chart_peak" => "峰值",
             "chart_now" => "此刻",
             "chart_seconds_ago" => "{} 秒前",
             "sys_proxy_desc" => "让系统 HTTP/HTTPS 流量经由本地混合端口转发。",
@@ -840,8 +813,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_clear_search" => "清除搜索",
             "btn_reinstall_core" => "重新安装内核",
             "latency_test_url_label" => "测速 URL",
-            "latency_test_settings" => "连接测试",
-            "latency_test_timeout_label" => "测速超时 (毫秒)",
+            "latency_test_timeout_label" => "测速超时（毫秒）",
             "help_latency_test" => "节点测速时请求的地址，返回 204 的轻量页面最佳。",
             "col_process" => "进程",
             "process_unknown" => "—",
@@ -870,17 +842,16 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             // Software Update
             "app_update" => "软件更新",
             "btn_check_update" => "检查更新",
-            "status_not_checked" => "尚未检查更新。",
+            "status_not_checked" => "尚未检查",
             "status_checking" => "正在检查更新…",
-            "status_uptodate" => "当前已是最新版本。",
+            "status_uptodate" => "已是最新版本",
             "status_new_version" => "检测到新版本",
             "btn_view_release_on_github" => "在 GitHub 上查看发布",
             "btn_download_install" => "下载并重启",
             "status_downloading_update" => "正在下载更新…",
             "toast_update_downloading" => "正在后台下载更新…",
-            "more_nodes_hint" => "… 还有 {} 个节点，可搜索或点击显示全部查看。",
             "toast_update_installing" => "正在安装更新并重启…",
-            "status_check_failed" => "检查更新失败:",
+            "status_check_failed" => "检查更新失败",
 
             // Sorting
             "sort_connections_by" => "排序依据",
@@ -907,7 +878,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "placeholder_rule" => "如 example.com, 10.0.0.0/8，可一次添加多条",
             "rule_tag_domain" => "域名",
             "rule_tag_ip" => "IP",
-            "settings_general" => "通用",
             "settings_proxy" => "代理",
             "settings_advanced" => "高级",
             "settings_core" => "内核",
@@ -937,7 +907,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "onboarding_step3_title" => "3. 启动连接",
             "onboarding_step3_ready" => "一切就绪，点击开关按钮即可启动代理。",
             "onboarding_step3_waiting" => "完成以上两步后即可启动连接。",
-            "fact_profile" => "配置",
             "fact_port" => "端口",
             "showing_nodes_cap" => "当前显示前 {} / {} 个匹配节点",
             "showing_nodes_all" => "已显示全部 {} 个匹配节点",
@@ -945,7 +914,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_show_less" => "仅看前 120",
             "appearance_instant_hint" => "修改后立即生效，无需点击保存。",
             "settings_behavior" => "启动与更新",
-            "settings_draft_banner" => "有未保存的更改",
             "btn_browse" => "浏览…",
             "btn_copy" => "复制",
             "toast_copied" => "已复制到剪贴板",
@@ -961,12 +929,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tun_privilege_required" => {
                 "TUN 模式需要管理员权限或为 sing-box 授予 cap_net_admin 权限。"
             }
-            "core_dl_starting" => "正在准备下载…",
-            "core_dl_fetching" => "正在获取版本信息…",
-            "core_dl_downloading" => "正在下载 sing-box ({})…",
-            "core_dl_verifying" => "正在校验安装包…",
-            "core_dl_extracting" => "正在解压 sing-box…",
-            "core_dl_installing" => "正在安装 sing-box…",
 
             _ => key,
         },

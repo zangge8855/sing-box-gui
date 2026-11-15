@@ -9,7 +9,6 @@ pub const ICON_UP: char = '\u{E5D8}';
 pub const ICON_SETTINGS: char = '\u{E8B8}';
 pub const ICON_WARNING: char = '\u{E002}';
 pub const ICON_CLOSE: &str = "\u{E5CD}";
-pub const ICON_DELETE: &str = "\u{E872}";
 pub const ICON_ADD: &str = "\u{E145}";
 pub const ICON_COPY: &str = "\u{E14D}";
 pub const ICON_FOLDER_OPEN: &str = "\u{E2C8}";
@@ -50,7 +49,6 @@ mod tests {
         ]
         .into_iter()
         .chain(ICON_CLOSE.chars())
-        .chain(ICON_DELETE.chars())
         .chain(ICON_ADD.chars())
         .chain(ICON_COPY.chars())
         .chain(ICON_FOLDER_OPEN.chars())

@@ -756,7 +756,7 @@ impl App {
             size: Some(pending.size),
         };
         self.push_log(format!("[GUI] Failed to apply update: {error}"));
-        self.toast_error(format!("{}: {error}", self.tr("update_apply_failed")));
+        self.toast_error(self.tr_detail("update_apply_failed", &error));
         cleanup_task
     }
 
@@ -1136,7 +1136,7 @@ impl App {
         if let Some(msg) = core::take_unexpected_core_exit() {
             let detail = redact_log_line(&msg);
             self.push_log(format!("[GUI] {detail}"));
-            self.toast_error(format!("{}: {detail}", self.tr("core_unexpected_exit")));
+            self.toast_error(self.tr_detail("core_unexpected_exit", &detail));
         }
         if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
             let _ = cancel_tx.send(());
@@ -1270,6 +1270,11 @@ impl App {
 
     fn tr(&self, key: &'static str) -> &'static str {
         ui::i18n::tr(self.gui_config.language, key)
+    }
+
+    /// "Label: detail", with the full-width colon Chinese text expects.
+    fn tr_detail(&self, key: &'static str, detail: impl std::fmt::Display) -> String {
+        ui::util::labelled(self.gui_config.language, self.tr(key), detail)
     }
 
     /// Start next queued auto-update if idle.
@@ -1440,10 +1445,7 @@ impl App {
                             self.push_log(format!(
                                 "[GUI] Failed to stop stale detached core: {detail}"
                             ));
-                            self.toast_error(format!(
-                                "{}: {detail}",
-                                self.tr("detached_core_detected")
-                            ));
+                            self.toast_error(self.tr_detail("detached_core_detected", &detail));
                         }
                     }
                 } else if detached_running {
@@ -1476,7 +1478,7 @@ impl App {
                     Err(e) => {
                         let detail = redact_log_line(&e);
                         self.push_log(format!("[GUI] Failed to stop detached core: {detail}"));
-                        self.toast_error(format!("{}: {detail}", self.tr("core_start_failed")));
+                        self.toast_error(self.tr_detail("core_start_failed", &detail));
                         self.pending_tray_check_sync = true;
                         if for_exit {
                             self.pending_exit = false;
@@ -1659,7 +1661,7 @@ impl App {
                         "[GUI] Failed to select node {} for group {}: {}",
                         node, group, detail
                     ));
-                    self.toast_error(format!("{}: {detail}", self.tr("node_select_failed")));
+                    self.toast_error(self.tr_detail("node_select_failed", &detail));
                 } else {
                     if let Some(g_info) = self.proxy_groups.get_mut(&group) {
                         g_info.now = Some(node.clone());
@@ -2017,11 +2019,7 @@ impl App {
                 task_open_path(std::path::PathBuf::from(path))
             }
             Message::LogsExported(Err(e)) => {
-                self.toast_error(format!(
-                    "{}: {}",
-                    self.tr("logs_export_failed"),
-                    redact_log_line(&e)
-                ));
+                self.toast_error(self.tr_detail("logs_export_failed", redact_log_line(&e)));
                 Task::none()
             }
             Message::CoreVersionFetched(Ok(ver)) => {
@@ -2194,8 +2192,7 @@ impl App {
                 let mut load_nodes = false;
                 if let Some(err) = error {
                     let detail = redact_log_line(&err);
-                    self.profile_error =
-                        Some(format!("{}: {detail}", self.tr("profile_download_failed")));
+                    self.profile_error = Some(self.tr_detail("profile_download_failed", &detail));
                     if from_auto_update && !id.is_empty() {
                         let (attempts, retry_mins) = {
                             let now = std::time::Instant::now();
@@ -2212,17 +2209,11 @@ impl App {
                             "[GUI] Auto-update failed for {id} (attempt {attempts}, retry in {retry_mins}m): {detail}",
                         ));
                         if attempts <= 1 {
-                            self.toast_error(format!(
-                                "{}: {detail}",
-                                self.tr("profile_download_failed")
-                            ));
+                            self.toast_error(self.tr_detail("profile_download_failed", &detail));
                         }
                     } else {
                         self.push_log(format!("[GUI] Download failed: {detail}"));
-                        self.toast_error(format!(
-                            "{}: {detail}",
-                            self.tr("profile_download_failed")
-                        ));
+                        self.toast_error(self.tr_detail("profile_download_failed", &detail));
                     }
                 } else {
                     self.profile_error = None;
@@ -2400,7 +2391,7 @@ impl App {
                 result,
             } => {
                 if let Err(error) = result {
-                    self.toast_error(format!("{}: {error}", self.tr("profile_delete_failed")));
+                    self.toast_error(self.tr_detail("profile_delete_failed", &error));
                     return Task::none();
                 }
                 self.gui_config.subscriptions.retain(|p| p.id != id);
@@ -2458,7 +2449,7 @@ impl App {
                 if let Some(err) = error {
                     let detail = redact_log_line(&err);
                     self.push_log(format!("[GUI] Failed to select node: {}", detail));
-                    self.toast_error(format!("{}: {detail}", self.tr("node_select_failed")));
+                    self.toast_error(self.tr_detail("node_select_failed", &detail));
                 } else {
                     self.selected_node_tag = Some(tag.clone());
                     self.gui_config.selected_node_tag = Some(tag.clone());
@@ -2732,12 +2723,12 @@ impl App {
                         }
                         if self.pending_exit {
                             self.pending_exit = false;
-                            self.toast_error(format!("{}: {error}", self.tr("config_save_failed")));
+                            self.toast_error(self.tr_detail("config_save_failed", &error));
                             tasks.push(self.reveal_window_on_tray_error());
                         } else if let Some(pending) = self.pending_update.take() {
                             tasks.push(self.fail_pending_update(
                                 pending,
-                                format!("{}: {error}", self.tr("config_save_failed")),
+                                self.tr_detail("config_save_failed", &error),
                             ));
                         }
                     }
@@ -2792,7 +2783,7 @@ impl App {
                         self.config_dirty = true;
                         self.settings_errors
                             .insert("autostart", "autostart_apply_failed");
-                        self.toast_error(format!("{}: {error}", self.tr("autostart_apply_failed")));
+                        self.toast_error(self.tr_detail("autostart_apply_failed", &error));
                         let was_pending_exit = std::mem::replace(&mut self.pending_exit, false);
                         let save_task = self.start_config_save();
                         if was_pending_exit {
@@ -2843,10 +2834,7 @@ impl App {
                         self.push_log(format!(
                             "[GUI] Failed to change system proxy ({context:?}): {error}"
                         ));
-                        self.toast_error(format!(
-                            "{}: {error}",
-                            self.tr("system_proxy_apply_failed")
-                        ));
+                        self.toast_error(self.tr_detail("system_proxy_apply_failed", &error));
                         self.pending_tray_check_sync = true;
                         let reveal = if matches!(
                             context,
@@ -2879,7 +2867,7 @@ impl App {
                             return Task::batch(vec![
                                 self.fail_pending_update(
                                     pending,
-                                    format!("{}: {error}", self.tr("system_proxy_apply_failed")),
+                                    self.tr_detail("system_proxy_apply_failed", &error),
                                 ),
                                 reveal,
                             ]);
@@ -2960,11 +2948,7 @@ impl App {
             }
             Message::ConnectionClosed(Err(e)) => {
                 self.push_log(format!("[GUI] Failed to close connection: {}", e));
-                self.toast_error(format!(
-                    "{}: {}",
-                    self.tr("connection_close_failed"),
-                    redact_log_line(&e)
-                ));
+                self.toast_error(self.tr_detail("connection_close_failed", redact_log_line(&e)));
                 Task::none()
             }
             Message::CloseAllConnections => {
@@ -2986,11 +2970,7 @@ impl App {
             }
             Message::AllConnectionsClosed(Err(e)) => {
                 self.push_log(format!("[GUI] Failed to close all connections: {}", e));
-                self.toast_error(format!(
-                    "{}: {}",
-                    self.tr("connections_close_failed"),
-                    redact_log_line(&e)
-                ));
+                self.toast_error(self.tr_detail("connections_close_failed", redact_log_line(&e)));
                 Task::none()
             }
             Message::RoutingModeChanged(mode) => {
