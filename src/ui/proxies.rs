@@ -8,6 +8,10 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length};
 
+/// Below this page width the Proxies header search/sort/test bar stacks
+/// under the title so controls never clip at 900–960px window widths.
+const PROXIES_TOOLBAR_INLINE_W: f32 = 800.0;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProxySortOption {
     sort: crate::state::ProxySort,
@@ -278,8 +282,10 @@ pub fn render<'a>(
             let text_primary = theme::text_primary(theme);
             let _text_muted = theme::text_muted(theme);
             let is_compact = size.width < PAGE_COMPACT_W;
+            let pad_compact = crate::ui::is_pad_compact(size.width);
+            let header_stacked = size.width < PROXIES_TOOLBAR_INLINE_W;
 
-            let header_actions = make_header_actions(search_query_moved, is_compact);
+            let header_actions = make_header_actions(search_query_moved, header_stacked);
             let group_selector = if is_compact {
                 let mut groups_row = Row::new().spacing(8);
                 for g in &groups_moved {
@@ -373,7 +379,7 @@ pub fn render<'a>(
                 .height(Length::Fill)
             };
 
-            let grid_width = (crate::ui::page_content_width(size.width, is_compact)
+            let grid_width = (crate::ui::page_content_width(size.width, pad_compact)
                 - SCROLL_GUTTER
                 - if is_compact { 0.0 } else { 221.0 })
             .max(PROXY_CARD_MIN_W);
@@ -402,28 +408,12 @@ pub fn render<'a>(
                         .collect()
                 };
 
-                match proxy_sort {
-                    crate::state::ProxySort::Latency => {
-                        filtered_sub_nodes.sort_by(|a, b| {
-                            let lat = |name: &str| {
-                                node_meta_index_moved
-                                    .get(name)
-                                    .and_then(|metadata| metadata.1.filter(|ms| *ms < 9999))
-                            };
-                            match (lat(a), lat(b)) {
-                                (Some(la), Some(lb)) => la.cmp(&lb).then_with(|| a.cmp(b)),
-                                (Some(_), None) => std::cmp::Ordering::Less,
-                                (None, Some(_)) => std::cmp::Ordering::Greater,
-                                (None, None) => a.cmp(b),
-                            }
-                        });
-                    }
-                    crate::state::ProxySort::Name => {
-                        filtered_sub_nodes.sort();
-                    }
-                    crate::state::ProxySort::Original => {
-                        // Keep original order
-                    }
+                if proxy_sort != crate::state::ProxySort::Original {
+                    filtered_sub_nodes.sort_by(|a, b| {
+                        let lat_a = node_meta_index_moved.get(a.as_str()).and_then(|m| m.1);
+                        let lat_b = node_meta_index_moved.get(b.as_str()).and_then(|m| m.1);
+                        compare_nodes(proxy_sort, a, lat_a, b, lat_b)
+                    });
                 }
 
                 if filtered_sub_nodes.is_empty() {
@@ -487,7 +477,13 @@ pub fn render<'a>(
                 )
             };
 
-            let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
+            let header = page_header(
+                "proxy_nodes",
+                lang,
+                Some(header_actions),
+                theme,
+                header_stacked,
+            );
             let summary = render_proxy_summary(
                 nodes_moved.len(),
                 protocol_count,
@@ -532,7 +528,7 @@ pub fn render<'a>(
                     .into()
             };
 
-            crate::ui::page_body_fixed_with_pad(body, is_compact)
+            crate::ui::page_body_fixed_with_pad(body, pad_compact)
         });
 
         main_content.into()
@@ -543,7 +539,8 @@ pub fn render<'a>(
         if nodes.is_empty() {
             let has_profile = gui_config.active_profile_id.is_some();
             return responsive(move |size| {
-                let is_compact = size.width < PAGE_COMPACT_W;
+                let pad_compact = crate::ui::is_pad_compact(size.width);
+                let header_stacked = size.width < PROXIES_TOOLBAR_INLINE_W;
                 let (title_key, hint_key, action) =
                     empty_nodes_spec(core_running, has_profile, core_installed);
                 let cta: Option<Element<'_, Message>> = action.map(|kind| {
@@ -577,11 +574,11 @@ pub fn render<'a>(
                 let header = page_header(
                     "proxy_nodes",
                     lang,
-                    Some(make_header_actions(search_query, is_compact)),
+                    Some(make_header_actions(search_query, header_stacked)),
                     theme,
-                    is_compact,
+                    header_stacked,
                 );
-                crate::ui::page_shell_fixed_with_pad(header, content, is_compact)
+                crate::ui::page_shell_fixed_with_pad(header, content, pad_compact)
             })
             .into();
         }
@@ -598,25 +595,15 @@ pub fn render<'a>(
                 .collect()
         };
 
-        match proxy_sort {
-            crate::state::ProxySort::Latency => filtered_nodes.sort_by(|a, b| {
-                match (
-                    a.latency.filter(|&ms| ms < 9999),
-                    b.latency.filter(|&ms| ms < 9999),
-                ) {
-                    (Some(la), Some(lb)) => la.cmp(&lb).then_with(|| a.name.cmp(&b.name)),
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (None, None) => a.name.cmp(&b.name),
-                }
-            }),
-            crate::state::ProxySort::Name => filtered_nodes.sort_by(|a, b| a.name.cmp(&b.name)),
-            crate::state::ProxySort::Original => {}
+        if proxy_sort != crate::state::ProxySort::Original {
+            filtered_nodes
+                .sort_by(|a, b| compare_nodes(proxy_sort, &a.name, a.latency, &b.name, b.latency));
         }
 
         if filtered_nodes.is_empty() {
             return responsive(move |size| {
-                let is_compact = size.width < PAGE_COMPACT_W;
+                let pad_compact = crate::ui::is_pad_compact(size.width);
+                let header_stacked = size.width < PROXIES_TOOLBAR_INLINE_W;
                 let cta = button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
                     .padding(theme::BTN_PAD_MD)
                     .style(theme::button_secondary)
@@ -630,19 +617,20 @@ pub fn render<'a>(
                 let header = page_header(
                     "proxy_nodes",
                     lang,
-                    Some(make_header_actions(search_query, is_compact)),
+                    Some(make_header_actions(search_query, header_stacked)),
                     theme,
-                    is_compact,
+                    header_stacked,
                 );
-                crate::ui::page_shell_fixed_with_pad(header, content, is_compact)
+                crate::ui::page_shell_fixed_with_pad(header, content, pad_compact)
             })
             .into();
         }
 
         let content = responsive(move |size| {
-            let is_compact = size.width < PAGE_COMPACT_W;
+            let pad_compact = crate::ui::is_pad_compact(size.width);
+            let header_stacked = size.width < PROXIES_TOOLBAR_INLINE_W;
 
-            let header_actions = make_header_actions(search_query, is_compact);
+            let header_actions = make_header_actions(search_query, header_stacked);
 
             let total_nodes = filtered_nodes.len();
             let cap = if show_all { total_nodes } else { 120 };
@@ -652,7 +640,7 @@ pub fn render<'a>(
                 &filtered_nodes[..]
             };
 
-            let grid_width = (crate::ui::page_content_width(size.width, is_compact)
+            let grid_width = (crate::ui::page_content_width(size.width, pad_compact)
                 - SCROLL_GUTTER)
                 .max(PROXY_CARD_MIN_W);
             let cols = card_columns(grid_width);
@@ -683,7 +671,13 @@ pub fn render<'a>(
             let grid_content: Element<'_, Message> =
                 build_card_grid(card_elements, cols, total_nodes, cap, show_all, theme, lang);
 
-            let header = page_header("proxy_nodes", lang, Some(header_actions), theme, is_compact);
+            let header = page_header(
+                "proxy_nodes",
+                lang,
+                Some(header_actions),
+                theme,
+                header_stacked,
+            );
             let summary =
                 render_proxy_summary(total_nodes, protocol_count, 0, core_running, theme, lang);
 
@@ -693,7 +687,7 @@ pub fn render<'a>(
                 .width(Length::Fill)
                 .height(Length::Fill);
 
-            crate::ui::page_body_fixed_with_pad(col.into(), is_compact)
+            crate::ui::page_body_fixed_with_pad(col.into(), pad_compact)
         });
 
         content.into()
@@ -760,6 +754,61 @@ fn render_proxy_summary<'a>(
 /// Every card shares one height so grid rows line up regardless of name length.
 const PROXY_CARD_HEIGHT: f32 = 84.0;
 const PROXY_CARD_MIN_W: f32 = 236.0;
+
+fn latency_rank(latency: Option<u64>) -> (u8, u64) {
+    match latency {
+        Some(ms) if ms < 9999 => (0, ms),
+        None => (1, 0),
+        Some(ms) => (2, ms),
+    }
+}
+
+fn compare_node_names(a: &str, b: &str) -> std::cmp::Ordering {
+    a.to_lowercase()
+        .cmp(&b.to_lowercase())
+        .then_with(|| a.cmp(b))
+}
+
+fn compare_nodes(
+    sort: crate::state::ProxySort,
+    a_name: &str,
+    a_latency: Option<u64>,
+    b_name: &str,
+    b_latency: Option<u64>,
+) -> std::cmp::Ordering {
+    match sort {
+        crate::state::ProxySort::Latency => latency_rank(a_latency)
+            .cmp(&latency_rank(b_latency))
+            .then_with(|| compare_node_names(a_name, b_name)),
+        crate::state::ProxySort::Name => compare_node_names(a_name, b_name),
+        crate::state::ProxySort::Original => std::cmp::Ordering::Equal,
+    }
+}
+
+fn clean_node_display_name(node_name: &str, fallback_code: Option<&str>) -> String {
+    let mut out = String::with_capacity(node_name.len());
+    let mut after_flag = false;
+    for c in node_name.chars() {
+        if ('\u{1f1e6}'..='\u{1f1ff}').contains(&c) {
+            after_flag = true;
+            continue;
+        }
+        if after_flag && c == '\u{fe0f}' {
+            after_flag = false;
+            continue;
+        }
+        after_flag = false;
+        out.push(c);
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        fallback_code
+            .unwrap_or_else(|| node_name.trim())
+            .to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
 
 /// Width of one grid card for `cols` columns spread across `grid_width`.
 fn card_width(grid_width: f32, cols: usize) -> f32 {
@@ -864,7 +913,7 @@ fn render_proxy_card<'a>(
     if let Some(addr) = server_label {
         let server_px = card_w - pad * 2.0 - chip_w - latency_w - crate::ui::SP_8 * 2.0 - 4.0;
         meta_row = meta_row.push(
-            text(fit_width(&addr, server_px.max(40.0), theme::TYPE_CAPTION))
+            text(fit_width(&addr, server_px.max(20.0), theme::TYPE_CAPTION))
                 .color(theme::text_tertiary(theme))
                 .size(theme::TYPE_CAPTION)
                 .wrapping(text::Wrapping::None)
@@ -875,22 +924,18 @@ fn render_proxy_card<'a>(
     }
     meta_row = meta_row.push(latency_el);
 
-    let clean_name: String = node_name
-        .chars()
-        .filter(|c| !(('\u{1f1e6}'..='\u{1f1ff}').contains(c)))
-        .collect();
-    let clean_name = clean_name.trim();
     let flag_opt = theme::detect_region_code(node_name);
+    let clean_name = clean_node_display_name(node_name, flag_opt);
 
     // Budget the name to one line: card width minus padding, region chip and
     // the selection mark (each with its 8px gap).
     let name_px = card_w
         - pad * 2.0
-        - if flag_opt.is_some() { 32.0 } else { 0.0 }
+        - if flag_opt.is_some() { 36.0 } else { 0.0 }
         - if is_selected { 26.0 } else { 0.0 }
         - 2.0;
     let display_name = fit_width(
-        clean_name,
+        &clean_name,
         name_px.max(48.0),
         theme::TYPE_SECTION * SEMIBOLD_WIDTH,
     );
@@ -956,7 +1001,7 @@ fn render_proxy_card<'a>(
     let interactive = if group_clone.is_some() {
         is_selector
     } else {
-        direct_selectable && server.is_some()
+        direct_selectable
     };
 
     let mut card_btn = button(card_content)
@@ -1179,7 +1224,54 @@ fn empty_nodes_spec(
 
 #[cfg(test)]
 mod tests {
-    use super::{EmptyAction, empty_nodes_spec};
+    use super::{
+        EmptyAction, card_columns, card_width, clean_node_display_name, compare_nodes,
+        empty_nodes_spec,
+    };
+    use crate::state::ProxySort;
+
+    #[test]
+    fn proxy_sorting_orders_latencies_untested_timeouts_and_names() {
+        let mut nodes = [
+            ("zeta", Some(9999)),
+            ("Beta", None),
+            ("alpha", Some(80)),
+            ("Alpha-Fast", Some(20)),
+            ("direct", Some(0)),
+            ("Alpha-dup", None),
+        ];
+        nodes.sort_by(|a, b| compare_nodes(ProxySort::Latency, a.0, a.1, b.0, b.1));
+        let names: Vec<_> = nodes.iter().map(|n| n.0).collect();
+        assert_eq!(
+            names,
+            vec!["direct", "Alpha-Fast", "alpha", "Alpha-dup", "Beta", "zeta"]
+        );
+
+        nodes.sort_by(|a, b| compare_nodes(ProxySort::Name, a.0, a.1, b.0, b.1));
+        let by_name: Vec<_> = nodes.iter().map(|n| n.0).collect();
+        assert_eq!(
+            by_name,
+            vec!["alpha", "Alpha-dup", "Alpha-Fast", "Beta", "direct", "zeta"]
+        );
+    }
+
+    #[test]
+    fn clean_node_display_name_strips_flags_and_keeps_fallback() {
+        assert_eq!(clean_node_display_name("🇭🇰 HK-01", Some("HK")), "HK-01");
+        assert_eq!(
+            clean_node_display_name("🇭🇰\u{fe0f} HK-02", Some("HK")),
+            "HK-02"
+        );
+        assert_eq!(clean_node_display_name("🇭🇰", Some("HK")), "HK");
+    }
+
+    #[test]
+    fn proxy_grid_fits_narrow_and_wide_viewports() {
+        assert_eq!(card_columns(236.0), 1);
+        assert_eq!(card_columns(531.0), 2);
+        let w = card_width(531.0, 2);
+        assert!(w >= 236.0 && w * 2.0 <= 531.0);
+    }
 
     #[test]
     fn empty_nodes_spec_avoids_start_core_when_unconfigured() {

@@ -68,7 +68,7 @@ impl Toast {
             10
         };
         // Extra second per ~25 chars in long messages, capped at 20
-        let extra = (char_count as u32 / 25).min(10) as u8;
+        let extra = (char_count / 25).min(10) as u8;
         base.saturating_add(extra).clamp(3, 20)
     }
 
@@ -383,10 +383,10 @@ impl RuntimeSettingsDraft {
     pub fn has_pending_changes(&self, config: &GuiConfig) -> bool {
         self.mixed_port.trim() != config.mixed_port.to_string()
             || self.api_port.trim() != config.api_port.to_string()
-            || self.dns_server_local.trim() != config.dns_server_local
-            || self.dns_server_remote.trim() != config.dns_server_remote
-            || self.core_path.trim() != config.core_path.as_deref().unwrap_or_default()
-            || self.latency_test_url.trim() != config.latency_test_url
+            || self.dns_server_local.trim() != config.dns_server_local.trim()
+            || self.dns_server_remote.trim() != config.dns_server_remote.trim()
+            || self.core_path.trim() != config.core_path.as_deref().unwrap_or_default().trim()
+            || self.latency_test_url.trim() != config.latency_test_url.trim()
             || self.latency_test_timeout_ms.trim() != config.latency_test_timeout_ms.to_string()
             || self.start_on_boot != config.start_on_boot
             || self.tun_mode != config.tun_mode
@@ -540,11 +540,18 @@ mod tests {
 
     #[test]
     fn runtime_draft_only_reports_unapplied_changes() {
-        let config = GuiConfig::default();
+        let mut config = GuiConfig {
+            core_path: Some("  /opt/sing-box  ".into()),
+            dns_server_local: " 223.5.5.5 ".into(),
+            dns_server_remote: " 8.8.8.8 ".into(),
+            latency_test_url: " http://cp.cloudflare.com/generate_204 ".into(),
+            ..GuiConfig::default()
+        };
         let mut draft = RuntimeSettingsDraft::from_config(&config);
         assert!(!draft.has_pending_changes(&config));
         draft.latency_test_timeout_ms.clear();
         assert!(draft.has_pending_changes(&config));
+        config = GuiConfig::default();
         draft = RuntimeSettingsDraft::from_config(&config);
         draft.tun_mode = !draft.tun_mode;
         assert!(draft.has_pending_changes(&config));

@@ -190,6 +190,11 @@ struct App {
     settings_validation_in_flight: bool,
     detached_core_running: bool,
     core_start_gen: u64,
+    api_session_gen: u64,
+    nodes_load_gen: u64,
+    system_proxy_epoch: u64,
+    update_check_gen: u64,
+    config_preview_gen: u64,
     no_tray: bool,
     pending_tray_check_sync: bool,
     active_profile_is_native: bool,
@@ -226,7 +231,8 @@ impl App {
     /// GUI notices share the core log's cap. Only the batch handler used to
     /// trim, so with a quiet core these could accumulate without bound.
     fn push_log(&mut self, line: String) {
-        self.log_lines.push_back(line);
+        self.log_lines
+            .push_back(truncate_log_line(&redact_log_line(&line)));
         while self.log_lines.len() > MAX_LOG_LINES {
             self.log_lines.pop_front();
         }
@@ -265,7 +271,9 @@ impl App {
     /// Regenerate the config preview off the UI thread whenever it is expanded,
     /// and clear the cache when collapsed. Safe to call on every relevant state change.
     fn refresh_config_preview(&mut self) -> Task<Message> {
+        self.config_preview_gen = self.config_preview_gen.wrapping_add(1);
         if self.config_preview_expanded {
+            let generation = self.config_preview_gen;
             self.config_preview = Some("...".to_string());
             let gui_config = self.gui_config.clone();
             Task::perform(
@@ -276,7 +284,7 @@ impl App {
                     .await
                     .unwrap_or_else(|e| format!("Failed to run preview task: {e}"))
                 },
-                Message::ConfigPreviewGenerated,
+                move |text| Message::ConfigPreviewGenerated { generation, text },
             )
         } else {
             self.config_preview = None;
@@ -399,6 +407,11 @@ impl App {
             settings_validation_in_flight: false,
             detached_core_running: false,
             core_start_gen: 0,
+            api_session_gen: 0,
+            nodes_load_gen: 0,
+            system_proxy_epoch: 0,
+            update_check_gen: 0,
+            config_preview_gen: 0,
             no_tray: launch_opts.no_tray,
             pending_tray_check_sync: false,
             active_profile_is_native: false,
@@ -499,10 +512,12 @@ impl App {
         (app, Task::batch(tasks))
     }
 
-    fn load_active_nodes_task(&self) -> Task<Message> {
+    fn load_active_nodes_task(&mut self) -> Task<Message> {
         let Some(profile_id) = self.gui_config.active_profile_id.clone() else {
             return Task::none();
         };
+        self.nodes_load_gen = self.nodes_load_gen.wrapping_add(1);
+        let generation = self.nodes_load_gen;
         let result_profile_id = profile_id.clone();
         let path = config::get_profile_path(&profile_id);
         let cfg = self.gui_config.clone();
@@ -538,6 +553,7 @@ impl App {
                 })
             },
             move |(is_native_json, ignored_settings, result)| Message::ActiveNodesLoaded {
+                generation,
                 profile_id: result_profile_id.clone(),
                 is_native_json,
                 ignored_settings,
@@ -768,7 +784,12 @@ impl App {
             self.force_stop_after_start = true;
             return Task::none();
         }
-        if self.core_stopping || self.system_proxy_busy || self.config_save_in_flight {
+        if self.core_stopping
+            || self.system_proxy_busy
+            || self.config_save_in_flight
+            || self.autostart_busy
+            || self.settings_validation_in_flight
+        {
             return Task::none();
         }
         if self.core_running || core::is_core_running_fast() {
@@ -825,6 +846,7 @@ impl App {
             return Task::none();
         }
         self.system_proxy_busy = true;
+        self.system_proxy_epoch = self.system_proxy_epoch.wrapping_add(1);
         let port = self.gui_config.mixed_port;
         Task::perform(
             async move {
@@ -993,13 +1015,17 @@ impl App {
         tun_capable: bool,
         for_exit: bool,
     ) -> Task<Message> {
+        let core_path_changed = self.gui_config.core_path != commit.config.core_path;
         self.settings_errors.clear();
         self.gui_config = commit.config;
         self.core_installed = core_installed;
+        if !core_installed || core_path_changed {
+            self.core_version = None;
+        }
         self.config_dirty = true;
-        self.pending_restart_after_save =
+        self.pending_restart_after_save |=
             !for_exit && commit.restart_required && (self.core_running || self.core_starting);
-        self.pending_proxy_reapply_after_save = !for_exit && commit.proxy_reapply_required;
+        self.pending_proxy_reapply_after_save |= !for_exit && commit.proxy_reapply_required;
         if self.gui_config.tun_mode && !tun_capable {
             #[cfg(target_os = "linux")]
             self.toast_info(self.tr("tun_privilege_required"));
@@ -1010,9 +1036,23 @@ impl App {
         // Normalize draft fields up front so AutostartSetFinished never overwrites concurrent edits.
         self.settings_draft = RuntimeSettingsDraft::from_config(&self.gui_config);
 
+        let mut tasks = Vec::new();
+        if !for_exit && core_installed && core_path_changed {
+            let cfg = self.gui_config.clone();
+            tasks.push(Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || core::get_core_version(&cfg))
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r)
+                },
+                Message::CoreVersionFetched,
+            ));
+        }
+
         if let Some(target) = commit.autostart_target {
             self.autostart_busy = true;
-            return Task::perform(
+            tasks.push(Task::perform(
                 async move {
                     tokio::task::spawn_blocking(move || platform::set_autostart(target))
                         .await
@@ -1020,16 +1060,16 @@ impl App {
                         .and_then(|result| result)
                 },
                 move |result| Message::AutostartSetFinished { target, result },
-            );
+            ));
+            return Task::batch(tasks);
         }
 
-        let save_task = self.start_config_save();
+        tasks.push(self.start_config_save());
         if !for_exit && self.active_profile_is_native && self.gui_config.active_profile_id.is_some()
         {
-            Task::batch(vec![save_task, self.check_native_json_ignored_task()])
-        } else {
-            save_task
+            tasks.push(self.check_native_json_ignored_task());
         }
+        Task::batch(tasks)
     }
 
     /// Schedule an async core stop (runs off the UI thread).
@@ -1091,6 +1131,9 @@ impl App {
     fn on_core_started_ok(&mut self) -> Task<Message> {
         self.core_running = true;
         self.detached_core_running = false;
+        self.api_session_gen = self.api_session_gen.wrapping_add(1);
+        self.proxies_fetch_in_flight = false;
+        self.connections_fetch_in_flight = false;
         self.push_log("[GUI] sing-box core started successfully.".to_string());
 
         if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
@@ -1133,6 +1176,9 @@ impl App {
         self.core_running = false;
         self.latency_testing = false;
         self.latency_test_gen = self.latency_test_gen.wrapping_add(1);
+        self.api_session_gen = self.api_session_gen.wrapping_add(1);
+        self.proxies_fetch_in_flight = false;
+        self.connections_fetch_in_flight = false;
         if let Some(msg) = core::take_unexpected_core_exit() {
             let detail = redact_log_line(&msg);
             self.push_log(format!("[GUI] Core stopped unexpectedly: {detail}"));
@@ -1162,6 +1208,9 @@ impl App {
         self.detached_core_running = false;
         self.latency_testing = false;
         self.latency_test_gen = self.latency_test_gen.wrapping_add(1);
+        self.api_session_gen = self.api_session_gen.wrapping_add(1);
+        self.proxies_fetch_in_flight = false;
+        self.connections_fetch_in_flight = false;
         if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
             let _ = cancel_tx.send(());
         }
@@ -1216,9 +1265,13 @@ impl App {
     }
 
     fn restart_core(&mut self) -> Task<Message> {
-        if self.core_busy() {
-            // Coalesce: ensure we restart once the in-flight transition ends.
+        if self.core_starting {
+            // Coalesce: ensure we restart once the in-flight startup ends.
             self.pending_core_restart = true;
+            return Task::none();
+        }
+        if self.core_stopping {
+            // Preserve an already-queued restart, but never resurrect an explicit stop.
             return Task::none();
         }
         if self.core_running {
@@ -1294,18 +1347,24 @@ impl App {
 
     /// Start next queued auto-update if idle.
     fn kick_pending_auto_update(&mut self) -> Task<Message> {
-        if self.downloading {
+        if self.downloading || self.pending_exit || self.app_update_busy() {
             return Task::none();
         }
-        if let Some(id) = self.pending_auto_updates.pop_front() {
-            self.start_profile_update(id, true)
-        } else {
-            Task::none()
+        while let Some(id) = self.pending_auto_updates.pop_front() {
+            if self.gui_config.subscriptions.iter().any(|p| p.id == id) {
+                return self.start_profile_update(id, true);
+            }
         }
+        Task::none()
     }
 
     fn start_profile_update(&mut self, id: String, from_auto_update: bool) -> Task<Message> {
-        if self.downloading {
+        if self.pending_exit {
+            return Task::none();
+        }
+        if self.downloading
+            || (!from_auto_update && self.editing_profile_id.as_deref() == Some(id.as_str()))
+        {
             if !from_auto_update {
                 self.toast_info(self.tr("operation_in_progress"));
             }
@@ -1341,6 +1400,7 @@ impl App {
                         is_subscription: r.is_subscription,
                         ignored_settings: r.ignored_settings,
                         from_auto_update,
+                        is_update: true,
                     },
                     Err(e) => Message::SubscriptionDownloaded {
                         id: id_for_err,
@@ -1354,6 +1414,7 @@ impl App {
                         is_subscription: false,
                         ignored_settings: Vec::new(),
                         from_auto_update,
+                        is_update: true,
                     },
                 },
             )
@@ -1418,11 +1479,21 @@ impl App {
                 if !self.no_tray && self.tray.is_none() {
                     self.tray = Some(tray::Tray::new(self.tray_state()));
                 }
-                let tray_ready =
-                    !self.no_tray && self.tray.as_ref().is_some_and(tray::Tray::available);
-                if !tray_ready && self.window_id.is_none() {
-                    return self.open_main_window();
+                if self.no_tray {
+                    if self.window_id.is_none() {
+                        return self.open_main_window();
+                    }
+                    return Task::none();
                 }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let tray_ready = self.tray.as_ref().is_some_and(tray::Tray::available);
+                    if !tray_ready && self.window_id.is_none() {
+                        return self.open_main_window();
+                    }
+                }
+                // On Linux the SNI thread registers asynchronously over D-Bus;
+                // give it up to 1.2s before falling back to an open window.
                 Task::perform(
                     async {
                         tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
@@ -1463,7 +1534,7 @@ impl App {
                             self.toast_error(self.tr_detail("detached_core_detected", &detail));
                         }
                     }
-                } else if detached_running {
+                } else if detached_running && !self.core_running && !self.core_busy() {
                     self.detached_core_running = true;
                     self.push_log(
                         "[GUI] Detected detached sing-box core running from previous session."
@@ -1507,7 +1578,9 @@ impl App {
                 Task::none()
             }
             Message::WindowOpened(id) => {
-                self.window_id = Some(id);
+                if self.window_id != Some(id) {
+                    return Task::none();
+                }
                 if !self.no_tray && self.tray.is_none() {
                     self.tray = Some(tray::Tray::new(self.tray_state()));
                 }
@@ -1525,7 +1598,7 @@ impl App {
             }
             #[cfg(target_os = "linux")]
             Message::TrayUnavailable => {
-                if self.window_id.is_none() {
+                if self.window_id.is_none() && !self.pending_exit {
                     self.show_main_window()
                 } else {
                     Task::none()
@@ -1548,15 +1621,14 @@ impl App {
                 repeat,
                 ..
             }) if !repeat => {
-                match key.as_ref() {
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab) => {
-                        return if modifiers.shift() {
-                            iced::widget::operation::focus_previous()
-                        } else {
-                            iced::widget::operation::focus_next()
-                        };
+                match resolve_keyboard_shortcut(key.as_ref(), modifiers) {
+                    Some(KeyboardShortcutAction::FocusPrevious) => {
+                        return iced::widget::operation::focus_previous();
                     }
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                    Some(KeyboardShortcutAction::FocusNext) => {
+                        return iced::widget::operation::focus_next();
+                    }
+                    Some(KeyboardShortcutAction::Escape) => {
                         if self.editing_profile_id.is_some() {
                             return Task::done(Message::CancelProfileEdit);
                         }
@@ -1565,9 +1637,7 @@ impl App {
                         }
                         self.toasts.pop();
                     }
-                    iced::keyboard::Key::Character(character)
-                        if modifiers.command() && character.eq_ignore_ascii_case("s") =>
-                    {
+                    Some(KeyboardShortcutAction::Save) => {
                         if self.editing_profile_id.is_some() {
                             return Task::done(Message::SaveProfileEdit);
                         }
@@ -1577,22 +1647,10 @@ impl App {
                             return Task::done(Message::SaveSettings);
                         }
                     }
-                    iced::keyboard::Key::Character(character) if modifiers.command() => {
-                        let tab = match character {
-                            "1" => Some(Tab::Dashboard),
-                            "2" => Some(Tab::Proxies),
-                            "3" => Some(Tab::Profiles),
-                            "4" => Some(Tab::Rules),
-                            "5" => Some(Tab::Connections),
-                            "6" => Some(Tab::Logs),
-                            "7" => Some(Tab::Settings),
-                            _ => None,
-                        };
-                        if let Some(tab) = tab {
-                            return Task::done(Message::TabChanged(tab));
-                        }
+                    Some(KeyboardShortcutAction::SwitchTab(tab)) => {
+                        return Task::done(Message::TabChanged(tab));
                     }
-                    _ => {}
+                    None => {}
                 }
                 Task::none()
             }
@@ -1602,6 +1660,7 @@ impl App {
                 let mut tasks = Vec::new();
                 if self.core_running && !self.core_busy() {
                     let api_port = self.gui_config.api_port;
+                    let api_gen = self.api_session_gen;
                     let stale = |last: Option<std::time::Instant>| {
                         last.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(2))
                     };
@@ -1612,7 +1671,10 @@ impl App {
                             self.proxies_fetch_in_flight = true;
                             tasks.push(Task::perform(
                                 async move { api::fetch_proxies(api_port).await },
-                                |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
+                                move |res| Message::ProxiesFetched {
+                                    generation: api_gen,
+                                    result: res.map(|r| r.proxies),
+                                },
                             ));
                         }
                         Tab::Connections if stale(self.last_connections_fetch) => {
@@ -1623,7 +1685,10 @@ impl App {
                                 self.proxies_fetch_in_flight = true;
                                 tasks.push(Task::perform(
                                     async move { api::fetch_proxies(api_port).await },
-                                    |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
+                                    move |res| Message::ProxiesFetched {
+                                        generation: api_gen,
+                                        result: res.map(|r| r.proxies),
+                                    },
                                 ));
                             }
                             if stale(self.last_connections_fetch) {
@@ -1653,23 +1718,40 @@ impl App {
                 Task::none()
             }
             Message::SelectGroupNode { group, node } => {
-                if !self.core_running {
+                if !self.core_running || self.core_busy() || self.pending_exit {
                     return Task::none();
                 }
                 let api_port = self.gui_config.api_port;
+                let generation = self.api_session_gen;
+                let profile_id = self.gui_config.active_profile_id.clone();
                 let group_clone = group.clone();
                 let node_clone = node.clone();
 
                 Task::perform(
                     async move { api::select_proxy(api_port, &group_clone, &node_clone).await },
                     move |res| Message::GroupNodeSelected {
+                        generation,
+                        profile_id: profile_id.clone(),
                         group: group.clone(),
                         node: node.clone(),
                         error: res.err(),
                     },
                 )
             }
-            Message::GroupNodeSelected { group, node, error } => {
+            Message::GroupNodeSelected {
+                generation,
+                profile_id,
+                group,
+                node,
+                error,
+            } => {
+                if generation != self.api_session_gen
+                    || !self.core_running
+                    || self.core_stopping
+                    || profile_id != self.gui_config.active_profile_id
+                {
+                    return Task::none();
+                }
                 if let Some(err) = error {
                     let detail = redact_log_line(&err);
                     self.push_log(format!(
@@ -1686,6 +1768,8 @@ impl App {
                         self.selected_node_tag = Some(node.clone());
                         self.gui_config.selected_node_tag = Some(node.clone());
                         self.config_dirty = true;
+                        self.push_log(format!("[GUI] Selected node: {} for group {}", node, group));
+                        return self.start_config_save();
                     }
                     self.push_log(format!("[GUI] Selected node: {} for group {}", node, group));
                 }
@@ -1699,6 +1783,9 @@ impl App {
                 Task::none()
             }
             Message::AddRule { target } => {
+                if self.pending_exit {
+                    return Task::none();
+                }
                 let raw = match target {
                     state::RuleTarget::Direct => self.direct_rule_input.clone(),
                     state::RuleTarget::Proxy => self.proxy_rule_input.clone(),
@@ -1742,14 +1829,16 @@ impl App {
                     state::RuleTarget::Proxy => self.proxy_rule_input.clear(),
                 }
                 self.config_dirty = true;
-                let restart_task = self.restart_core();
+                let mut tasks = vec![self.start_config_save(), self.restart_core()];
                 if self.active_profile_is_native {
-                    Task::batch(vec![restart_task, self.check_native_json_ignored_task()])
-                } else {
-                    restart_task
+                    tasks.push(self.check_native_json_ignored_task());
                 }
+                Task::batch(tasks)
             }
             Message::RemoveRule { field, index } => {
+                if self.pending_exit {
+                    return Task::none();
+                }
                 let list = self.rule_list_mut(field);
                 if index < list.len() {
                     let removed = list.remove(index);
@@ -1759,16 +1848,19 @@ impl App {
                         field.as_str(),
                         removed
                     ));
-                    return self.restart_core();
+                    return Task::batch(vec![self.start_config_save(), self.restart_core()]);
                 }
                 Task::none()
             }
-            Message::ProxiesFetched(res) => {
+            Message::ProxiesFetched { generation, result } => {
+                if generation != self.api_session_gen {
+                    return Task::none();
+                }
                 self.proxies_fetch_in_flight = false;
                 if !self.core_running || self.core_stopping {
                     return Task::none();
                 }
-                match res {
+                match result {
                     Ok(mut groups_map) => {
                         compact_proxy_history(&mut groups_map);
                         self.last_proxies_fetch = Some(std::time::Instant::now());
@@ -1798,6 +1890,10 @@ impl App {
                 Task::none()
             }
             Message::ToggleCore => {
+                if self.pending_exit {
+                    self.pending_tray_check_sync = true;
+                    return Task::none();
+                }
                 if self.maintenance_busy() {
                     self.toast_info(self.tr("operation_in_progress"));
                     self.pending_tray_check_sync = true;
@@ -1874,10 +1970,29 @@ impl App {
                         // Drop pending restart so we don't loop on a broken config.
                         self.pending_core_restart = false;
                         self.pending_tray_check_sync = true;
+                        if self.pending_update.is_some() {
+                            return Task::batch(vec![
+                                self.reveal_window_on_tray_error(),
+                                self.continue_update_install(),
+                            ]);
+                        }
                         if self.pending_exit {
                             return Task::batch(vec![
                                 self.reveal_window_on_tray_error(),
                                 self.continue_exit(),
+                            ]);
+                        }
+                        if self.gui_config.disable_proxy_on_core_stop
+                            && self.sys_proxy_enabled
+                            && (self.gui_config.system_proxy_owned
+                                || sysproxy::is_system_proxy_owned())
+                        {
+                            return Task::batch(vec![
+                                self.reveal_window_on_tray_error(),
+                                self.task_set_system_proxy(
+                                    false,
+                                    message::SystemProxyContext::CoreStop,
+                                ),
                             ]);
                         }
                         self.reveal_window_on_tray_error()
@@ -1908,21 +2023,14 @@ impl App {
                 Task::none()
             }
             Message::CoreDownloadStageChanged(stage) => {
+                if !self.core_install_busy() {
+                    return Task::none();
+                }
                 match stage {
-                    core::CoreDownloadStage::Idle => {}
                     core::CoreDownloadStage::Starting
                     | core::CoreDownloadStage::FetchingMetadata
                     | core::CoreDownloadStage::Downloading { .. } => {
-                        if self.core_install_busy()
-                            || matches!(
-                                self.core_install_state,
-                                state::CoreInstallState::Idle
-                                    | state::CoreInstallState::Installed
-                                    | state::CoreInstallState::Error(_)
-                            )
-                        {
-                            self.core_install_state = state::CoreInstallState::Downloading;
-                        }
+                        self.core_install_state = state::CoreInstallState::Downloading;
                     }
                     core::CoreDownloadStage::Verifying => {
                         self.core_install_state = state::CoreInstallState::Verifying;
@@ -1933,14 +2041,9 @@ impl App {
                     core::CoreDownloadStage::Installing => {
                         self.core_install_state = state::CoreInstallState::Installing;
                     }
-                    core::CoreDownloadStage::Completed => {
-                        self.core_installed = true;
-                        self.core_install_state = state::CoreInstallState::Installed;
-                    }
-                    core::CoreDownloadStage::Failed(err) => {
-                        self.core_install_state =
-                            state::CoreInstallState::Error(redact_log_line(&err));
-                    }
+                    core::CoreDownloadStage::Idle
+                    | core::CoreDownloadStage::Completed
+                    | core::CoreDownloadStage::Failed(_) => {}
                 }
                 Task::none()
             }
@@ -2054,8 +2157,24 @@ impl App {
                     !self.settings_draft.disable_proxy_on_core_stop;
                 Task::none()
             }
-            Message::ImportFromClipboard => iced::clipboard::read().map(Message::ClipboardContent),
+            Message::ImportFromClipboard => {
+                if self.pending_exit {
+                    return Task::none();
+                }
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
+                iced::clipboard::read().map(Message::ClipboardContent)
+            }
             Message::ClipboardContent(Some(text)) => {
+                if self.pending_exit {
+                    return Task::none();
+                }
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 let text = text.trim().to_string();
                 if text.is_empty() {
                     self.toast_info(self.tr("toast_clipboard_empty"));
@@ -2068,23 +2187,49 @@ impl App {
                 self.toast_error(self.tr("clipboard_read_failed"));
                 Task::none()
             }
-            Message::ImportLocalFile => Task::perform(
-                async move {
-                    rfd::AsyncFileDialog::new()
-                        .add_filter("Config", &["yaml", "yml", "json", "txt"])
-                        .pick_file()
-                        .await
-                        .map(|f| f.path().to_string_lossy().to_string())
-                },
-                Message::LocalFilePicked,
-            ),
+            Message::ImportLocalFile => {
+                if self.pending_exit {
+                    return Task::none();
+                }
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
+                Task::perform(
+                    async move {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("Config", &["yaml", "yml", "json", "txt"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_string_lossy().to_string())
+                    },
+                    Message::LocalFilePicked,
+                )
+            }
             Message::LocalFilePicked(Some(path)) => {
+                if self.pending_exit {
+                    return Task::none();
+                }
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 self.url_input = path;
                 Task::done(Message::DownloadSubscription)
             }
             Message::LocalFilePicked(None) => Task::none(),
-            Message::TriggerCoreDownload => self.trigger_core_download(false),
-            Message::ForceCoreDownload => self.trigger_core_download(true),
+            Message::TriggerCoreDownload => {
+                if self.pending_exit {
+                    return Task::none();
+                }
+                self.trigger_core_download(false)
+            }
+            Message::ForceCoreDownload => {
+                if self.pending_exit {
+                    return Task::none();
+                }
+                self.trigger_core_download(true)
+            }
             Message::LatencyTestUrlChanged(url) => {
                 self.settings_draft.latency_test_url = url;
                 self.settings_errors.remove("latency_url");
@@ -2130,6 +2275,10 @@ impl App {
                 Task::none()
             }
             Message::ToggleSystemProxy => {
+                if self.pending_exit {
+                    self.pending_tray_check_sync = true;
+                    return Task::none();
+                }
                 if self.system_proxy_busy {
                     self.pending_tray_check_sync = true;
                     return Task::none();
@@ -2143,7 +2292,7 @@ impl App {
                 Task::none()
             }
             Message::DownloadSubscription => {
-                if self.url_input.trim().is_empty() {
+                if self.pending_exit || self.url_input.trim().is_empty() {
                     return Task::none();
                 }
                 // The Download button disables while downloading, but Enter in
@@ -2171,6 +2320,7 @@ impl App {
                         is_subscription: r.is_subscription,
                         ignored_settings: r.ignored_settings,
                         from_auto_update: false,
+                        is_update: false,
                     },
                     Err(e) => Message::SubscriptionDownloaded {
                         id: String::new(),
@@ -2184,6 +2334,7 @@ impl App {
                         is_subscription: false,
                         ignored_settings: Vec::new(),
                         from_auto_update: false,
+                        is_update: false,
                     },
                 })
             }
@@ -2199,6 +2350,7 @@ impl App {
                 is_subscription,
                 ignored_settings,
                 from_auto_update,
+                is_update,
             } => {
                 self.downloading = false;
                 self.updating_profile_id = None;
@@ -2230,7 +2382,7 @@ impl App {
                     }
                 } else {
                     self.profile_error = None;
-                    if !from_auto_update {
+                    if !from_auto_update && !is_update {
                         self.url_input.clear();
                     }
                     if !id.is_empty() {
@@ -2240,6 +2392,7 @@ impl App {
                     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                     // Mutate in-memory config only (profile file already written by fetch task).
                     // Never re-load gui_config from disk here — that races concurrent saves.
+                    let mut profile_present = false;
                     if !id.is_empty() {
                         if let Some(p) = self
                             .gui_config
@@ -2262,7 +2415,9 @@ impl App {
                                 p.expire_at = expire_at;
                             }
                             // Preserve user-customized p.name across subscription refreshes.
-                        } else {
+                            profile_present = true;
+                            self.config_dirty = true;
+                        } else if !is_update {
                             let name =
                                 display_name.filter(|n| !n.is_empty()).unwrap_or_else(|| {
                                     format!("Sub_{}", &id[id.len().saturating_sub(6)..])
@@ -2281,22 +2436,25 @@ impl App {
                                 traffic_total,
                                 expire_at,
                             });
+                            profile_present = true;
+                            self.config_dirty = true;
                         }
-                        self.config_dirty = true;
                     }
 
-                    let is_active =
-                        self.gui_config.active_profile_id.as_deref() == Some(id.as_str());
-                    if self.gui_config.active_profile_id.is_none() && !id.is_empty() {
-                        self.gui_config.active_profile_id = Some(id.clone());
-                        self.config_dirty = true;
-                        load_nodes = true;
-                    } else if is_active {
-                        load_nodes = true;
-                    }
-                    self.push_log("[GUI] Subscription downloaded successfully.".to_string());
-                    if !from_auto_update {
-                        self.toast_success(self.tr("toast_sub_ok"));
+                    if profile_present {
+                        let is_active =
+                            self.gui_config.active_profile_id.as_deref() == Some(id.as_str());
+                        if self.gui_config.active_profile_id.is_none() {
+                            self.gui_config.active_profile_id = Some(id.clone());
+                            self.config_dirty = true;
+                            load_nodes = true;
+                        } else if is_active {
+                            load_nodes = true;
+                        }
+                        self.push_log("[GUI] Subscription downloaded successfully.".to_string());
+                        if !from_auto_update {
+                            self.toast_success(self.tr("toast_sub_ok"));
+                        }
                     }
                 }
                 let next_update = self.kick_pending_auto_update();
@@ -2321,6 +2479,9 @@ impl App {
                 Task::batch(tasks)
             }
             Message::SelectProfile(id) => {
+                if self.pending_exit {
+                    return Task::none();
+                }
                 if self.downloading {
                     // Switching mid-download would restart the core against a
                     // profile file the in-flight update is about to replace.
@@ -2330,6 +2491,10 @@ impl App {
                 self.confirm_delete_profile_id = None;
                 self.latency_testing = false;
                 self.latency_test_gen = self.latency_test_gen.wrapping_add(1);
+                self.nodes_load_gen = self.nodes_load_gen.wrapping_add(1);
+                self.api_session_gen = self.api_session_gen.wrapping_add(1);
+                self.proxies_fetch_in_flight = false;
+                self.connections_fetch_in_flight = false;
                 self.notify_native_on_load = true;
                 self.gui_config.active_profile_id = Some(id);
                 self.gui_config.selected_node_tag = None;
@@ -2350,12 +2515,15 @@ impl App {
                 ])
             }
             Message::ActiveNodesLoaded {
+                generation,
                 profile_id,
                 is_native_json,
                 ignored_settings,
                 result,
             } => {
-                if self.gui_config.active_profile_id.as_deref() != Some(profile_id.as_str()) {
+                if generation != self.nodes_load_gen
+                    || self.gui_config.active_profile_id.as_deref() != Some(profile_id.as_str())
+                {
                     return Task::none();
                 }
                 self.active_profile_is_native = is_native_json;
@@ -2370,6 +2538,13 @@ impl App {
                 Task::none()
             }
             Message::RequestDeleteProfile(id) => {
+                if self.pending_exit {
+                    return Task::none();
+                }
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 self.confirm_delete_profile_id = Some(id);
                 Task::none()
             }
@@ -2378,6 +2553,14 @@ impl App {
                 Task::none()
             }
             Message::ConfirmDeleteProfile => {
+                if self.pending_exit {
+                    self.confirm_delete_profile_id = None;
+                    return Task::none();
+                }
+                if self.downloading {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 let id = self.confirm_delete_profile_id.take();
                 if let Some(id) = id {
                     let path = config::get_profile_path(&id);
@@ -2408,10 +2591,26 @@ impl App {
                     return Task::none();
                 }
                 self.gui_config.subscriptions.retain(|p| p.id != id);
+                self.pending_auto_updates.retain(|queued| queued != &id);
+                self.auto_update_failures.remove(&id);
+                if self.editing_profile_id.as_deref() == Some(id.as_str()) {
+                    self.editing_profile_id = None;
+                }
+                if self.profile_more_id.as_deref() == Some(id.as_str()) {
+                    self.profile_more_id = None;
+                }
                 if was_active {
+                    self.nodes_load_gen = self.nodes_load_gen.wrapping_add(1);
+                    self.api_session_gen = self.api_session_gen.wrapping_add(1);
+                    self.proxies_fetch_in_flight = false;
+                    self.connections_fetch_in_flight = false;
+                    self.active_profile_is_native = false;
                     self.gui_config.active_profile_id = None;
                     self.gui_config.selected_node_tag = None;
+                    self.selected_node_tag = None;
                     self.active_profile_nodes.clear();
+                    self.proxy_groups.clear();
+                    self.selected_group.clear();
                     self.show_all_proxies = false;
                 }
                 self.config_dirty = true;
@@ -2433,12 +2632,21 @@ impl App {
                 save_task
             }
             Message::SelectNode(tag) => {
+                if self.pending_exit {
+                    return Task::none();
+                }
+                if self.core_busy() {
+                    self.toast_info(self.tr("operation_in_progress"));
+                    return Task::none();
+                }
                 if !self.core_running {
                     self.selected_node_tag = Some(tag.clone());
                     self.gui_config.selected_node_tag = Some(tag.clone());
                     self.config_dirty = true;
                     return self.start_config_save();
                 }
+                let generation = self.api_session_gen;
+                let profile_id = self.gui_config.active_profile_id.clone();
                 let tag_clone = tag.clone();
                 let api_port = self.gui_config.api_port;
                 let group = resolve_primary_selector_group(&self.proxy_groups)
@@ -2448,17 +2656,33 @@ impl App {
                     async move { api::select_proxy(api_port, &group, &tag_clone).await },
                     move |res| match res {
                         Ok(_) => Message::NodeSelected {
+                            generation,
+                            profile_id: profile_id.clone(),
                             tag: tag.clone(),
                             error: None,
                         },
                         Err(e) => Message::NodeSelected {
+                            generation,
+                            profile_id: profile_id.clone(),
                             tag: tag.clone(),
                             error: Some(e),
                         },
                     },
                 )
             }
-            Message::NodeSelected { tag, error } => {
+            Message::NodeSelected {
+                generation,
+                profile_id,
+                tag,
+                error,
+            } => {
+                if generation != self.api_session_gen
+                    || !self.core_running
+                    || self.core_stopping
+                    || profile_id != self.gui_config.active_profile_id
+                {
+                    return Task::none();
+                }
                 if let Some(err) = error {
                     let detail = redact_log_line(&err);
                     self.push_log(format!("[GUI] Failed to select node: {}", detail));
@@ -2478,7 +2702,11 @@ impl App {
                 Task::none()
             }
             Message::StartLatencyTest => {
-                if self.latency_testing {
+                if self.pending_exit || self.latency_testing {
+                    return Task::none();
+                }
+                if self.core_busy() {
+                    self.toast_info(self.tr("operation_in_progress"));
                     return Task::none();
                 }
                 if !self.core_running {
@@ -2573,7 +2801,7 @@ impl App {
             }
             Message::UpdateSubscription(id) => self.start_profile_update(id, false),
             Message::AutoUpdateDue(ids) => {
-                if ids.is_empty() {
+                if ids.is_empty() || self.pending_exit || self.app_update_busy() {
                     return Task::none();
                 }
                 enqueue_pending_updates(&mut self.pending_auto_updates, ids);
@@ -2637,7 +2865,11 @@ impl App {
                 if self.auto_update_tick_counter >= 60 {
                     self.auto_update_tick_counter = 0;
                     let hours = self.gui_config.auto_update_interval_hours;
-                    if hours > 0 && !self.downloading {
+                    if hours > 0
+                        && !self.downloading
+                        && !self.pending_exit
+                        && !self.app_update_busy()
+                    {
                         let due = collect_due_subscription_ids(
                             &self.gui_config,
                             hours,
@@ -2655,13 +2887,17 @@ impl App {
                     self.poll_tick_counter = self.poll_tick_counter.wrapping_add(1);
                     let tick = self.poll_tick_counter;
                     let api_port = self.gui_config.api_port;
+                    let api_gen = self.api_session_gen;
                     let (want_proxies, want_connections) = should_poll_api(self.current_tab, tick);
 
                     if want_proxies && !self.proxies_fetch_in_flight {
                         self.proxies_fetch_in_flight = true;
                         tasks.push(Task::perform(
                             async move { api::fetch_proxies(api_port).await },
-                            |res| Message::ProxiesFetched(res.map(|r| r.proxies)),
+                            move |res| Message::ProxiesFetched {
+                                generation: api_gen,
+                                result: res.map(|r| r.proxies),
+                            },
                         ));
                     }
                     if want_connections {
@@ -2687,7 +2923,11 @@ impl App {
                 result,
             } => {
                 self.config_save_in_flight = false;
-                let mut tasks = vec![self.refresh_config_preview()];
+                let mut tasks = if !self.pending_exit && self.pending_update.is_none() {
+                    vec![self.refresh_config_preview()]
+                } else {
+                    Vec::new()
+                };
                 match result {
                     Ok(()) => {
                         self.config_save_failures = 0;
@@ -2749,6 +2989,9 @@ impl App {
                 Task::batch(tasks)
             }
             Message::StartupSystemProxyChecked(result) => {
+                if self.system_proxy_busy || self.system_proxy_epoch != 0 {
+                    return Task::none();
+                }
                 match result {
                     Ok(enabled) => {
                         self.sys_proxy_enabled = enabled;
@@ -2777,12 +3020,15 @@ impl App {
                         // have edited other fields while `set_autostart` ran.
                         let mut tasks = vec![self.start_config_save()];
                         if !self.pending_exit
+                            && self.pending_update.is_none()
                             && self.active_profile_is_native
                             && self.gui_config.active_profile_id.is_some()
                         {
                             tasks.push(self.check_native_json_ignored_task());
                         }
-                        if self.pending_exit {
+                        if self.pending_update.is_some() {
+                            tasks.push(self.continue_update_install());
+                        } else if self.pending_exit {
                             tasks.push(self.continue_exit());
                         }
                         Task::batch(tasks)
@@ -2801,6 +3047,8 @@ impl App {
                         let save_task = self.start_config_save();
                         if was_pending_exit {
                             Task::batch(vec![save_task, self.reveal_window_on_tray_error()])
+                        } else if self.pending_update.is_some() {
+                            Task::batch(vec![save_task, self.continue_update_install()])
                         } else {
                             save_task
                         }
@@ -2825,11 +3073,11 @@ impl App {
                         self.push_log(format!(
                             "[GUI] System proxy changed to {target} ({context:?})."
                         ));
-                        if context == message::SystemProxyContext::Exit {
-                            return self.continue_exit();
-                        }
-                        if context == message::SystemProxyContext::Update {
+                        if self.pending_update.is_some() {
                             return self.continue_update_install();
+                        }
+                        if self.pending_exit {
+                            return self.continue_exit();
                         }
                         if context == message::SystemProxyContext::SettingsReapply {
                             if self.pending_settings_save_feedback {
@@ -2868,6 +3116,16 @@ impl App {
                             sysproxy::restore_system_proxy_owned(false);
                             self.config_dirty = true;
                             let save_task = self.start_config_save();
+                            if self.pending_update.is_some() {
+                                return Task::batch(vec![
+                                    save_task,
+                                    self.continue_update_install(),
+                                    reveal,
+                                ]);
+                            }
+                            if self.pending_exit {
+                                return Task::batch(vec![save_task, self.continue_exit(), reveal]);
+                            }
                             if self.pending_restart_after_save {
                                 self.pending_restart_after_save = false;
                                 return Task::batch(vec![save_task, self.restart_core(), reveal]);
@@ -2884,6 +3142,12 @@ impl App {
                                 ),
                                 reveal,
                             ]);
+                        }
+                        if self.pending_update.is_some() {
+                            return Task::batch(vec![self.continue_update_install(), reveal]);
+                        }
+                        if self.pending_exit {
+                            return Task::batch(vec![self.continue_exit(), reveal]);
                         }
                         reveal
                     }
@@ -2903,22 +3167,28 @@ impl App {
                 self.handle_unexpected_core_exit()
             }
             Message::FetchConnections => {
-                if self.core_running && !self.connections_fetch_in_flight {
+                if self.core_running && !self.core_busy() && !self.connections_fetch_in_flight {
                     self.connections_fetch_in_flight = true;
                     let api_port = self.gui_config.api_port;
+                    let generation = self.api_session_gen;
                     return Task::perform(
                         async move { api::fetch_connections(api_port).await },
-                        Message::ConnectionsFetched,
+                        move |result| Message::ConnectionsFetched { generation, result },
                     );
                 }
                 Task::none()
             }
-            Message::ConnectionsFetched(Ok(res)) => {
-                if !self.core_running || self.core_stopping {
-                    self.connections_fetch_in_flight = false;
+            Message::ConnectionsFetched {
+                generation,
+                result: Ok(res),
+            } => {
+                if generation != self.api_session_gen {
                     return Task::none();
                 }
                 self.connections_fetch_in_flight = false;
+                if !self.core_running || self.core_stopping {
+                    return Task::none();
+                }
                 self.last_connections_fetch = Some(std::time::Instant::now());
                 let mut connections = res.connections.unwrap_or_default();
                 connections.truncate(MAX_CONNECTION_SNAPSHOT);
@@ -2933,14 +3203,20 @@ impl App {
                 }
                 Task::none()
             }
-            Message::ConnectionsFetched(Err(_e)) => {
-                self.connections_fetch_in_flight = false;
+            Message::ConnectionsFetched {
+                generation,
+                result: Err(_e),
+            } => {
+                if generation == self.api_session_gen {
+                    self.connections_fetch_in_flight = false;
+                }
                 // Suppress background polling HTTP errors
                 Task::none()
             }
             Message::CloseConnection(id) => {
-                if self.core_running {
+                if self.core_running && !self.core_busy() {
                     let api_port = self.gui_config.api_port;
+                    let generation = self.api_session_gen;
                     let id_clone = id.clone();
                     return Task::perform(
                         async move {
@@ -2949,44 +3225,75 @@ impl App {
                                 Err(e) => Err(e),
                             }
                         },
-                        Message::ConnectionClosed,
+                        move |result| Message::ConnectionClosed { generation, result },
                     );
                 }
                 Task::none()
             }
-            Message::ConnectionClosed(Ok(id)) => {
+            Message::ConnectionClosed {
+                generation,
+                result: Ok(id),
+            } => {
+                if generation != self.api_session_gen {
+                    return Task::none();
+                }
                 self.push_log(format!("[GUI] Closed connection {}", id));
                 self.active_connections.retain(|c| c.id != id);
                 Task::none()
             }
-            Message::ConnectionClosed(Err(e)) => {
+            Message::ConnectionClosed {
+                generation,
+                result: Err(e),
+            } => {
+                if generation != self.api_session_gen || !self.core_running || self.core_stopping {
+                    return Task::none();
+                }
                 self.push_log(format!("[GUI] Failed to close connection: {}", e));
                 self.toast_error(self.tr_detail("connection_close_failed", redact_log_line(&e)));
                 Task::none()
             }
             Message::CloseAllConnections => {
-                if !self.core_running {
-                    self.toast_info(self.tr("core_not_running"));
+                if !self.core_running || self.core_busy() {
+                    if !self.core_running {
+                        self.toast_info(self.tr("core_not_running"));
+                    }
                     return Task::none();
                 }
                 let api_port = self.gui_config.api_port;
+                let generation = self.api_session_gen;
                 Task::perform(
                     async move { api::close_all_connections(api_port).await },
-                    Message::AllConnectionsClosed,
+                    move |result| Message::AllConnectionsClosed { generation, result },
                 )
             }
-            Message::AllConnectionsClosed(Ok(())) => {
+            Message::AllConnectionsClosed {
+                generation,
+                result: Ok(()),
+            } => {
+                if generation != self.api_session_gen {
+                    return Task::none();
+                }
                 self.active_connections.clear();
                 self.push_log("[GUI] Closed all connections.".to_string());
                 self.toast_success(self.tr("all_connections_closed"));
                 Task::none()
             }
-            Message::AllConnectionsClosed(Err(e)) => {
+            Message::AllConnectionsClosed {
+                generation,
+                result: Err(e),
+            } => {
+                if generation != self.api_session_gen || !self.core_running || self.core_stopping {
+                    return Task::none();
+                }
                 self.push_log(format!("[GUI] Failed to close all connections: {}", e));
                 self.toast_error(self.tr_detail("connections_close_failed", redact_log_line(&e)));
                 Task::none()
             }
             Message::RoutingModeChanged(mode) => {
+                if self.pending_exit {
+                    self.pending_tray_check_sync = true;
+                    return Task::none();
+                }
                 if self.core_busy() || self.pending_routing_mode.is_some() {
                     self.toast_info(self.tr("operation_in_progress"));
                     self.pending_tray_check_sync = true;
@@ -2998,10 +3305,16 @@ impl App {
                 }
                 if self.core_running {
                     self.pending_routing_mode = Some(mode);
+                    self.pending_tray_check_sync = true;
                     let api_port = self.gui_config.api_port;
+                    let generation = self.api_session_gen;
                     Task::perform(
                         async move { api::set_mode(api_port, mode.as_clash_mode()).await },
-                        move |result| Message::ModeSet { mode, result },
+                        move |result| Message::ModeSet {
+                            generation,
+                            mode,
+                            result,
+                        },
                     )
                 } else {
                     self.gui_config.routing_mode = mode;
@@ -3013,8 +3326,12 @@ impl App {
                     self.start_config_save()
                 }
             }
-            Message::ModeSet { mode, result } => {
-                if self.pending_routing_mode != Some(mode) {
+            Message::ModeSet {
+                generation,
+                mode,
+                result,
+            } => {
+                if generation != self.api_session_gen || self.pending_routing_mode != Some(mode) {
                     self.pending_tray_check_sync = true;
                     return Task::none();
                 }
@@ -3285,8 +3602,8 @@ impl App {
                 self.config_preview_expanded = !self.config_preview_expanded;
                 self.refresh_config_preview()
             }
-            Message::ConfigPreviewGenerated(text) => {
-                if self.config_preview_expanded {
+            Message::ConfigPreviewGenerated { generation, text } => {
+                if generation == self.config_preview_gen && self.config_preview_expanded {
                     self.config_preview = Some(text);
                 }
                 Task::none()
@@ -3333,6 +3650,9 @@ impl App {
                 Task::none()
             }
             Message::SaveSettings => {
+                if self.pending_exit {
+                    return Task::none();
+                }
                 if self.autostart_busy || self.settings_validation_in_flight {
                     // A second commit while set_autostart/validation runs would race
                     // the writer and can leave the OS state opposite the UI.
@@ -3391,6 +3711,8 @@ impl App {
                         );
                         if for_exit {
                             Task::batch(vec![task, self.continue_exit()])
+                        } else if self.pending_update.is_some() {
+                            Task::batch(vec![task, self.continue_update_install()])
                         } else {
                             task
                         }
@@ -3411,6 +3733,9 @@ impl App {
                                 .copied()
                                 .unwrap_or("settings_invalid");
                             self.toast_error(self.tr(key));
+                            if self.pending_update.is_some() {
+                                return self.continue_update_install();
+                            }
                             Task::none()
                         }
                     }
@@ -3422,14 +3747,29 @@ impl App {
                 Task::none()
             }
             Message::CheckUpdate => {
-                if self.maintenance_busy() {
+                if self.pending_exit {
+                    return Task::none();
+                }
+                if self.maintenance_busy()
+                    || matches!(self.update_status, state::UpdateStatus::Checking)
+                {
                     self.toast_info(self.tr("operation_in_progress"));
                     return Task::none();
                 }
+                self.update_check_gen = self.update_check_gen.wrapping_add(1);
+                let generation = self.update_check_gen;
                 self.update_status = state::UpdateStatus::Checking;
-                Task::perform(check_app_update(), Message::UpdateChecked)
+                Task::perform(check_app_update(), move |result| Message::UpdateChecked {
+                    generation,
+                    result,
+                })
             }
-            Message::UpdateChecked(result) => {
+            Message::UpdateChecked { generation, result } => {
+                if generation != self.update_check_gen
+                    || !matches!(self.update_status, state::UpdateStatus::Checking)
+                {
+                    return Task::none();
+                }
                 match result {
                     Ok(info) => {
                         let local_version = env!("CARGO_PKG_VERSION");
@@ -3560,6 +3900,11 @@ impl App {
                 }
             }
             Message::OpenUrl(url) => {
+                if !url::Url::parse(&url)
+                    .is_ok_and(|parsed| matches!(parsed.scheme(), "http" | "https"))
+                {
+                    return Task::none();
+                }
                 // `open::that` delegates to ShellExecuteW / open / xdg-open
                 // safely, avoiding cmd-shell injection on user-controlled URLs.
                 Task::perform(
@@ -4065,10 +4410,7 @@ fn log_subscription() -> impl iced::futures::Stream<Item = Message> {
                         Some(rx) => rx,
                         None => return,
                     };
-                    let mut slot = match self.slot.lock() {
-                        Ok(s) => s,
-                        Err(e) => e.into_inner(),
-                    };
+                    let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
                     if slot.is_none() {
                         *slot = Some(rx);
                     }
@@ -4116,10 +4458,7 @@ fn traffic_subscription() -> impl iced::futures::Stream<Item = Message> {
                         Some(rx) => rx,
                         None => return,
                     };
-                    let mut slot = match self.slot.lock() {
-                        Ok(s) => s,
-                        Err(e) => e.into_inner(),
-                    };
+                    let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
                     if slot.is_none() {
                         *slot = Some(rx);
                     }
@@ -4329,6 +4668,7 @@ struct ProfileContentMeta {
 const MAX_PROFILE_BYTES: usize = 16 * 1024 * 1024;
 
 fn is_http_profile_source(source: &str) -> bool {
+    let source = source.trim();
     url::Url::parse(source).ok().is_some_and(|url| {
         // Url::port() removes explicit default ports (80/443). Keep that
         // distinction so an HTTP node using port 80 is imported, not fetched.
@@ -4472,7 +4812,10 @@ fn parse_profile_title_header(header: &str) -> Option<String> {
     use base64::{Engine as _, engine::general_purpose};
 
     let raw = header.trim().trim_matches('"');
-    let decoded = if let Some(encoded) = raw.strip_prefix("base64:") {
+    let decoded = if let Some((_, encoded)) = raw
+        .split_once(':')
+        .filter(|(prefix, _)| prefix.eq_ignore_ascii_case("base64"))
+    {
         general_purpose::STANDARD
             .decode(encoded.trim())
             .or_else(|_| general_purpose::STANDARD_NO_PAD.decode(encoded.trim()))
@@ -4490,21 +4833,38 @@ fn parse_profile_title_header(header: &str) -> Option<String> {
     Some(title.chars().take(128).collect())
 }
 
+fn sanitize_content_disposition_filename(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_matches('"');
+    let basename = trimmed.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    if basename.is_empty() {
+        return None;
+    }
+    Some(basename.chars().take(128).collect())
+}
+
 fn parse_content_disposition_filename(header: &str) -> Option<String> {
-    // filename="xxx" or filename*=UTF-8''xxx
+    // Prefer RFC 5987 `filename*=` over `filename=`, matching parameter names case-insensitively.
+    let mut fallback: Option<String> = None;
     for part in header.split(';') {
-        let part = part.trim();
-        if let Some(rest) = part.strip_prefix("filename*=") {
-            let rest = rest.trim_matches('"');
-            if let Some(encoded) = rest.split("''").nth(1) {
-                return Some(urlencoding::decode(encoded).ok()?.into_owned());
+        let Some((key, val)) = part.trim().split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let val = val.trim();
+        if key.eq_ignore_ascii_case("filename*") {
+            let rest = val.trim_matches('"');
+            if let Some(encoded) = rest.splitn(3, '\'').nth(2)
+                && let Some(decoded) = urlencoding::decode(encoded)
+                    .ok()
+                    .and_then(|s| sanitize_content_disposition_filename(&s))
+            {
+                return Some(decoded);
             }
-        }
-        if let Some(rest) = part.strip_prefix("filename=") {
-            return Some(rest.trim_matches('"').to_string());
+        } else if key.eq_ignore_ascii_case("filename") && fallback.is_none() {
+            fallback = sanitize_content_disposition_filename(val);
         }
     }
-    None
+    fallback
 }
 
 /// Append unique subscription ids to the auto-update queue (FIFO).
@@ -4539,7 +4899,7 @@ fn collect_due_subscription_ids(
         }
         let stale = chrono::NaiveDateTime::parse_from_str(&p.updated_at, "%Y-%m-%d %H:%M:%S")
             .ok()
-            .and_then(|ndt| ndt.and_local_timezone(chrono::Local).single())
+            .and_then(|ndt| ndt.and_local_timezone(chrono::Local).earliest())
             .map(|dt| now.signed_duration_since(dt) >= threshold)
             .unwrap_or(true);
         if stale {
@@ -4778,20 +5138,100 @@ fn redact_log_line(line: &str) -> String {
 /// `INFO {"password":"...","token":"..."}` that do not contain an `=`
 /// separator and would otherwise be displayed verbatim.
 fn redact_json_segment(line: &str) -> Option<String> {
-    let start = line.find(['{', '['])?;
-    let end = line.rfind(['}', ']'])?;
-    if end < start {
+    let mut out = String::new();
+    let mut cursor = 0usize;
+    let mut changed = false;
+
+    while cursor < line.len() {
+        let rest = &line[cursor..];
+        let Some(rel_start) = rest.find(['{', '[']) else {
+            break;
+        };
+        let start = cursor + rel_start;
+        let slice = &line[start..];
+        let mut stream = serde_json::Deserializer::from_str(slice).into_iter::<serde_json::Value>();
+        if let Some(Ok(original)) = stream.next() {
+            let consumed = stream.byte_offset();
+            if consumed > 0 {
+                let mut redacted = original.clone();
+                config::redact_sensitive_json(&mut redacted);
+                if redacted != original
+                    && let Ok(replacement) = serde_json::to_string(&redacted)
+                {
+                    out.push_str(&line[cursor..start]);
+                    out.push_str(&replacement);
+                    cursor = start + consumed;
+                    changed = true;
+                    continue;
+                }
+                out.push_str(&line[cursor..start + consumed]);
+                cursor = start + consumed;
+                continue;
+            }
+        }
+        // Advance past non-JSON '[' or '{' (1-byte ASCII) so subsequent JSON still gets redacted.
+        out.push_str(&line[cursor..=start]);
+        cursor = start + 1;
+    }
+
+    if !changed {
         return None;
     }
-    let mut value = serde_json::from_str::<serde_json::Value>(&line[start..=end]).ok()?;
-    config::redact_sensitive_json(&mut value);
-    let replacement = serde_json::to_string(&value).ok()?;
-    Some(format!(
-        "{}{}{}",
-        &line[..start],
-        replacement,
-        &line[end + 1..]
-    ))
+    out.push_str(&line[cursor..]);
+    Some(out)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyboardShortcutAction {
+    FocusNext,
+    FocusPrevious,
+    Escape,
+    Save,
+    SwitchTab(Tab),
+}
+
+fn resolve_keyboard_shortcut(
+    key: iced::keyboard::Key<&str>,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<KeyboardShortcutAction> {
+    match key {
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab)
+            if !modifiers.control() && !modifiers.alt() && !modifiers.logo() =>
+        {
+            Some(if modifiers.shift() {
+                KeyboardShortcutAction::FocusPrevious
+            } else {
+                KeyboardShortcutAction::FocusNext
+            })
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) if modifiers.is_empty() => {
+            Some(KeyboardShortcutAction::Escape)
+        }
+        iced::keyboard::Key::Character(character)
+            if modifiers.command()
+                && !modifiers.alt()
+                && !modifiers.shift()
+                && character.eq_ignore_ascii_case("s") =>
+        {
+            Some(KeyboardShortcutAction::Save)
+        }
+        iced::keyboard::Key::Character(character)
+            if modifiers.command() && !modifiers.alt() && !modifiers.shift() =>
+        {
+            let tab = match character {
+                "1" => Some(Tab::Dashboard),
+                "2" => Some(Tab::Proxies),
+                "3" => Some(Tab::Profiles),
+                "4" => Some(Tab::Rules),
+                "5" => Some(Tab::Connections),
+                "6" => Some(Tab::Logs),
+                "7" => Some(Tab::Settings),
+                _ => None,
+            };
+            tab.map(KeyboardShortcutAction::SwitchTab)
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -4823,6 +5263,7 @@ mod tests {
         assert_eq!(app.pending_routing_mode, Some(state::RoutingMode::Global));
         drop(app.update(Message::ModeSet {
             mode: state::RoutingMode::Global,
+            generation: app.api_session_gen,
             result: Err("API unavailable".into()),
         }));
         assert_eq!(app.gui_config.routing_mode, state::RoutingMode::Rule);
@@ -4830,6 +5271,7 @@ mod tests {
         drop(app.update(Message::RoutingModeChanged(state::RoutingMode::Direct)));
         drop(app.update(Message::ModeSet {
             mode: state::RoutingMode::Direct,
+            generation: app.api_session_gen,
             result: Ok(()),
         }));
         assert_eq!(app.gui_config.routing_mode, state::RoutingMode::Direct);
@@ -4847,9 +5289,10 @@ mod tests {
             now: None,
             all: Some(vec![]),
         };
-        drop(app.update(Message::ProxiesFetched(Ok(
-            std::collections::HashMap::from([("Old".into(), proxy)]),
-        ))));
+        drop(app.update(Message::ProxiesFetched {
+            generation: app.api_session_gen,
+            result: Ok(std::collections::HashMap::from([("Old".into(), proxy)])),
+        }));
         assert!(app.proxy_groups.is_empty());
     }
 
@@ -5351,10 +5794,13 @@ mod tests {
         );
 
         let (mut app, _) = App::new_with_config(GuiConfig::default());
+        app.core_running = true;
         app.proxy_groups = groups;
         let _ = app.update(Message::GroupNodeSelected {
             group: "MainSelect".to_string(),
             node: "node-b".to_string(),
+            generation: app.api_session_gen,
+            profile_id: app.gui_config.active_profile_id.clone(),
             error: None,
         });
         assert_eq!(app.selected_node_tag.as_deref(), Some("node-b"));
@@ -5380,6 +5826,8 @@ mod tests {
         let _ = app.update(Message::GroupNodeSelected {
             group: "MainSelect".to_string(),
             node: "node-a".to_string(),
+            generation: app.api_session_gen,
+            profile_id: app.gui_config.active_profile_id.clone(),
             error: None,
         });
         assert_eq!(app.selected_node_tag.as_deref(), Some("node-b"));
@@ -5462,6 +5910,7 @@ mod tests {
             is_subscription: false,
             ignored_settings: Vec::new(),
             from_auto_update: true,
+            is_update: true,
         });
         assert_eq!(app.auto_update_failures["sub-1"].0, 1);
         let due_now = collect_due_subscription_ids(
@@ -5485,6 +5934,7 @@ mod tests {
             is_subscription: true,
             ignored_settings: Vec::new(),
             from_auto_update: true,
+            is_update: true,
         });
         assert!(!app.auto_update_failures.contains_key("sub-1"));
     }
@@ -5529,6 +5979,7 @@ mod tests {
             is_subscription: true,
             ignored_settings: Vec::new(),
             from_auto_update: false,
+            is_update: true,
         });
         assert_eq!(app.gui_config.subscriptions[0].name, "Custom User Name");
         assert!(app.pending_core_restart);
@@ -5546,6 +5997,7 @@ mod tests {
             is_subscription: false,
             ignored_settings: Vec::new(),
             from_auto_update: false,
+            is_update: false,
         });
         let local = app
             .gui_config
@@ -5630,6 +6082,7 @@ mod tests {
         app.pending_routing_mode = Some(state::RoutingMode::Global);
         let _ = app.update(Message::ModeSet {
             mode: state::RoutingMode::Global,
+            generation: app.api_session_gen,
             result: Err("api refused".into()),
         });
         assert!(app.window_id.is_some());
@@ -5657,6 +6110,331 @@ mod tests {
         assert!(source.contains("$waited -lt 60"));
         assert!(source.contains("Start-Process -FilePath $Target"));
         assert!(source.contains("WAITED -lt 60"));
+    }
+
+    #[test]
+    fn stale_generation_and_profile_callbacks_are_ignored() {
+        let mut cfg = GuiConfig {
+            active_profile_id: Some("p-1".into()),
+            ..GuiConfig::default()
+        };
+        for id in ["p-1", "p-2"] {
+            cfg.subscriptions.push(Profile {
+                id: id.into(),
+                name: id.into(),
+                url: format!("https://example.com/{id}"),
+                file_path: format!("profiles/{id}.json"),
+                is_subscription: true,
+                updated_at: "2026-01-01 00:00:00".into(),
+                traffic_upload: None,
+                traffic_download: None,
+                traffic_total: None,
+                expire_at: None,
+            });
+        }
+        let (mut app, _) = App::new_with_config(cfg);
+        app.core_running = true;
+        app.api_session_gen = 5;
+        app.nodes_load_gen = 3;
+        app.update_check_gen = 4;
+        app.config_preview_gen = 2;
+        app.config_preview_expanded = true;
+        app.system_proxy_epoch = 1;
+
+        let proxy = api::ProxyInfo {
+            name: "Proxy".into(),
+            proxy_type: "Selector".into(),
+            udp: None,
+            history: None,
+            now: Some("node-a".into()),
+            all: Some(vec!["node-a".into()]),
+        };
+        let _ = app.update(Message::ProxiesFetched {
+            generation: 4,
+            result: Ok(std::collections::HashMap::from([("Proxy".into(), proxy)])),
+        });
+        assert!(app.proxy_groups.is_empty());
+
+        let _ = app.update(Message::ConnectionsFetched {
+            generation: 4,
+            result: Ok(api::ConnectionsResponse {
+                connections: Some(Vec::new()),
+                download_total: 999,
+                upload_total: 888,
+            }),
+        });
+        assert_eq!(app.total_downloaded, 0);
+        assert_eq!(app.total_uploaded, 0);
+
+        let _ = app.update(Message::GroupNodeSelected {
+            generation: 4,
+            profile_id: Some("p-1".into()),
+            group: "Proxy".into(),
+            node: "node-stale".into(),
+            error: None,
+        });
+        let _ = app.update(Message::GroupNodeSelected {
+            generation: 5,
+            profile_id: Some("p-2".into()),
+            group: "Proxy".into(),
+            node: "node-wrong-profile".into(),
+            error: None,
+        });
+        assert_eq!(app.selected_node_tag, None);
+
+        let _ = app.update(Message::NodeSelected {
+            generation: 4,
+            profile_id: Some("p-1".into()),
+            tag: "node-stale".into(),
+            error: None,
+        });
+        let _ = app.update(Message::NodeSelected {
+            generation: 5,
+            profile_id: Some("p-2".into()),
+            tag: "node-wrong-profile".into(),
+            error: None,
+        });
+        assert_eq!(app.selected_node_tag, None);
+
+        app.pending_routing_mode = Some(state::RoutingMode::Global);
+        let _ = app.update(Message::ModeSet {
+            generation: 4,
+            mode: state::RoutingMode::Global,
+            result: Ok(()),
+        });
+        assert_eq!(app.gui_config.routing_mode, state::RoutingMode::Rule);
+        assert_eq!(app.pending_routing_mode, Some(state::RoutingMode::Global));
+
+        let node = ProxyNode {
+            name: "stale-node".into(),
+            node_type: "vless".into(),
+            server: "1.1.1.1".into(),
+            port: 443,
+            latency: None,
+            selectable: true,
+        };
+        let _ = app.update(Message::ActiveNodesLoaded {
+            generation: 2,
+            profile_id: "p-1".into(),
+            is_native_json: false,
+            ignored_settings: Vec::new(),
+            result: Ok(vec![node.clone()]),
+        });
+        let _ = app.update(Message::ActiveNodesLoaded {
+            generation: 3,
+            profile_id: "p-2".into(),
+            is_native_json: false,
+            ignored_settings: Vec::new(),
+            result: Ok(vec![node]),
+        });
+        assert!(app.active_profile_nodes.is_empty());
+
+        let _ = app.update(Message::UpdateChecked {
+            generation: 3,
+            result: Ok(message::AppUpdateInfo {
+                tag_name: "v99.0.0".into(),
+                download_url: None,
+                sha256: None,
+                size: None,
+            }),
+        });
+        assert!(!matches!(
+            app.update_status,
+            state::UpdateStatus::NewVersion { .. }
+        ));
+
+        let _ = app.update(Message::ConfigPreviewGenerated {
+            generation: 1,
+            text: "stale preview".into(),
+        });
+        assert!(app.config_preview.is_none());
+
+        let _ = app.update(Message::StartupSystemProxyChecked(Ok(true)));
+        assert!(!app.sys_proxy_enabled);
+        assert!(!app.gui_config.system_proxy_enabled);
+    }
+
+    #[test]
+    fn core_restart_stop_and_error_lifecycle_transitions_hold_invariants() {
+        let mut cfg = GuiConfig {
+            disable_proxy_on_core_stop: true,
+            ..GuiConfig::default()
+        };
+        cfg.active_profile_id = Some("p-1".into());
+        let (mut app, _) = App::new_with_config(cfg);
+
+        // Explicit stop in flight must not be resurrected into a restart.
+        app.core_stopping = true;
+        app.pending_core_restart = false;
+        drop(app.restart_core());
+        assert!(!app.pending_core_restart);
+
+        // Startup in flight queues a restart once startup settles.
+        app.core_stopping = false;
+        app.core_starting = true;
+        drop(app.restart_core());
+        assert!(app.pending_core_restart);
+
+        // Failed core start cleans up owned system proxy and resumes pending update.
+        let (mut app, _) = App::new_with_config(GuiConfig {
+            disable_proxy_on_core_stop: true,
+            ..GuiConfig::default()
+        });
+        app.core_starting = true;
+        app.core_start_gen = 2;
+        app.sys_proxy_enabled = true;
+        app.gui_config.system_proxy_owned = true;
+        app.pending_update = Some(PendingAppUpdate {
+            tag: "v9.9.9".into(),
+            url: "https://github.com/zangge8855/sing-box-gui/releases/download/v9.9.9/bin".into(),
+            sha256: "00".into(),
+            size: 123,
+            path: std::path::PathBuf::from("update.bin"),
+        });
+        let _ = app.update(Message::CoreStartFinished {
+            generation: 2,
+            result: Err("bind failed".into()),
+        });
+        assert!(!app.core_starting);
+        assert!(!app.core_running);
+        assert!(app.system_proxy_busy);
+    }
+
+    #[test]
+    fn window_delete_and_subscription_update_guards_preserve_state() {
+        let mut cfg = GuiConfig {
+            active_profile_id: Some("p-1".into()),
+            ..GuiConfig::default()
+        };
+        cfg.subscriptions.push(Profile {
+            id: "p-1".into(),
+            name: "Primary".into(),
+            url: "https://example.com/sub".into(),
+            file_path: "profiles/p-1.json".into(),
+            is_subscription: true,
+            updated_at: "2026-01-01 00:00:00".into(),
+            traffic_upload: None,
+            traffic_download: None,
+            traffic_total: None,
+            expire_at: None,
+        });
+        let (mut app, _) = App::new_with_config(cfg);
+
+        // Stale WindowOpened must not clobber the active window ID.
+        let current_id = iced::window::Id::unique();
+        let stale_id = iced::window::Id::unique();
+        app.window_id = Some(current_id);
+        let _ = app.update(Message::WindowOpened(stale_id));
+        assert_eq!(app.window_id, Some(current_id));
+
+        // Deletion confirmation is blocked while a download/update is in flight.
+        app.downloading = true;
+        let _ = app.update(Message::RequestDeleteProfile("p-1".into()));
+        assert!(app.confirm_delete_profile_id.is_none());
+        app.downloading = false;
+
+        // Deleting a profile cleans pending auto-updates, edit/more state, and bumps epochs.
+        app.pending_auto_updates.push_back("p-1".into());
+        app.auto_update_failures
+            .insert("p-1".into(), (1, std::time::Instant::now()));
+        app.editing_profile_id = Some("p-1".into());
+        app.profile_more_id = Some("p-1".into());
+        let prev_nodes_gen = app.nodes_load_gen;
+        let prev_api_gen = app.api_session_gen;
+        app.gui_config.subscriptions.clear();
+        let _ = app.update(Message::ProfileDeleteFinished {
+            id: "p-1".into(),
+            was_active: true,
+            result: Ok(()),
+        });
+        assert!(app.pending_auto_updates.is_empty());
+        assert!(!app.auto_update_failures.contains_key("p-1"));
+        assert!(app.editing_profile_id.is_none());
+        assert!(app.profile_more_id.is_none());
+        assert_eq!(app.nodes_load_gen, prev_nodes_gen + 1);
+        assert_eq!(app.api_session_gen, prev_api_gen + 1);
+
+        // Updating an already-deleted subscription preserves url_input and does not recreate it.
+        app.url_input = "https://new-draft.example/sub".into();
+        let _ = app.update(Message::SubscriptionDownloaded {
+            id: "p-1".into(),
+            error: None,
+            traffic_upload: None,
+            traffic_download: None,
+            traffic_total: None,
+            expire_at: None,
+            display_name: Some("Deleted Sub".into()),
+            source_url: Some("https://example.com/sub".into()),
+            is_subscription: true,
+            ignored_settings: Vec::new(),
+            from_auto_update: false,
+            is_update: true,
+        });
+        assert_eq!(app.url_input, "https://new-draft.example/sub");
+        assert!(app.gui_config.subscriptions.is_empty());
+    }
+
+    #[test]
+    fn redact_json_content_disposition_title_and_keyboard_edge_cases() {
+        let log_with_brackets = r#"INFO [1 0ms] {"password":"secret","user":"ok"}"#;
+        let redacted = redact_log_line(log_with_brackets);
+        assert!(redacted.starts_with("INFO [1 0ms] "));
+        assert!(!redacted.contains("secret"));
+        assert!(redacted.contains("ok"));
+
+        let plain = "INFO [123] plain log";
+        assert_eq!(redact_log_line(plain), plain);
+
+        assert_eq!(
+            parse_content_disposition_filename(
+                r#"attachment; filename="fallback.yaml"; FILENAME*=utf-8'en'sub%2Fmy%20profile.json"#
+            )
+            .as_deref(),
+            Some("my profile.json")
+        );
+        assert_eq!(
+            parse_profile_title_header("BASE64:SGVsbG8=").as_deref(),
+            Some("Hello")
+        );
+        assert!(is_http_profile_source("  https://example.com/sub  "));
+
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        assert_eq!(
+            resolve_keyboard_shortcut(Key::Named(Named::Tab), Modifiers::empty()),
+            Some(KeyboardShortcutAction::FocusNext)
+        );
+        assert_eq!(
+            resolve_keyboard_shortcut(Key::Named(Named::Tab), Modifiers::SHIFT),
+            Some(KeyboardShortcutAction::FocusPrevious)
+        );
+        assert_eq!(
+            resolve_keyboard_shortcut(Key::Named(Named::Tab), Modifiers::CTRL),
+            None
+        );
+        assert_eq!(
+            resolve_keyboard_shortcut(Key::Named(Named::Escape), Modifiers::empty()),
+            Some(KeyboardShortcutAction::Escape)
+        );
+        assert_eq!(
+            resolve_keyboard_shortcut(Key::Named(Named::Escape), Modifiers::SHIFT),
+            None
+        );
+        assert_eq!(
+            resolve_keyboard_shortcut(Key::Character("s"), Modifiers::COMMAND),
+            Some(KeyboardShortcutAction::Save)
+        );
+        assert_eq!(
+            resolve_keyboard_shortcut(Key::Character("s"), Modifiers::COMMAND | Modifiers::ALT),
+            None
+        );
+        assert_eq!(
+            resolve_keyboard_shortcut(Key::Character("3"), Modifiers::COMMAND),
+            Some(KeyboardShortcutAction::SwitchTab(Tab::Profiles))
+        );
+        assert_eq!(
+            resolve_keyboard_shortcut(Key::Character("3"), Modifiers::COMMAND | Modifiers::SHIFT),
+            None
+        );
     }
 }
 
@@ -5896,8 +6674,12 @@ async fn github_get_with_no_proxy_fallback(
         .send()
         .await
     {
-        Ok(res) => Ok(res),
-        Err(primary_err) => {
+        Ok(res) if !matches!(res.status().as_u16(), 502..=504) => Ok(res),
+        primary_outcome => {
+            let reason = match primary_outcome {
+                Ok(res) => format!("HTTP {}", res.status()),
+                Err(err) => err.to_string(),
+            };
             let direct = build_client(true)
                 .map_err(|e| format!("Failed to build direct HTTP client: {e}"))?;
             direct
@@ -5906,7 +6688,7 @@ async fn github_get_with_no_proxy_fallback(
                 .send()
                 .await
                 .map_err(|direct_err| {
-                    format!("Request failed: {primary_err} (direct retry failed: {direct_err})")
+                    format!("Request failed: {reason} (direct retry failed: {direct_err})")
                 })
         }
     }

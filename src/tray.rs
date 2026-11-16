@@ -60,6 +60,24 @@ pub fn events() -> impl iced::futures::Stream<Item = Message> {
 
 pub use platform::Tray;
 
+fn decode_tray_icon_rgba(bytes: &[u8], size: u32) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?;
+    Some(
+        image
+            .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
+            .into_rgba8()
+            .into_raw(),
+    )
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn rgba_to_argb_in_place(rgba: &mut [u8]) {
+    // The SNI wire format is big-endian ARGB, not RGBA.
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        pixel.rotate_right(1);
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
     use super::*;
@@ -199,27 +217,17 @@ mod platform {
             static ICONS: OnceLock<Vec<ksni::Icon>> = OnceLock::new();
             ICONS
                 .get_or_init(|| {
-                    let Ok(image) =
-                        image::load_from_memory(include_bytes!("../assets/tray-icon.png"))
-                    else {
-                        return Vec::new();
-                    };
-                    [22, 32, 48]
+                    let bytes = include_bytes!("../assets/tray-icon.png");
+                    [22u32, 32, 48]
                         .into_iter()
-                        .map(|size| {
-                            let mut rgba = image
-                                .resize(size, size, image::imageops::FilterType::Lanczos3)
-                                .into_rgba8()
-                                .into_raw();
-                            // The SNI wire format is big-endian ARGB, not RGBA.
-                            for pixel in rgba.as_chunks_mut::<4>().0 {
-                                pixel.rotate_right(1);
-                            }
-                            ksni::Icon {
+                        .filter_map(|size| {
+                            let mut rgba = decode_tray_icon_rgba(bytes, size)?;
+                            rgba_to_argb_in_place(&mut rgba);
+                            Some(ksni::Icon {
                                 width: size as i32,
                                 height: size as i32,
                                 data: rgba,
-                            }
+                            })
                         })
                         .collect()
                 })
@@ -360,19 +368,8 @@ mod platform {
                     send(Message::TrayIconClicked);
                 }
             }));
-            let icon = image::load_from_memory(include_bytes!("../assets/tray-icon.png"))
-                .ok()
-                .and_then(|image| {
-                    tray_icon::Icon::from_rgba(
-                        image
-                            .resize(32, 32, image::imageops::FilterType::Lanczos3)
-                            .into_rgba8()
-                            .into_raw(),
-                        32,
-                        32,
-                    )
-                    .ok()
-                })
+            let icon = decode_tray_icon_rgba(include_bytes!("../assets/tray-icon.png"), 32)
+                .and_then(|rgba| tray_icon::Icon::from_rgba(rgba, 32, 32).ok())
                 .and_then(|icon| {
                     TrayIconBuilder::new()
                         .with_menu(Box::new(menu))
@@ -457,5 +454,32 @@ mod tests {
             ];
             assert_eq!(checked.into_iter().filter(|&c| c).count(), 1);
         }
+    }
+
+    #[test]
+    fn tray_icon_decoding_produces_exact_square_rgba_and_argb() {
+        let embedded = include_bytes!("../assets/tray-icon.png");
+        for size in [22u32, 32, 48] {
+            let mut rgba = decode_tray_icon_rgba(embedded, size).expect("embedded icon decodes");
+            assert_eq!(rgba.len(), (size * size * 4) as usize);
+            rgba_to_argb_in_place(&mut rgba);
+            assert_eq!(rgba.len(), (size * size * 4) as usize);
+        }
+
+        // Non-square PNG must still resize to an exact 32x32 byte buffer.
+        let mut png_bytes = Vec::new();
+        let img = image::RgbaImage::from_pixel(16, 8, image::Rgba([10, 20, 30, 255]));
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(
+                &mut std::io::Cursor::new(&mut png_bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        let exact = decode_tray_icon_rgba(&png_bytes, 32).expect("non-square icon decodes");
+        assert_eq!(exact.len(), 32 * 32 * 4);
+
+        let mut pixel = vec![10, 20, 30, 255];
+        rgba_to_argb_in_place(&mut pixel);
+        assert_eq!(pixel, vec![255, 10, 20, 30]);
     }
 }

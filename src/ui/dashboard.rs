@@ -1112,7 +1112,7 @@ fn profile_strip<'a>(
             text(tr(
                 lang,
                 if updating {
-                    "btn_downloading"
+                    "btn_updating"
                 } else {
                     "btn_update"
                 },
@@ -1265,7 +1265,10 @@ fn traffic_waveform<'a>(
             text(tr(lang, label_key))
                 .size(theme::TYPE_CAPTION)
                 .color(text_muted)
-                .width(Length::Fixed(44.0)),
+                .width(Length::Fixed(match lang {
+                    Language::Zh => 32.0,
+                    Language::En => 60.0,
+                })),
             text(format_speed(rate))
                 .size(theme::TYPE_CAPTION)
                 .font(theme::metric_font())
@@ -1396,7 +1399,7 @@ fn traffic_waveform<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{split_figure, waveform_split};
+    use super::{fill_height_threshold, split_figure, waveform_split};
 
     #[test]
     fn waveform_split_fills_height_on_one_scale() {
@@ -1414,6 +1417,9 @@ mod tests {
         // A download-heavy window hands the download side most of the height.
         let (d, u, _) = waveform_split(8_000_000, 400_000, 148.0);
         assert!(d > u * 2.0);
+        // Tiny heights stay finite and non-negative.
+        let (d_min, u_min, scale_min) = waveform_split(10_000, 10_000, 2.0);
+        assert!(d_min > 0.0 && u_min > 0.0 && scale_min.is_finite());
     }
 
     #[test]
@@ -1423,5 +1429,13 @@ mod tests {
             ("1.24".to_string(), "MB/s".to_string())
         );
         assert_eq!(split_figure("0"), ("0".to_string(), String::new()));
+    }
+
+    #[test]
+    fn fill_height_threshold_accounts_for_banners_and_onboarding() {
+        assert!(fill_height_threshold(false, false, true).is_infinite());
+        let base = fill_height_threshold(false, false, false);
+        assert!(fill_height_threshold(true, false, false) > base);
+        assert!(fill_height_threshold(false, true, false) > base);
     }
 }

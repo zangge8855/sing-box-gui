@@ -103,7 +103,8 @@ fn getcap_output_has_cap_net_admin(output: &str) -> bool {
             let Some((caps, flags)) = lower.split_once(['=', '+']) else {
                 return false;
             };
-            caps.split(',').any(|cap| cap == "cap_net_admin")
+            caps.split(',')
+                .any(|cap| cap == "cap_net_admin" || cap == "all")
                 && flags.contains('e')
                 && flags.contains('p')
         })
@@ -176,22 +177,27 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
         use winreg::RegKey;
         use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
 
+        const RUN_KEY_PATH: &str = r#"Software\Microsoft\Windows\CurrentVersion\Run"#;
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let run_key = hkcu
-            .open_subkey_with_flags(
-                r#"Software\Microsoft\Windows\CurrentVersion\Run"#,
-                KEY_WRITE,
-            )
-            .map_err(|e| format!("Failed to open autostart registry key: {e}"))?;
         if enable {
+            let (run_key, _) = hkcu
+                .create_subkey(RUN_KEY_PATH)
+                .map_err(|e| format!("Failed to open autostart registry key: {e}"))?;
             let value = format_windows_autostart_value(&exe.to_string_lossy());
             run_key
                 .set_value("sing-box-gui", &value)
                 .map_err(|e| format!("Failed to write autostart registry: {e}"))?;
-        } else if let Err(err) = run_key.delete_value("sing-box-gui")
-            && err.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(format!("Failed to delete autostart registry value: {err}"));
+        } else {
+            let run_key = match hkcu.open_subkey_with_flags(RUN_KEY_PATH, KEY_WRITE) {
+                Ok(key) => key,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(err) => return Err(format!("Failed to open autostart registry key: {err}")),
+            };
+            if let Err(err) = run_key.delete_value("sing-box-gui")
+                && err.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(format!("Failed to delete autostart registry value: {err}"));
+            }
         }
         return Ok(());
     }
@@ -206,8 +212,10 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
                 .map_err(|e| format!("Failed to create LaunchAgents directory: {e}"))?;
             let plist = format_macos_autostart_plist(&exe.to_string_lossy());
             crate::config::atomic_write(&path, plist.as_bytes())?;
-        } else if path.exists() {
-            std::fs::remove_file(path).map_err(|e| format!("Failed to remove LaunchAgent: {e}"))?;
+        } else if let Err(err) = std::fs::remove_file(&path)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(format!("Failed to remove LaunchAgent: {err}"));
         }
         return Ok(());
     }
@@ -223,9 +231,10 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
                 .map_err(|e| format!("Failed to create autostart directory: {e}"))?;
             let entry = format_linux_autostart_entry(&exe.to_string_lossy());
             crate::config::atomic_write(&path, entry.as_bytes())?;
-        } else if path.exists() {
-            std::fs::remove_file(path)
-                .map_err(|e| format!("Failed to remove autostart entry: {e}"))?;
+        } else if let Err(err) = std::fs::remove_file(&path)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(format!("Failed to remove autostart entry: {err}"));
         }
         return Ok(());
     }
@@ -360,5 +369,33 @@ mod tests {
     #[test]
     fn tun_capable_matches_elevated_without_core_path() {
         assert_eq!(super::is_tun_capable(None), super::is_running_elevated());
+    }
+
+    #[test]
+    fn vfs_cap_edge_cases_and_xml_escape_work() {
+        // Short buffer and invalid revision fail closed.
+        assert!(!super::vfs_cap_has_net_admin(&[0u8; 8]));
+        let mut v1 = [0u8; 12];
+        v1[0..4].copy_from_slice(&0x0100_0001u32.to_le_bytes());
+        v1[4..8].copy_from_slice(&(1u32 << 12).to_le_bytes());
+        assert!(super::vfs_cap_has_net_admin(&v1));
+
+        let mut v3 = [0u8; 24];
+        v3[0..4].copy_from_slice(&0x0300_0001u32.to_le_bytes());
+        v3[4..8].copy_from_slice(&(1u32 << 12).to_le_bytes());
+        assert!(super::vfs_cap_has_net_admin(&v3));
+
+        let mut bad_rev = [0u8; 20];
+        bad_rev[0..4].copy_from_slice(&0x0400_0001u32.to_le_bytes());
+        bad_rev[4..8].copy_from_slice(&(1u32 << 12).to_le_bytes());
+        assert!(!super::vfs_cap_has_net_admin(&bad_rev));
+
+        assert!(super::getcap_output_has_cap_net_admin(
+            "/opt/sing-box all=ep\n"
+        ));
+        assert_eq!(
+            super::xml_escape("a<b>c'd\"e&f"),
+            "a&lt;b&gt;c&apos;d&quot;e&amp;f"
+        );
     }
 }

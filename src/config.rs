@@ -265,7 +265,9 @@ pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> 
     let parent = path
         .parent()
         .ok_or_else(|| "Target file has no parent directory".to_string())?;
-    fs::create_dir_all(parent).map_err(|e| format!("Failed to create data directory: {e}"))?;
+    if !parent.as_os_str().is_empty() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create data directory: {e}"))?;
+    }
 
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("data");
     let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -449,15 +451,58 @@ fn insert_yaml_number_or_string(map: &mut serde_yaml::Mapping, key: &str, value:
     map.insert(serde_yaml::Value::String(key.to_string()), yaml_value);
 }
 
+fn decode_url_component(raw: &str) -> String {
+    urlencoding::decode(raw)
+        .unwrap_or(std::borrow::Cow::Borrowed(raw))
+        .into_owned()
+}
+
+fn strip_ipv6_brackets(host: &str) -> String {
+    let trimmed = host.trim();
+    if let Some(inner) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
+        && inner.parse::<std::net::Ipv6Addr>().is_ok()
+    {
+        return inner.to_string();
+    }
+    trimmed.to_string()
+}
+
+fn parse_host_port(authority: &str, default_port: u16) -> Option<(String, u16)> {
+    let authority = authority.trim();
+    if authority.is_empty() {
+        return None;
+    }
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (ip, after) = rest.split_once(']')?;
+        let ip = ip.trim();
+        ip.parse::<std::net::Ipv6Addr>().ok()?;
+        let port = if let Some(port_str) = after.strip_prefix(':') {
+            port_str.trim().parse::<u16>().ok()?
+        } else if after.is_empty() {
+            default_port
+        } else {
+            return None;
+        };
+        return (port > 0).then(|| (ip.to_string(), port));
+    }
+    if authority.parse::<std::net::Ipv6Addr>().is_ok() {
+        return (default_port > 0).then(|| (authority.to_string(), default_port));
+    }
+    if let Some((host, port_str)) = authority.rsplit_once(':')
+        && !host.contains(':')
+    {
+        let host = host.trim();
+        let port = port_str.trim().parse::<u16>().ok()?;
+        return (!host.is_empty() && port > 0).then(|| (host.to_string(), port));
+    }
+    (default_port > 0).then(|| (authority.to_string(), default_port))
+}
+
 fn extract_url_credential(url: &url::Url) -> String {
-    let user = urlencoding::decode(url.username())
-        .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
-        .into_owned();
+    let user = decode_url_component(url.username());
     match url.password() {
         Some(pass) => {
-            let decoded_pass = urlencoding::decode(pass)
-                .unwrap_or(std::borrow::Cow::Borrowed(pass))
-                .into_owned();
+            let decoded_pass = decode_url_component(pass);
             format!("{user}:{decoded_pass}")
         }
         None => user,
@@ -483,10 +528,240 @@ fn normalize_wg_cidr(raw: &str) -> String {
     }
 }
 
+fn parse_vmess_share_link(link: &str) -> Option<serde_yaml::Mapping> {
+    let (_, after_scheme) = link.split_once("://")?;
+    let body_b64 = after_scheme
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .split('#')
+        .next()
+        .unwrap_or_default();
+    let decoded_json = decode_base64_padded(body_b64).or_else(|| {
+        body_b64
+            .ends_with('/')
+            .then(|| decode_base64_padded(body_b64.trim_end_matches('/')))
+            .flatten()
+    })?;
+    let v = serde_json::from_str::<serde_json::Value>(&decoded_json).ok()?;
+
+    let server = v
+        .get("add")
+        .and_then(|x| x.as_str())
+        .map(strip_ipv6_brackets)
+        .filter(|s| !s.is_empty())?;
+    let port = v
+        .get("port")
+        .and_then(|x| {
+            x.as_u64()
+                .or_else(|| x.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        })
+        .unwrap_or(443);
+    if port == 0 || port > 65535 {
+        return None;
+    }
+    let uuid = v
+        .get("id")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let name = v
+        .get("ps")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("vmess-node")
+        .to_string();
+    let alter_id = v
+        .get("aid")
+        .and_then(|x| {
+            x.as_u64()
+                .or_else(|| x.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        })
+        .unwrap_or(0);
+    let cipher = v
+        .get("scy")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("auto")
+        .to_string();
+    let network = v
+        .get("net")
+        .and_then(|x| x.as_str())
+        .unwrap_or("tcp")
+        .trim()
+        .to_ascii_lowercase();
+    let tls_enabled = v.get("tls").is_some_and(|val| {
+        val.as_bool().unwrap_or_else(|| {
+            val.as_str().is_some_and(|s| {
+                let s = s.trim();
+                s.eq_ignore_ascii_case("tls") || s == "1" || s.eq_ignore_ascii_case("true")
+            }) || (val.as_u64() == Some(1))
+        })
+    });
+    let host_sni = v
+        .get("sni")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            v.get("host")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("")
+        .to_string();
+    let skip_cert_verify = [
+        "allowInsecure",
+        "skipCertVerify",
+        "skip-cert-verify",
+        "insecure",
+    ]
+    .iter()
+    .filter_map(|k| v.get(*k))
+    .any(|val| {
+        val.as_bool().unwrap_or_else(|| {
+            val.as_str().is_some_and(parse_query_bool) || (val.as_u64() == Some(1))
+        })
+    });
+    let service_name = v
+        .get("serviceName")
+        .or_else(|| v.get("service_name"))
+        .or_else(|| v.get("grpc-service-name"))
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            (network == "grpc")
+                .then(|| {
+                    v.get("path")
+                        .and_then(|x| x.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                })
+                .flatten()
+        });
+
+    let mut map = serde_yaml::Mapping::new();
+    map.insert(
+        serde_yaml::Value::String("type".to_string()),
+        serde_yaml::Value::String("vmess".to_string()),
+    );
+    map.insert(
+        serde_yaml::Value::String("name".to_string()),
+        serde_yaml::Value::String(name),
+    );
+    map.insert(
+        serde_yaml::Value::String("server".to_string()),
+        serde_yaml::Value::String(server),
+    );
+    map.insert(
+        serde_yaml::Value::String("port".to_string()),
+        serde_yaml::Value::Number(port.into()),
+    );
+    map.insert(
+        serde_yaml::Value::String("uuid".to_string()),
+        serde_yaml::Value::String(uuid),
+    );
+    map.insert(
+        serde_yaml::Value::String("alterId".to_string()),
+        serde_yaml::Value::Number(alter_id.into()),
+    );
+    map.insert(
+        serde_yaml::Value::String("cipher".to_string()),
+        serde_yaml::Value::String(cipher),
+    );
+    map.insert(
+        serde_yaml::Value::String("network".to_string()),
+        serde_yaml::Value::String(network),
+    );
+    if let Some(alpn) = v.get("alpn") {
+        if let Some(alpn_str) = alpn.as_str().filter(|value| !value.is_empty()) {
+            insert_yaml_string(&mut map, "alpn", alpn_str);
+        } else if let Some(alpn_arr) = alpn.as_array() {
+            let items: Vec<serde_yaml::Value> = alpn_arr
+                .iter()
+                .filter_map(|item| {
+                    item.as_str()
+                        .filter(|s| !s.is_empty())
+                        .map(|s| serde_yaml::Value::String(s.to_string()))
+                })
+                .collect();
+            if !items.is_empty() {
+                map.insert(
+                    serde_yaml::Value::String("alpn".to_string()),
+                    serde_yaml::Value::Sequence(items),
+                );
+            }
+        }
+    }
+    if let Some(fingerprint) = v
+        .get("fp")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+    {
+        insert_yaml_string(&mut map, "client-fingerprint", fingerprint);
+    }
+    if skip_cert_verify {
+        map.insert(
+            serde_yaml::Value::String("skip-cert-verify".to_string()),
+            serde_yaml::Value::Bool(true),
+        );
+    }
+    if tls_enabled {
+        map.insert(
+            serde_yaml::Value::String("tls".to_string()),
+            serde_yaml::Value::Bool(true),
+        );
+        if !host_sni.is_empty() {
+            map.insert(
+                serde_yaml::Value::String("sni".to_string()),
+                serde_yaml::Value::String(host_sni),
+            );
+        }
+    }
+    if let Some(path) = v
+        .get("path")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        map.insert(
+            serde_yaml::Value::String("path".to_string()),
+            serde_yaml::Value::String(path.to_string()),
+        );
+    }
+    if let Some(host) = v
+        .get("host")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        map.insert(
+            serde_yaml::Value::String("host".to_string()),
+            serde_yaml::Value::String(host.to_string()),
+        );
+    }
+    if let Some(service) = service_name {
+        map.insert(
+            serde_yaml::Value::String("serviceName".to_string()),
+            serde_yaml::Value::String(service),
+        );
+    }
+    Some(map)
+}
+
 fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
     let link = link.trim_start_matches('\u{feff}').trim();
     if link.is_empty() {
         return None;
+    }
+
+    if let Some((raw_scheme, _)) = link.split_once("://") {
+        if raw_scheme.eq_ignore_ascii_case("vmess") {
+            return parse_vmess_share_link(link);
+        }
+        if raw_scheme.eq_ignore_ascii_case("ssr") {
+            // ShadowsocksR was deprecated and removed in sing-box 1.6.0.
+            return None;
+        }
     }
 
     use url::Url;
@@ -495,15 +770,14 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
 
     let mut map = serde_yaml::Mapping::new();
 
-    let host = url.host_str().unwrap_or("127.0.0.1").to_string();
+    let host = url
+        .host_str()
+        .map(strip_ipv6_brackets)
+        .filter(|h| !h.is_empty())?;
     let port = url.port().unwrap_or(443);
     let tag = url
         .fragment()
-        .map(|f| {
-            urlencoding::decode(f)
-                .unwrap_or(std::borrow::Cow::Borrowed(f))
-                .into_owned()
-        })
+        .map(decode_url_component)
         .unwrap_or_else(|| format!("{}-{}", scheme, host));
 
     map.insert(
@@ -527,54 +801,57 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
             );
 
             let raw_body = link
-                .trim_start_matches("ss://")
+                .split_once("://")
+                .map(|(_, rest)| rest)
+                .unwrap_or_default()
                 .split('#')
                 .next()
                 .unwrap_or_default()
                 .split('?')
                 .next()
                 .unwrap_or_default();
+            let mut has_creds = false;
             if !raw_body.contains('@') {
-                if let Some(decoded) = decode_base64_padded(raw_body) {
-                    let decoded_link = format!("ss://{}", decoded);
-                    if let Ok(temp_url) = Url::parse(&decoded_link) {
-                        let cipher = urlencoding::decode(temp_url.username())
-                            .unwrap_or(std::borrow::Cow::Borrowed(temp_url.username()))
-                            .into_owned();
-                        let password = temp_url
-                            .password()
-                            .and_then(|value| urlencoding::decode(value).ok())
-                            .map(|value| value.into_owned())
-                            .unwrap_or_default();
-                        if !cipher.is_empty() && !password.is_empty() {
-                            map.insert(
-                                serde_yaml::Value::String("cipher".to_string()),
-                                serde_yaml::Value::String(cipher),
-                            );
-                            map.insert(
-                                serde_yaml::Value::String("password".to_string()),
-                                serde_yaml::Value::String(password),
-                            );
-                        }
-                        let host = temp_url.host_str().unwrap_or("127.0.0.1").to_string();
-                        let port = temp_url.port().unwrap_or(443);
-                        map.insert(
-                            serde_yaml::Value::String("server".to_string()),
-                            serde_yaml::Value::String(host),
-                        );
-                        map.insert(
-                            serde_yaml::Value::String("port".to_string()),
-                            serde_yaml::Value::Number(port.into()),
-                        );
-                    }
+                let decoded = decode_base64_padded(raw_body).or_else(|| {
+                    raw_body
+                        .contains('%')
+                        .then(|| decode_base64_padded(&decode_url_component(raw_body)))
+                        .flatten()
+                })?;
+                let (creds, authority) = decoded.rsplit_once('@')?;
+                let (raw_cipher, raw_password) = creds.split_once(':')?;
+                let cipher = decode_url_component(raw_cipher);
+                let password = decode_url_component(raw_password);
+                if cipher.is_empty() || password.is_empty() {
+                    return None;
                 }
+                let (decoded_host, decoded_port) = parse_host_port(authority, 443)?;
+                map.insert(
+                    serde_yaml::Value::String("cipher".to_string()),
+                    serde_yaml::Value::String(cipher),
+                );
+                map.insert(
+                    serde_yaml::Value::String("password".to_string()),
+                    serde_yaml::Value::String(password),
+                );
+                if url.fragment().is_none() {
+                    map.insert(
+                        serde_yaml::Value::String("name".to_string()),
+                        serde_yaml::Value::String(format!("ss-{decoded_host}")),
+                    );
+                }
+                map.insert(
+                    serde_yaml::Value::String("server".to_string()),
+                    serde_yaml::Value::String(decoded_host),
+                );
+                map.insert(
+                    serde_yaml::Value::String("port".to_string()),
+                    serde_yaml::Value::Number(decoded_port.into()),
+                );
+                has_creds = true;
             } else if let Some(raw_password) = url.password() {
-                let cipher = urlencoding::decode(url.username())
-                    .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
-                    .into_owned();
-                let password = urlencoding::decode(raw_password)
-                    .unwrap_or(std::borrow::Cow::Borrowed(raw_password))
-                    .into_owned();
+                let cipher = decode_url_component(url.username());
+                let password = decode_url_component(raw_password);
                 if !cipher.is_empty() && !password.is_empty() {
                     map.insert(
                         serde_yaml::Value::String("cipher".to_string()),
@@ -584,20 +861,16 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                         serde_yaml::Value::String("password".to_string()),
                         serde_yaml::Value::String(password),
                     );
+                    has_creds = true;
                 }
             } else {
-                let username = urlencoding::decode(url.username())
-                    .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
-                    .into_owned();
-                if let Some(decoded) = decode_base64_padded(&username) {
-                    let parts: Vec<&str> = decoded.splitn(2, ':').collect();
-                    if parts.len() == 2 {
-                        let cipher = urlencoding::decode(parts[0])
-                            .unwrap_or(std::borrow::Cow::Borrowed(parts[0]))
-                            .into_owned();
-                        let password = urlencoding::decode(parts[1])
-                            .unwrap_or(std::borrow::Cow::Borrowed(parts[1]))
-                            .into_owned();
+                let username = decode_url_component(url.username());
+                if let Some(decoded) = decode_base64_padded(&username)
+                    && let Some((raw_cipher, raw_password)) = decoded.split_once(':')
+                {
+                    let cipher = decode_url_component(raw_cipher);
+                    let password = decode_url_component(raw_password);
+                    if !cipher.is_empty() && !password.is_empty() {
                         map.insert(
                             serde_yaml::Value::String("cipher".to_string()),
                             serde_yaml::Value::String(cipher),
@@ -606,8 +879,12 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                             serde_yaml::Value::String("password".to_string()),
                             serde_yaml::Value::String(password),
                         );
+                        has_creds = true;
                     }
                 }
+            }
+            if !has_creds {
+                return None;
             }
             if let Some(plugin) = url
                 .query_pairs()
@@ -627,228 +904,6 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                         );
                     }
                 }
-            }
-        }
-        "ssr" => {
-            // ShadowsocksR was deprecated and removed in sing-box 1.6.0.
-            return None;
-        }
-        "vmess" => {
-            map.insert(
-                serde_yaml::Value::String("type".to_string()),
-                serde_yaml::Value::String("vmess".to_string()),
-            );
-
-            let body_b64 = link
-                .trim_start_matches("vmess://")
-                .split('?')
-                .next()
-                .unwrap_or_default()
-                .split('#')
-                .next()
-                .unwrap_or_default();
-            if let Some(decoded_json) = decode_base64_padded(body_b64)
-                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&decoded_json)
-            {
-                let name = v
-                    .get("ps")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("vmess-node")
-                    .to_string();
-                let server = v
-                    .get("add")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("127.0.0.1")
-                    .to_string();
-                let port = v
-                    .get("port")
-                    .and_then(|x| {
-                        x.as_u64()
-                            .or_else(|| x.as_str().and_then(|s| s.parse::<u64>().ok()))
-                    })
-                    .unwrap_or(443);
-                let uuid = v
-                    .get("id")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let alter_id = v
-                    .get("aid")
-                    .and_then(|x| {
-                        x.as_u64()
-                            .or_else(|| x.as_str().and_then(|s| s.parse::<u64>().ok()))
-                    })
-                    .unwrap_or(0);
-                let cipher = v
-                    .get("scy")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("auto")
-                    .to_string();
-                let network = v
-                    .get("net")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("tcp")
-                    .to_string();
-                let tls_enabled = v.get("tls").is_some_and(|val| {
-                    val.as_bool().unwrap_or_else(|| {
-                        val.as_str().is_some_and(|s| {
-                            s.eq_ignore_ascii_case("tls")
-                                || s == "1"
-                                || s.eq_ignore_ascii_case("true")
-                        }) || (val.as_u64() == Some(1))
-                    })
-                });
-                let host_sni = v
-                    .get("sni")
-                    .and_then(|x| x.as_str())
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| {
-                        v.get("host")
-                            .and_then(|x| x.as_str())
-                            .filter(|s| !s.is_empty())
-                    })
-                    .unwrap_or("")
-                    .to_string();
-                let skip_cert_verify = [
-                    "allowInsecure",
-                    "skipCertVerify",
-                    "skip-cert-verify",
-                    "insecure",
-                ]
-                .iter()
-                .filter_map(|k| v.get(*k))
-                .any(|val| {
-                    val.as_bool().unwrap_or_else(|| {
-                        val.as_str().is_some_and(parse_query_bool) || (val.as_u64() == Some(1))
-                    })
-                });
-                let service_name = v
-                    .get("serviceName")
-                    .or_else(|| v.get("service_name"))
-                    .or_else(|| v.get("grpc-service-name"))
-                    .and_then(|x| x.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .or_else(|| {
-                        (network == "grpc")
-                            .then(|| {
-                                v.get("path")
-                                    .and_then(|x| x.as_str())
-                                    .filter(|s| !s.is_empty())
-                                    .map(str::to_string)
-                            })
-                            .flatten()
-                    });
-
-                map.insert(
-                    serde_yaml::Value::String("name".to_string()),
-                    serde_yaml::Value::String(name),
-                );
-                map.insert(
-                    serde_yaml::Value::String("server".to_string()),
-                    serde_yaml::Value::String(server),
-                );
-                map.insert(
-                    serde_yaml::Value::String("port".to_string()),
-                    serde_yaml::Value::Number(port.into()),
-                );
-                map.insert(
-                    serde_yaml::Value::String("uuid".to_string()),
-                    serde_yaml::Value::String(uuid),
-                );
-                map.insert(
-                    serde_yaml::Value::String("alterId".to_string()),
-                    serde_yaml::Value::Number(alter_id.into()),
-                );
-                map.insert(
-                    serde_yaml::Value::String("cipher".to_string()),
-                    serde_yaml::Value::String(cipher),
-                );
-                map.insert(
-                    serde_yaml::Value::String("network".to_string()),
-                    serde_yaml::Value::String(network.clone()),
-                );
-                if let Some(alpn) = v.get("alpn") {
-                    if let Some(alpn_str) = alpn.as_str().filter(|value| !value.is_empty()) {
-                        insert_yaml_string(&mut map, "alpn", alpn_str);
-                    } else if let Some(alpn_arr) = alpn.as_array() {
-                        let items: Vec<serde_yaml::Value> = alpn_arr
-                            .iter()
-                            .filter_map(|item| {
-                                item.as_str()
-                                    .filter(|s| !s.is_empty())
-                                    .map(|s| serde_yaml::Value::String(s.to_string()))
-                            })
-                            .collect();
-                        if !items.is_empty() {
-                            map.insert(
-                                serde_yaml::Value::String("alpn".to_string()),
-                                serde_yaml::Value::Sequence(items),
-                            );
-                        }
-                    }
-                }
-                if let Some(fingerprint) = v
-                    .get("fp")
-                    .and_then(|value| value.as_str())
-                    .filter(|value| !value.is_empty())
-                {
-                    insert_yaml_string(&mut map, "client-fingerprint", fingerprint);
-                }
-                if skip_cert_verify {
-                    map.insert(
-                        serde_yaml::Value::String("skip-cert-verify".to_string()),
-                        serde_yaml::Value::Bool(true),
-                    );
-                }
-
-                if tls_enabled {
-                    map.insert(
-                        serde_yaml::Value::String("tls".to_string()),
-                        serde_yaml::Value::Bool(true),
-                    );
-                    if !host_sni.is_empty() {
-                        map.insert(
-                            serde_yaml::Value::String("sni".to_string()),
-                            serde_yaml::Value::String(host_sni),
-                        );
-                    }
-                }
-                if let Some(path) = v
-                    .get("path")
-                    .and_then(|x| x.as_str())
-                    .filter(|s| !s.is_empty())
-                {
-                    map.insert(
-                        serde_yaml::Value::String("path".to_string()),
-                        serde_yaml::Value::String(path.to_string()),
-                    );
-                }
-                if let Some(host) = v
-                    .get("host")
-                    .and_then(|x| x.as_str())
-                    .filter(|s| !s.is_empty())
-                {
-                    map.insert(
-                        serde_yaml::Value::String("host".to_string()),
-                        serde_yaml::Value::String(host.to_string()),
-                    );
-                }
-                if let Some(service) = service_name {
-                    map.insert(
-                        serde_yaml::Value::String("serviceName".to_string()),
-                        serde_yaml::Value::String(service),
-                    );
-                }
-            } else {
-                return None;
-            }
-            if map
-                .get(serde_yaml::Value::String("uuid".to_string()))
-                .and_then(|v| v.as_str())
-                .is_none_or(str::is_empty)
-            {
-                return None;
             }
         }
         "vless" => {
@@ -881,9 +936,10 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
 
             for (k, v) in url.query_pairs() {
                 if k == "security" {
-                    if v == "tls" {
+                    let sec = v.trim().to_ascii_lowercase();
+                    if sec == "tls" {
                         tls_enabled = true;
-                    } else if v == "reality" {
+                    } else if sec == "reality" {
                         tls_enabled = true;
                         reality_enabled = true;
                     }
@@ -895,7 +951,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     flow = v.to_string();
                 }
                 if k == "type" {
-                    network = v.to_string();
+                    network = v.trim().to_ascii_lowercase();
                 }
                 if k == "path" {
                     path = v.to_string();
@@ -1032,14 +1088,14 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
             let mut skip_cert_verify = false;
 
             for (k, v) in url.query_pairs() {
-                if k == "security" && v == "none" {
+                if k == "security" && v.trim().eq_ignore_ascii_case("none") {
                     tls_enabled = false;
                 }
                 if k == "sni" || k == "peer" || k == "servername" {
                     sni = v.to_string();
                 }
                 if k == "type" {
-                    network = v.to_string();
+                    network = v.trim().to_ascii_lowercase();
                 }
                 if k == "path" {
                     path = v.to_string();
@@ -1203,14 +1259,8 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 serde_yaml::Value::String("type".to_string()),
                 serde_yaml::Value::String("tuic".to_string()),
             );
-            let uuid = url.username().to_string();
-            let decoded_uuid = urlencoding::decode(&uuid)
-                .unwrap_or(std::borrow::Cow::Borrowed(&uuid))
-                .into_owned();
-            let password = url.password().unwrap_or("").to_string();
-            let decoded_password = urlencoding::decode(&password)
-                .unwrap_or(std::borrow::Cow::Borrowed(&password))
-                .into_owned();
+            let decoded_uuid = decode_url_component(url.username());
+            let decoded_password = url.password().map(decode_url_component).unwrap_or_default();
             if decoded_uuid.is_empty() || decoded_password.is_empty() {
                 return None;
             }
@@ -1219,12 +1269,10 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                 serde_yaml::Value::String("uuid".to_string()),
                 serde_yaml::Value::String(decoded_uuid),
             );
-            if !decoded_password.is_empty() {
-                map.insert(
-                    serde_yaml::Value::String("password".to_string()),
-                    serde_yaml::Value::String(decoded_password),
-                );
-            }
+            map.insert(
+                serde_yaml::Value::String("password".to_string()),
+                serde_yaml::Value::String(decoded_password),
+            );
 
             let mut udp_over_stream = false;
             for (k, v) in url.query_pairs() {
@@ -1317,14 +1365,8 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
         }
         "naive+https" | "naive" => {
             insert_yaml_string(&mut map, "type", "naive");
-            let username = urlencoding::decode(url.username())
-                .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
-                .into_owned();
-            let password = url
-                .password()
-                .and_then(|value| urlencoding::decode(value).ok())
-                .map(|value| value.into_owned())
-                .unwrap_or_default();
+            let username = decode_url_component(url.username());
+            let password = url.password().map(decode_url_component).unwrap_or_default();
             if username.is_empty() || password.is_empty() {
                 return None;
             }
@@ -1336,12 +1378,14 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
             );
             for (key, value) in url.query_pairs() {
                 match key.as_ref() {
-                    "sni" | "peer" => insert_yaml_string(&mut map, "sni", value.as_ref()),
+                    "sni" | "peer" | "servername" => {
+                        insert_yaml_string(&mut map, "sni", value.as_ref())
+                    }
                     "alpn" => insert_yaml_string(&mut map, "alpn", value.as_ref()),
                     "fp" | "fingerprint" => {
                         insert_yaml_string(&mut map, "client-fingerprint", value.as_ref())
                     }
-                    "insecure" | "allowInsecure" | "skipCertVerify"
+                    "insecure" | "allowInsecure" | "skipCertVerify" | "skip-cert-verify"
                         if parse_query_bool(value.as_ref()) =>
                     {
                         map.insert(
@@ -1361,14 +1405,8 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     serde_yaml::Value::Number(22.into()),
                 );
             }
-            let user = urlencoding::decode(url.username())
-                .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
-                .into_owned();
-            let password = url
-                .password()
-                .and_then(|value| urlencoding::decode(value).ok())
-                .map(|value| value.into_owned())
-                .unwrap_or_default();
+            let user = decode_url_component(url.username());
+            let password = url.password().map(decode_url_component).unwrap_or_default();
             if user.is_empty() || password.is_empty() {
                 return None;
             }
@@ -1400,7 +1438,7 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     _ => {}
                 }
             }
-            if version >= 3 && password.is_empty() {
+            if !(1..=3).contains(&version) || (version >= 3 && password.is_empty()) {
                 return None;
             }
             map.insert(
@@ -1417,14 +1455,8 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     serde_yaml::Value::Number(1080.into()),
                 );
             }
-            let mut username = urlencoding::decode(url.username())
-                .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
-                .into_owned();
-            let mut password = url
-                .password()
-                .and_then(|value| urlencoding::decode(value).ok())
-                .map(|value| value.into_owned())
-                .unwrap_or_default();
+            let mut username = decode_url_component(url.username());
+            let mut password = url.password().map(decode_url_component).unwrap_or_default();
             if url.password().is_none()
                 && !username.is_empty()
                 && let Some(decoded) = decode_base64_padded(&username)
@@ -1526,14 +1558,8 @@ fn parse_share_link(link: &str) -> Option<serde_yaml::Mapping> {
                     serde_yaml::Value::Number(default_port.into()),
                 );
             }
-            let username = urlencoding::decode(url.username())
-                .unwrap_or(std::borrow::Cow::Borrowed(url.username()))
-                .into_owned();
-            let password = url
-                .password()
-                .and_then(|value| urlencoding::decode(value).ok())
-                .map(|value| value.into_owned())
-                .unwrap_or_default();
+            let username = decode_url_component(url.username());
+            let password = url.password().map(decode_url_component).unwrap_or_default();
             insert_yaml_string(&mut map, "username", &username);
             insert_yaml_string(&mut map, "password", &password);
             if scheme == "https" {
@@ -1601,12 +1627,14 @@ fn is_supported_clash_proxy_type(node_type: &str) -> bool {
 }
 
 fn clash_proxy_has_required_credentials(map: &serde_yaml::Mapping, node_type: &str) -> bool {
-    let non_empty =
-        |keys: &[&str]| yaml_string_any(map, keys).is_some_and(|value| !value.trim().is_empty());
+    let non_empty = |keys: &[&str]| {
+        yaml_scalar_string_any(map, keys).is_some_and(|value| !value.trim().is_empty())
+    };
     match node_type {
         "ss" => non_empty(&["cipher"]) && non_empty(&["password"]),
         "vmess" | "vless" => non_empty(&["uuid"]),
-        "trojan" | "hysteria2" | "anytls" => non_empty(&["password"]),
+        "trojan" | "anytls" => non_empty(&["password"]),
+        "hysteria2" => non_empty(&["password", "auth_str", "auth-str"]),
         "hysteria" => non_empty(&["auth-str", "auth_str", "password"]),
         "tuic" => non_empty(&["uuid"]) && non_empty(&["password"]),
         "naive" => non_empty(&["username", "user"]) && non_empty(&["password"]),
@@ -1620,13 +1648,23 @@ fn clash_proxy_has_required_credentials(map: &serde_yaml::Mapping, node_type: &s
                         "private_key_path",
                     ]))
         }
-        "shadowtls" => yaml_u64_any(map, &["version"]).unwrap_or(3) < 3 || non_empty(&["password"]),
+        "shadowtls" => {
+            let version = yaml_u64_any(map, &["version"]).unwrap_or(3);
+            (1..=3).contains(&version) && (version < 3 || non_empty(&["password"]))
+        }
         "wireguard" => {
             non_empty(&["private-key", "private_key"])
                 && (non_empty(&["public-key", "public_key"])
                     || yaml_value_any(map, &["peers"])
                         .and_then(|v| v.as_sequence())
-                        .is_some_and(|peers| !peers.is_empty()))
+                        .is_some_and(|peers| {
+                            peers.iter().any(|p| {
+                                p.as_mapping().is_some_and(|pm| {
+                                    yaml_scalar_string_any(pm, &["public-key", "public_key"])
+                                        .is_some_and(|s| !s.trim().is_empty())
+                                })
+                            })
+                        }))
         }
         "socks" | "socks5" | "http" => true,
         _ => false,
@@ -1681,7 +1719,10 @@ fn normalize_profile_content_inner(content: &str, allow_base64_decode: bool) -> 
             || decoded.contains("proxies:")
             || decoded.lines().any(|line| {
                 matches!(
-                    line.trim().split_once("://").map(|(scheme, _)| scheme),
+                    line.trim()
+                        .split_once("://")
+                        .map(|(scheme, _)| scheme.to_ascii_lowercase())
+                        .as_deref(),
                     Some(
                         "ss" | "ssr"
                             | "vmess"
@@ -1724,9 +1765,14 @@ pub fn get_profile_path(profile_id: &str) -> PathBuf {
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
         .collect();
+    let filename_stem = if sanitized.is_empty() {
+        "profile"
+    } else {
+        sanitized.as_str()
+    };
     get_app_dir()
         .join("profiles")
-        .join(format!("{}.json", sanitized))
+        .join(format!("{}.json", filename_stem))
 }
 
 /// Returns `true` when `content` (after UTF-8 BOM stripping and optional
@@ -1829,22 +1875,22 @@ fn extract_clash_endpoint(map: &serde_yaml::Mapping, node_type: &str) -> Option<
     };
 
     let read_server = |m: &serde_yaml::Mapping| {
-        yaml_value_any(m, &["server", "address"]).and_then(|v| {
-            v.as_str()
-                .map(|s| s.to_string())
-                .or_else(|| v.as_i64().map(|i| i.to_string()))
-        })
+        yaml_value_any(m, &["server", "address"])
+            .and_then(|v| {
+                v.as_str()
+                    .map(strip_ipv6_brackets)
+                    .or_else(|| v.as_i64().map(|i| i.to_string()))
+            })
+            .filter(|s| !s.is_empty())
     };
     let read_port = |m: &serde_yaml::Mapping| {
         yaml_value_any(m, &["port", "server_port"]).and_then(|v| {
             v.as_u64()
-                .or_else(|| v.as_str().and_then(|text| text.parse::<u64>().ok()))
+                .or_else(|| v.as_str().and_then(|text| text.trim().parse::<u64>().ok()))
         })
     };
 
-    let server = read_server(map)
-        .or_else(|| first_peer.and_then(read_server))
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let server = read_server(map).or_else(|| first_peer.and_then(read_server))?;
     let port_u64 = read_port(map)
         .or_else(|| first_peer.and_then(read_port))
         .or_else(|| {
@@ -1881,7 +1927,6 @@ fn is_ssr_only_share_links(content: &str) -> bool {
 }
 
 pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
-    let key_name = serde_yaml::Value::String("name".into());
     let key_type = serde_yaml::Value::String("type".into());
     let normalized = normalize_profile_content(content);
     if is_ssr_only_share_links(&normalized) {
@@ -1903,11 +1948,8 @@ pub fn parse_clash_yaml_nodes(content: &str) -> Result<Vec<ProxyNode>, String> {
         .collect();
     for item in proxies {
         if let Some(map) = item.as_mapping() {
-            let name = map
-                .get(&key_name)
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unnamed")
-                .to_string();
+            let name =
+                yaml_scalar_string_any(map, &["name"]).unwrap_or_else(|| "Unnamed".to_string());
 
             let node_type = map
                 .get(&key_type)
@@ -1997,14 +2039,13 @@ pub fn parse_native_json_nodes(json_content: &str) -> Result<Vec<ProxyNode>, Str
                 .get("type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
-                .to_string();
+                .trim()
+                .to_ascii_lowercase();
 
-            if node_type == "selector"
-                || node_type == "direct"
-                || node_type == "dns"
-                || node_type == "block"
-                || node_type == "urltest"
-                || is_removed_ssr_type(&node_type)
+            if matches!(
+                node_type.as_str(),
+                "selector" | "direct" | "dns" | "block" | "urltest"
+            ) || is_removed_ssr_type(&node_type)
             {
                 continue;
             }
@@ -2015,18 +2056,24 @@ pub fn parse_native_json_nodes(json_content: &str) -> Result<Vec<ProxyNode>, Str
                 .unwrap_or("Unnamed")
                 .to_string();
 
-            let server = obj
+            let Some(server) = obj
                 .get("server")
                 .and_then(|v| {
                     v.as_str()
-                        .map(|s| s.to_string())
+                        .map(strip_ipv6_brackets)
                         .or_else(|| v.as_i64().map(|i| i.to_string()))
                 })
-                .unwrap_or_else(|| "127.0.0.1".to_string());
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
 
             let port_u64 = obj
                 .get("server_port")
-                .and_then(|v| v.as_u64())
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                })
                 .or_else(|| extract_port_from_json_server_ports(obj).map(u64::from))
                 .unwrap_or(0);
 
@@ -2070,7 +2117,9 @@ pub fn parse_native_json_nodes(json_content: &str) -> Result<Vec<ProxyNode>, Str
             let server = peer
                 .and_then(|peer| peer.get("address").or_else(|| peer.get("server")))
                 .and_then(|value| value.as_str())
-                .or_else(|| obj.get("server").and_then(|value| value.as_str()));
+                .or_else(|| obj.get("server").and_then(|value| value.as_str()))
+                .map(strip_ipv6_brackets)
+                .filter(|s| !s.is_empty());
             let port = peer
                 .and_then(|peer| peer.get("port").or_else(|| peer.get("server_port")))
                 .and_then(|value| value.as_u64())
@@ -2081,7 +2130,7 @@ pub fn parse_native_json_nodes(json_content: &str) -> Result<Vec<ProxyNode>, Str
                 nodes.push(ProxyNode {
                     name,
                     node_type: format!("{endpoint_type} endpoint"),
-                    server: server.to_string(),
+                    server,
                     port: port as u16,
                     latency: None,
                     selectable: false,
@@ -2238,7 +2287,10 @@ fn extract_ws_early_data_from_path(raw_path: &str) -> (String, Option<u64>) {
 }
 
 fn get_transport_block(map: &serde_yaml::Mapping) -> Option<serde_json::Value> {
-    let network = yaml_string_any(map, &["network", "type"]).unwrap_or("tcp");
+    let network = yaml_string_any(map, &["network", "type"])
+        .unwrap_or("tcp")
+        .trim()
+        .to_ascii_lowercase();
 
     if network == "ws" {
         let mut raw_path = "/".to_string();
@@ -2502,6 +2554,9 @@ fn yaml_mbps_any(map: &serde_yaml::Mapping, keys: &[&str]) -> Option<u64> {
         .find(|c: char| !c.is_ascii_digit() && c != '.')
         .unwrap_or(lower.len());
     let number: f64 = lower[..num_end].trim().parse().ok()?;
+    if !number.is_finite() || number <= 0.0 {
+        return None;
+    }
     let unit = lower[num_end..].trim();
     let mbps = match unit {
         "" | "m" | "mbps" => number,
@@ -2509,7 +2564,7 @@ fn yaml_mbps_any(map: &serde_yaml::Mapping, keys: &[&str]) -> Option<u64> {
         "k" | "kbps" => (number / 1000.0).max(1.0),
         _ => return None,
     };
-    (mbps >= 1.0).then_some(mbps.round() as u64)
+    (mbps.is_finite() && mbps >= 1.0).then_some(mbps.round() as u64)
 }
 
 fn translate_ss_plugin(
@@ -2728,20 +2783,13 @@ pub fn convert_clash_to_singbox(
     yaml_content: &str,
     gui_config: &GuiConfig,
 ) -> Result<serde_json::Value, String> {
-    let key_alter_id = serde_yaml::Value::String("alterId".into());
-    let key_auth_str = serde_yaml::Value::String("auth_str".into());
-    let key_auth_str_dash = serde_yaml::Value::String("auth-str".into());
-    let key_cipher = serde_yaml::Value::String("cipher".into());
     let key_flow = serde_yaml::Value::String("flow".into());
-    let key_name = serde_yaml::Value::String("name".into());
-    let key_password = serde_yaml::Value::String("password".into());
     let key_plugin = serde_yaml::Value::String("plugin".into());
     let key_plugin_opts = serde_yaml::Value::String("plugin-opts".into());
     let key_plugin_opts_raw = serde_yaml::Value::String("plugin-opts-raw".into());
     let key_reality_opts = serde_yaml::Value::String("reality-opts".into());
     let key_skip_cert_verify = serde_yaml::Value::String("skip-cert-verify".into());
     let key_type = serde_yaml::Value::String("type".into());
-    let key_uuid = serde_yaml::Value::String("uuid".into());
     let normalized = normalize_profile_content(yaml_content);
     if is_ssr_only_share_links(&normalized) {
         return Err(
@@ -2781,11 +2829,7 @@ pub fn convert_clash_to_singbox(
             None => continue,
         };
 
-        let name = map
-            .get(&key_name)
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unnamed")
-            .to_string();
+        let name = yaml_scalar_string_any(map, &["name"]).unwrap_or_else(|| "Unnamed".to_string());
 
         let node_type = map
             .get(&key_type)
@@ -2815,12 +2859,9 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
 
-                let cipher = map.get(&key_cipher).and_then(|v| v.as_str()).unwrap_or("");
-                let password = map
-                    .get(&key_password)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if cipher.is_empty() || password.is_empty() {
+                let cipher = yaml_scalar_string_any(map, &["cipher"]).unwrap_or_default();
+                let password = yaml_scalar_string_any(map, &["password"]).unwrap_or_default();
+                if cipher.trim().is_empty() || password.trim().is_empty() {
                     continue;
                 }
 
@@ -2851,13 +2892,12 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
 
-                let uuid = map.get(&key_uuid).and_then(|v| v.as_str()).unwrap_or("");
-                let security = map
-                    .get(&key_cipher)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("auto");
-                let alter_id = map.get(&key_alter_id).and_then(|v| v.as_i64()).unwrap_or(0);
-                if uuid.is_empty() {
+                let uuid = yaml_scalar_string_any(map, &["uuid"]).unwrap_or_default();
+                let security = yaml_scalar_string_any(map, &["cipher"])
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "auto".to_string());
+                let alter_id = yaml_u64_any(map, &["alterId", "alter_id"]).unwrap_or(0);
+                if uuid.trim().is_empty() {
                     continue;
                 }
 
@@ -2891,9 +2931,9 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
 
-                let uuid = map.get(&key_uuid).and_then(|v| v.as_str()).unwrap_or("");
+                let uuid = yaml_scalar_string_any(map, &["uuid"]).unwrap_or_default();
                 let flow = map.get(&key_flow).and_then(|v| v.as_str()).unwrap_or("");
-                if uuid.is_empty() {
+                if uuid.trim().is_empty() {
                     continue;
                 }
 
@@ -2912,9 +2952,8 @@ pub fn convert_clash_to_singbox(
                     .or_else(|| yaml_scalar_string_any(map, &["short-id", "short_id", "sid"]))
                     .unwrap_or_default();
 
-                let reality_enabled = yaml_bool_any(map, &["reality"]).unwrap_or(false)
-                    || reality_opts_map.is_some()
-                    || !public_key.is_empty();
+                let reality_enabled = !public_key.trim().is_empty()
+                    && yaml_bool_any(map, &["reality"]).unwrap_or(true);
                 let tls_enabled = yaml_bool_any(map, &["tls"]).unwrap_or(false) || reality_enabled;
                 let sni = extract_sni(map, &server);
 
@@ -2960,11 +2999,8 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
 
-                let password = map
-                    .get(&key_password)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if password.is_empty() {
+                let password = yaml_scalar_string_any(map, &["password"]).unwrap_or_default();
+                if password.trim().is_empty() {
                     continue;
                 }
                 outbound.insert("password".to_string(), json!(password));
@@ -2993,19 +3029,15 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
 
-                let auth = map
-                    .get(&key_auth_str)
-                    .and_then(|v| v.as_str())
-                    .or_else(|| map.get(&key_auth_str_dash).and_then(|v| v.as_str()))
-                    .or_else(|| map.get(&key_password).and_then(|v| v.as_str()))
-                    .unwrap_or("");
-                if auth.is_empty() {
+                let auth = yaml_scalar_string_any(map, &["auth_str", "auth-str", "password"])
+                    .unwrap_or_default();
+                if auth.trim().is_empty() {
                     continue;
                 }
                 outbound.insert("auth_str".to_string(), json!(auth));
 
                 if let Some(obfs) =
-                    yaml_string_any(map, &["obfs"]).filter(|value| !value.is_empty())
+                    yaml_scalar_string_any(map, &["obfs"]).filter(|value| !value.is_empty())
                 {
                     outbound.insert("obfs".to_string(), json!(obfs));
                 }
@@ -3048,12 +3080,9 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
 
-                let password = map
-                    .get(&key_password)
-                    .and_then(|v| v.as_str())
-                    .or_else(|| map.get(&key_auth_str).and_then(|v| v.as_str()))
-                    .unwrap_or("");
-                if password.is_empty() {
+                let password = yaml_scalar_string_any(map, &["password", "auth_str", "auth-str"])
+                    .unwrap_or_default();
+                if password.trim().is_empty() {
                     continue;
                 }
                 outbound.insert("password".to_string(), json!(password));
@@ -3070,15 +3099,12 @@ pub fn convert_clash_to_singbox(
                     let t = yaml_string_any(obfs_map, &["type"])
                         .unwrap_or("")
                         .to_string();
-                    let p = yaml_string_any(obfs_map, &["password"])
-                        .unwrap_or("")
-                        .to_string();
+                    let p = yaml_scalar_string_any(obfs_map, &["password"]).unwrap_or_default();
                     (t, p)
                 } else {
                     let t = yaml_string_any(map, &["obfs"]).unwrap_or("").to_string();
-                    let p = yaml_string_any(map, &["obfs-password", "obfs_password"])
-                        .unwrap_or("")
-                        .to_string();
+                    let p = yaml_scalar_string_any(map, &["obfs-password", "obfs_password"])
+                        .unwrap_or_default();
                     (t, p)
                 };
                 if !obfs_type.is_empty() && obfs_type != "none" {
@@ -3109,11 +3135,9 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
 
-                let username = yaml_string_any(map, &["username", "user"]).unwrap_or("");
-                let password = map
-                    .get(&key_password)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let username =
+                    yaml_scalar_string_any(map, &["username", "user"]).unwrap_or_default();
+                let password = yaml_scalar_string_any(map, &["password"]).unwrap_or_default();
 
                 if !username.is_empty() {
                     outbound.insert("username".to_string(), json!(username));
@@ -3127,11 +3151,9 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
 
-                let username = yaml_string_any(map, &["username", "user"]).unwrap_or("");
-                let password = map
-                    .get(&key_password)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let username =
+                    yaml_scalar_string_any(map, &["username", "user"]).unwrap_or_default();
+                let password = yaml_scalar_string_any(map, &["password"]).unwrap_or_default();
 
                 if !username.is_empty() {
                     outbound.insert("username".to_string(), json!(username));
@@ -3157,19 +3179,14 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
 
-                let uuid = map.get(&key_uuid).and_then(|v| v.as_str()).unwrap_or("");
-                let password = map
-                    .get(&key_password)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if uuid.is_empty() || password.is_empty() {
+                let uuid = yaml_scalar_string_any(map, &["uuid"]).unwrap_or_default();
+                let password = yaml_scalar_string_any(map, &["password"]).unwrap_or_default();
+                if uuid.trim().is_empty() || password.trim().is_empty() {
                     continue;
                 }
 
                 outbound.insert("uuid".to_string(), json!(uuid));
-                if !password.is_empty() {
-                    outbound.insert("password".to_string(), json!(password));
-                }
+                outbound.insert("password".to_string(), json!(password));
 
                 let congestion = yaml_string_any(
                     map,
@@ -3229,11 +3246,8 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("type".to_string(), json!("anytls"));
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
-                let password = map
-                    .get(&key_password)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if password.is_empty() {
+                let password = yaml_scalar_string_any(map, &["password"]).unwrap_or_default();
+                if password.trim().is_empty() {
                     continue;
                 }
                 outbound.insert("password".to_string(), json!(password));
@@ -3249,12 +3263,10 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("type".to_string(), json!("naive"));
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
-                let username = yaml_string_any(map, &["username", "user"]).unwrap_or("");
-                let password = map
-                    .get(&key_password)
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
-                if username.is_empty() || password.is_empty() {
+                let username =
+                    yaml_scalar_string_any(map, &["username", "user"]).unwrap_or_default();
+                let password = yaml_scalar_string_any(map, &["password"]).unwrap_or_default();
+                if username.trim().is_empty() || password.trim().is_empty() {
                     continue;
                 }
                 outbound.insert("username".to_string(), json!(username));
@@ -3276,15 +3288,13 @@ pub fn convert_clash_to_singbox(
                 outbound.insert("type".to_string(), json!("ssh"));
                 outbound.insert("server".to_string(), json!(server));
                 outbound.insert("server_port".to_string(), json!(port));
-                let user = yaml_string_any(map, &["user", "username"]).unwrap_or("");
-                if user.is_empty() {
+                let user = yaml_scalar_string_any(map, &["user", "username"]).unwrap_or_default();
+                if user.trim().is_empty() {
                     continue;
                 }
                 outbound.insert("user".to_string(), json!(user));
-                if let Some(password) = map
-                    .get(&key_password)
-                    .and_then(|value| value.as_str())
-                    .filter(|value| !value.is_empty())
+                if let Some(password) =
+                    yaml_scalar_string_any(map, &["password"]).filter(|value| !value.is_empty())
                 {
                     outbound.insert("password".to_string(), json!(password));
                 }
@@ -3298,9 +3308,11 @@ pub fn convert_clash_to_singbox(
                 {
                     outbound.insert("private_key_path".to_string(), json!(path));
                 }
-                if let Some(passphrase) =
-                    yaml_string_any(map, &["private-key-passphrase", "private_key_passphrase"])
-                        .filter(|value| !value.is_empty())
+                if let Some(passphrase) = yaml_scalar_string_any(
+                    map,
+                    &["private-key-passphrase", "private_key_passphrase"],
+                )
+                .filter(|value| !value.is_empty())
                 {
                     outbound.insert("private_key_passphrase".to_string(), json!(passphrase));
                 }
@@ -3337,11 +3349,8 @@ pub fn convert_clash_to_singbox(
                     continue;
                 }
                 outbound.insert("version".to_string(), json!(version));
-                let password = map
-                    .get(&key_password)
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
-                if version >= 3 && password.is_empty() {
+                let password = yaml_scalar_string_any(map, &["password"]).unwrap_or_default();
+                if version >= 3 && password.trim().is_empty() {
                     continue;
                 }
                 if !password.is_empty() {
@@ -3771,8 +3780,12 @@ pub fn rewrite_remote_rule_set_url(url: &str) -> String {
     for _ in 0..3 {
         let mut stripped = false;
         for prefix in PREFIXES {
-            if let Some(rest) = current.strip_prefix(prefix)
-                && (rest.starts_with("http://") || rest.starts_with("https://"))
+            if let Some(head) = current.get(..prefix.len())
+                && head.eq_ignore_ascii_case(prefix)
+                && let Some(rest) = current.get(prefix.len()..)
+                && rest.split_once("://").is_some_and(|(scheme, _)| {
+                    scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+                })
             {
                 current = rest.to_string();
                 stripped = true;
@@ -3783,9 +3796,18 @@ pub fn rewrite_remote_rule_set_url(url: &str) -> String {
             break;
         }
     }
-    if let Some(rest) = current.strip_prefix("https://raw.githubusercontent.com/") {
+    const RAW_GH_PREFIX: &str = "https://raw.githubusercontent.com/";
+    if let Some(head) = current.get(..RAW_GH_PREFIX.len())
+        && head.eq_ignore_ascii_case(RAW_GH_PREFIX)
+        && let Some(rest) = current.get(RAW_GH_PREFIX.len()..)
+    {
         let parts: Vec<&str> = rest.splitn(4, '/').collect();
-        let rewritten = if parts.len() == 4 {
+        let rewritten = if parts.len() == 4
+            && !parts[0].is_empty()
+            && !parts[1].is_empty()
+            && !parts[2].is_empty()
+            && !parts[3].is_empty()
+        {
             if parts[2] == "refs" {
                 // GitHub's UI emits fully-qualified refs (`refs/heads/<branch>`
                 // / `refs/tags/<tag>`); jsDelivr only accepts the bare ref
@@ -3795,6 +3817,7 @@ pub fn rewrite_remote_rule_set_url(url: &str) -> String {
                     .strip_prefix("heads/")
                     .or_else(|| parts[3].strip_prefix("tags/"))
                     .and_then(|ref_and_path| ref_and_path.split_once('/'))
+                    .filter(|(version, path)| !version.is_empty() && !path.is_empty())
                     .map(|(version, path)| {
                         format!(
                             "https://testingcf.jsdelivr.net/gh/{}/{}@{}/{}",
@@ -3824,7 +3847,12 @@ pub fn collect_outbound_tags(config: &serde_json::Value) -> Vec<String> {
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|o| o.get("tag").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                .filter_map(|o| {
+                    o.get("tag")
+                        .and_then(|t| t.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -4276,24 +4304,32 @@ pub fn mitigate_run_config(config: &mut serde_json::Value) {
                 server.get("type").and_then(|t| t.as_str()) == Some("fakeip")
                     || server.get("address").and_then(|a| a.as_str()) == Some("fakeip")
             })
-        });
+        })
+        || config
+            .pointer("/dns/fakeip/enabled")
+            .and_then(|v| v.as_bool())
+            == Some(true);
     let cache_path = profile_cache_db_path(config);
-    if let Some(root) = config.as_object_mut()
-        && let Some(exp) = root
-            .entry("experimental")
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-    {
-        let cache = exp
-            .entry("cache_file")
-            .or_insert_with(|| json!({ "enabled": true }));
-        if let Some(cache_obj) = cache.as_object_mut() {
-            cache_obj.entry("enabled").or_insert_with(|| json!(true));
-            cache_obj.insert("path".to_string(), json!(cache_path));
-            if has_fakeip {
-                cache_obj
-                    .entry("store_fakeip")
-                    .or_insert_with(|| json!(true));
+    if let Some(root) = config.as_object_mut() {
+        let exp_val = root.entry("experimental").or_insert_with(|| json!({}));
+        if !exp_val.is_object() {
+            *exp_val = json!({});
+        }
+        if let Some(exp) = exp_val.as_object_mut() {
+            let cache_val = exp
+                .entry("cache_file")
+                .or_insert_with(|| json!({ "enabled": true }));
+            if !cache_val.is_object() {
+                *cache_val = json!({ "enabled": true });
+            }
+            if let Some(cache_obj) = cache_val.as_object_mut() {
+                cache_obj.entry("enabled").or_insert_with(|| json!(true));
+                cache_obj.insert("path".to_string(), json!(cache_path));
+                if has_fakeip {
+                    cache_obj
+                        .entry("store_fakeip")
+                        .or_insert_with(|| json!(true));
+                }
             }
         }
     }
@@ -4587,6 +4623,8 @@ fn is_sensitive_json_key(key: &str) -> bool {
         || key.contains("password")
         || key.contains("passwd")
         || key.contains("private_key")
+        || key.contains("pre_shared_key")
+        || key.contains("preshared")
         || key.contains("passphrase")
         || key.contains("credential")
         || key.contains("auth")
@@ -4620,18 +4658,20 @@ pub(crate) fn redact_sensitive_json(value: &mut serde_json::Value) {
                     let _ = parsed.set_password(Some("******"));
                     changed = true;
                 }
+                let mut query_changed = false;
                 let pairs: Vec<(String, String)> = parsed
                     .query_pairs()
                     .map(|(key, value)| {
                         if is_sensitive_json_key(&key) {
-                            changed = true;
+                            query_changed = true;
                             (key.into_owned(), "******".to_string())
                         } else {
                             (key.into_owned(), value.into_owned())
                         }
                     })
                     .collect();
-                if !pairs.is_empty() {
+                if query_changed {
+                    changed = true;
                     let mut query = parsed.query_pairs_mut();
                     query.clear();
                     for (key, value) in pairs {
@@ -4974,11 +5014,13 @@ proxies:
                     use std::io::Read;
                     let _ = e.read_to_string(&mut err);
                 }
-                let tail = if err.len() > 2000 {
-                    &err[err.len() - 2000..]
-                } else {
-                    &err
-                };
+                let tail_start = err
+                    .char_indices()
+                    .rev()
+                    .nth(2000)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(0);
+                let tail = &err[tail_start..];
                 panic!("core exited during startup with {status}; stderr tail:\n{tail}");
             }
             Err(e) => panic!("try_wait failed: {e}"),
@@ -6416,5 +6458,174 @@ proxies:
             .unwrap();
         assert_eq!(nat_quic["udp_over_stream"], false);
         assert_eq!(nat_quic["udp_relay_mode"], "quic");
+    }
+
+    #[test]
+    fn share_links_strip_ipv6_brackets_handle_uppercase_and_complex_ss_passwords() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        // IPv6 literals must be emitted without square brackets for sing-box.
+        let v6_vless = "vless://00000000-0000-0000-0000-000000000000@[2001:db8::1]:443?security=TLS&type=WS#V6";
+        // Legacy ss:// with special characters ('/', '?', '#', '@') inside password and no #fragment.
+        let legacy_ss_payload = "aes-256-gcm:p/a?s#w@rd@[2001:db8::2]:8388";
+        let legacy_ss = format!("SS://{}", STANDARD.encode(legacy_ss_payload));
+        // VMess with uppercase scheme, trailing slash before fragment, and uppercase net/tls.
+        let vmess_json = r#"{"v":"2","ps":"VM-Case","add":"[2001:db8::3]","port":"443","id":"00000000-0000-0000-0000-000000000000","aid":"1","net":"WS","tls":"TLS"}"#;
+        let vmess_link = format!("VMESS://{}/#ignored", STANDARD.encode(vmess_json));
+
+        let bundle = STANDARD.encode(format!("{v6_vless}\n{legacy_ss}\n{vmess_link}\n"));
+        let config = convert_clash_to_singbox(&bundle, &GuiConfig::default()).unwrap();
+        let outbounds = config["outbounds"].as_array().unwrap();
+
+        let vless = outbounds.iter().find(|o| o["tag"] == "V6").unwrap();
+        assert_eq!(vless["server"], "2001:db8::1");
+        assert_eq!(vless["tls"]["enabled"], true);
+        assert_eq!(vless["transport"]["type"], "ws");
+
+        let ss = outbounds
+            .iter()
+            .find(|o| o["type"] == "shadowsocks")
+            .unwrap();
+        assert_eq!(ss["tag"], "ss-2001:db8::2");
+        assert_eq!(ss["server"], "2001:db8::2");
+        assert_eq!(ss["server_port"], 8388);
+        assert_eq!(ss["method"], "aes-256-gcm");
+        assert_eq!(ss["password"], "p/a?s#w@rd");
+
+        let vmess = outbounds.iter().find(|o| o["tag"] == "VM-Case").unwrap();
+        assert_eq!(vmess["server"], "2001:db8::3");
+        assert_eq!(vmess["alter_id"], 1);
+        assert_eq!(vmess["transport"]["type"], "ws");
+        assert_eq!(vmess["tls"]["enabled"], true);
+
+        // Missing host or empty server must fail closed instead of defaulting to 127.0.0.1.
+        assert!(
+            parse_share_link("vless://00000000-0000-0000-0000-000000000000@:443#Bad").is_none()
+        );
+        assert!(parse_share_link("ss://not-valid-base64").is_none());
+    }
+
+    #[test]
+    fn clash_numeric_scalars_empty_reality_and_zero_mbps_are_handled_safely() {
+        let yaml = r#"
+proxies:
+  - name: 101
+    type: trojan
+    server: "[2001:db8::10]"
+    port: 443
+    password: 123456
+    network: WS
+  - name: VLESS-EmptyReality
+    type: vless
+    server: edge.example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+    tls: true
+    reality-opts: {}
+  - name: Hy2-ZeroSpeed
+    type: hysteria2
+    server: hy.example.com
+    port: 443
+    password: pw
+    up: "0 kbps"
+  - name: Missing-Server
+    type: ss
+    server: "   "
+    port: 8388
+    cipher: aes-128-gcm
+    password: secret
+"#;
+        let nodes = parse_clash_yaml_nodes(yaml).unwrap();
+        let names: Vec<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, ["101", "VLESS-EmptyReality", "Hy2-ZeroSpeed"]);
+        assert_eq!(nodes[0].server, "2001:db8::10");
+
+        let config = convert_clash_to_singbox(yaml, &GuiConfig::default()).unwrap();
+        let outbounds = config["outbounds"].as_array().unwrap();
+        let trojan = outbounds.iter().find(|o| o["tag"] == "101").unwrap();
+        assert_eq!(trojan["password"], "123456");
+        assert_eq!(trojan["transport"]["type"], "ws");
+
+        let vless = outbounds
+            .iter()
+            .find(|o| o["tag"] == "VLESS-EmptyReality")
+            .unwrap();
+        assert!(
+            vless["tls"].get("reality").is_none(),
+            "empty reality-opts must not emit invalid empty public_key: {vless}"
+        );
+
+        let hy2 = outbounds
+            .iter()
+            .find(|o| o["tag"] == "Hy2-ZeroSpeed")
+            .unwrap();
+        assert!(
+            hy2.get("up_mbps").is_none(),
+            "0 kbps must not become 1 Mbps"
+        );
+    }
+
+    #[test]
+    fn mitigate_handles_null_experimental_legacy_fakeip_uppercase_proxy_and_redaction() {
+        let mut config = json!({
+            "outbounds": [
+                { "type": "direct", "tag": "" },
+                { "type": "direct", "tag": "DIRECT" }
+            ],
+            "dns": {
+                "fakeip": { "enabled": true }
+            },
+            "route": {
+                "rule_set": [
+                    {
+                        "type": "remote",
+                        "tag": "rs-upper",
+                        "format": "binary",
+                        "url": "https://GH-PROXY.COM/https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+                        "download_detour": ""
+                    },
+                    {
+                        "type": "remote",
+                        "tag": "rs-malformed",
+                        "format": "binary",
+                        "url": "https://raw.githubusercontent.com/o/r//file.srs"
+                    }
+                ]
+            },
+            "experimental": null
+        });
+        mitigate_run_config(&mut config);
+        assert_eq!(
+            config["route"]["rule_set"][0]["url"],
+            "https://testingcf.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/geosite-cn.srs"
+        );
+        assert_eq!(config["route"]["rule_set"][0]["download_detour"], "DIRECT");
+        assert_eq!(
+            config["route"]["rule_set"][1]["url"],
+            "https://raw.githubusercontent.com/o/r//file.srs"
+        );
+        assert_eq!(config["experimental"]["cache_file"]["enabled"], true);
+        assert_eq!(config["experimental"]["cache_file"]["store_fakeip"], true);
+
+        let mut wg_preview = json!({
+            "endpoints": [{
+                "type": "wireguard",
+                "private_key": "priv",
+                "peers": [{ "public_key": "pub", "pre_shared_key": "topsecret-psk" }]
+            }]
+        });
+        redact_sensitive_json(&mut wg_preview);
+        assert_eq!(wg_preview["endpoints"][0]["private_key"], "******");
+        assert_eq!(
+            wg_preview["endpoints"][0]["peers"][0]["pre_shared_key"],
+            "******"
+        );
+        assert_eq!(wg_preview["endpoints"][0]["peers"][0]["public_key"], "pub");
+
+        let sanitized_path = get_profile_path(".../...");
+        assert_eq!(
+            sanitized_path.file_name().and_then(|n| n.to_str()),
+            Some("profile.json")
+        );
     }
 }

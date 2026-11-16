@@ -10,6 +10,10 @@ use iced::widget::{
 };
 use iced::{Alignment, Color, Element, Font, Length};
 
+/// Below this width the Connections header search/sort/close-all toolbar
+/// stacks under the title so controls never clip at 740–779px.
+const CONNECTIONS_TOOLBAR_INLINE_W: f32 = 780.0;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ConnectionSortOption {
     sort: crate::state::ConnectionSort,
@@ -103,25 +107,8 @@ pub fn render<'a>(
         })
         .collect();
 
-    prepared_connections.sort_by(|a, b| {
-        let ord = match connections_sort {
-            crate::state::ConnectionSort::None => std::cmp::Ordering::Equal,
-            crate::state::ConnectionSort::Host => a.host_key.cmp(&b.host_key),
-            crate::state::ConnectionSort::Process => a.process_key.cmp(&b.process_key),
-            crate::state::ConnectionSort::Network => a.network_key.cmp(&b.network_key),
-            crate::state::ConnectionSort::Chains => a.chains_key.cmp(&b.chains_key),
-            crate::state::ConnectionSort::Rule => a.rule_key.cmp(&b.rule_key),
-            crate::state::ConnectionSort::Download => {
-                a.connection.download.cmp(&b.connection.download)
-            }
-            crate::state::ConnectionSort::Upload => a.connection.upload.cmp(&b.connection.upload),
-        };
-        if connections_sort_desc {
-            ord.reverse()
-        } else {
-            ord
-        }
-    });
+    prepared_connections
+        .sort_by(|a, b| compare_connections(a, b, connections_sort, connections_sort_desc));
     const MAX_VISIBLE_CONNECTIONS: usize = 100;
     let hidden_connections = prepared_connections
         .len()
@@ -133,6 +120,7 @@ pub fn render<'a>(
         let text_primary = theme::text_primary(theme);
         let text_muted = theme::text_muted(theme);
         let is_compact = size.width < CONNECTIONS_TABLE_W;
+        let header_stacked = size.width < CONNECTIONS_TOOLBAR_INLINE_W;
         let is_wide = size.width >= CONNECTIONS_WIDE_W;
         let (down_color, up_color) = theme::chart_series(theme);
 
@@ -141,7 +129,7 @@ pub fn render<'a>(
         let search_input = text_input(tr(lang, "placeholder_connections_search"), &query_str)
             .on_input(Message::ConnectionsSearchChanged)
             .padding(8)
-            .width(if is_compact {
+            .width(if header_stacked {
                 Length::Fill
             } else {
                 Length::Fixed(theme::SEARCH_WIDTH)
@@ -228,7 +216,7 @@ pub fn render<'a>(
         let direction_btn: Option<Element<'_, Message>> =
             (connections_sort != crate::state::ConnectionSort::None).then(|| direction_btn.into());
 
-        let header_actions: Element<'_, Message> = if is_compact {
+        let header_actions: Element<'_, Message> = if header_stacked {
             column![
                 search_input.width(Length::Fill),
                 row![
@@ -265,7 +253,7 @@ pub fn render<'a>(
             lang,
             Some(header_actions),
             theme,
-            is_compact,
+            header_stacked,
         );
 
         if is_compact {
@@ -364,30 +352,42 @@ pub fn render<'a>(
                             .into()
                     };
 
-                    let card = container(
-                        column![
-                            row![container(host_el).width(Length::Fill), close_btn]
-                                .align_y(Alignment::Center)
-                                .width(Length::Fill),
-                            row![
-                                container(
-                                    text(conn.metadata.network.to_uppercase())
-                                        .size(theme::TYPE_MICRO)
-                                        .font(theme::ui_font(iced::font::Weight::Semibold))
-                                        .color(text_muted)
-                                )
-                                .padding([2, 6])
-                                .style(theme::badge_bg),
-                                container(
-                                    text(fit_width(&conn.rule, 180.0, theme::TYPE_MICRO))
-                                        .size(theme::TYPE_MICRO)
-                                        .color(text_muted)
-                                )
-                                .padding([2, 6])
-                                .style(theme::badge_bg),
-                            ]
-                            .spacing(crate::ui::SP_8)
-                            .align_y(Alignment::Center),
+                    let mut badges = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
+                    if !conn.metadata.network.trim().is_empty() {
+                        badges = badges.push(
+                            container(
+                                text(conn.metadata.network.to_uppercase())
+                                    .size(theme::TYPE_MICRO)
+                                    .font(theme::ui_font(iced::font::Weight::Semibold))
+                                    .color(text_muted),
+                            )
+                            .padding([2, 6])
+                            .style(theme::badge_bg),
+                        );
+                    }
+                    if !conn.rule.trim().is_empty() {
+                        badges = badges.push(
+                            container(
+                                text(fit_width(&conn.rule, 180.0, theme::TYPE_MICRO))
+                                    .size(theme::TYPE_MICRO)
+                                    .color(text_muted),
+                            )
+                            .padding([2, 6])
+                            .style(theme::badge_bg),
+                        );
+                    }
+
+                    let mut card_col = column![
+                        row![container(host_el).width(Length::Fill), close_btn]
+                            .align_y(Alignment::Center)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(crate::ui::SP_8);
+                    if !conn.metadata.network.trim().is_empty() || !conn.rule.trim().is_empty() {
+                        card_col = card_col.push(badges);
+                    }
+                    card_col = card_col
+                        .push(
                             text(fit_width(
                                 &labelled(lang, tr(lang, "col_process"), process_label),
                                 card_text_w,
@@ -396,6 +396,8 @@ pub fn render<'a>(
                             .color(text_muted)
                             .size(theme::TYPE_CAPTION)
                             .wrapping(Wrapping::None),
+                        )
+                        .push(
                             text(fit_width(
                                 &labelled(lang, tr(lang, "chains"), chains_text),
                                 card_text_w,
@@ -404,26 +406,28 @@ pub fn render<'a>(
                             .color(text_muted)
                             .size(theme::TYPE_CAPTION)
                             .wrapping(Wrapping::None),
+                        )
+                        .push(
                             row![
                                 rate_label(ICON_DOWN, down_color, conn.download, theme),
                                 rate_label(ICON_UP, up_color, conn.upload, theme),
                             ]
                             .spacing(crate::ui::SP_12)
-                            .align_y(Alignment::Center)
-                        ]
-                        .spacing(crate::ui::SP_8),
-                    )
-                    // The 28px close button sits in the top-right corner: pull
-                    // the top and right insets in by its 6px padding so the
-                    // glyph, not the hit area, lines up with the card margin.
-                    .padding(iced::Padding {
-                        top: theme::CARD_PAD_DENSE - 6.0,
-                        right: theme::CARD_PAD_DENSE - 6.0,
-                        bottom: theme::CARD_PAD_DENSE,
-                        left: theme::CARD_PAD_DENSE,
-                    })
-                    .width(Length::Fill)
-                    .style(theme::card_bg);
+                            .align_y(Alignment::Center),
+                        );
+
+                    let card = container(card_col)
+                        // The 28px close button sits in the top-right corner: pull
+                        // the top and right insets in by its 6px padding so the
+                        // glyph, not the hit area, lines up with the card margin.
+                        .padding(iced::Padding {
+                            top: theme::CARD_PAD_DENSE - 6.0,
+                            right: theme::CARD_PAD_DENSE - 6.0,
+                            bottom: theme::CARD_PAD_DENSE,
+                            left: theme::CARD_PAD_DENSE,
+                        })
+                        .width(Length::Fill)
+                        .style(theme::card_bg);
 
                     list = list.push(card);
                 }
@@ -715,7 +719,7 @@ pub fn render<'a>(
                     } else {
                         // The protocol badge (about 40px) and its gap share the cell.
                         let rule_short =
-                            fit_width(&conn.rule, room(5.0) - 46.0, theme::TYPE_BTN_SM);
+                            fit_width(&conn.rule, (room(5.0) - 46.0).max(20.0), theme::TYPE_BTN_SM);
                         let rule_trunc = rule_short != conn.rule;
                         let rule_el = tip_wrap(
                             text(rule_short)
@@ -928,6 +932,31 @@ fn close_button<'a>(
     .into()
 }
 
+fn compare_connections(
+    a: &PreparedConnection<'_>,
+    b: &PreparedConnection<'_>,
+    sort: crate::state::ConnectionSort,
+    desc: bool,
+) -> std::cmp::Ordering {
+    if sort == crate::state::ConnectionSort::None {
+        return std::cmp::Ordering::Equal;
+    }
+    let ord = match sort {
+        crate::state::ConnectionSort::None => std::cmp::Ordering::Equal,
+        crate::state::ConnectionSort::Host => a.host_key.cmp(&b.host_key),
+        crate::state::ConnectionSort::Process => a.process_key.cmp(&b.process_key),
+        crate::state::ConnectionSort::Network => a.network_key.cmp(&b.network_key),
+        crate::state::ConnectionSort::Chains => a.chains_key.cmp(&b.chains_key),
+        crate::state::ConnectionSort::Rule => a.rule_key.cmp(&b.rule_key),
+        crate::state::ConnectionSort::Download => a.connection.download.cmp(&b.connection.download),
+        crate::state::ConnectionSort::Upload => a.connection.upload.cmp(&b.connection.upload),
+    };
+    let primary = if desc { ord.reverse() } else { ord };
+    primary
+        .then_with(|| a.host_key.cmp(&b.host_key))
+        .then_with(|| a.connection.id.cmp(&b.connection.id))
+}
+
 fn tip_wrap<'a>(
     el: Element<'a, Message>,
     full: &str,
@@ -951,5 +980,63 @@ fn tip_wrap<'a>(
         .into()
     } else {
         el
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::{Connection, ConnectionMetadata};
+    use crate::state::ConnectionSort;
+
+    fn make_prepared<'a>(
+        conn: &'a Connection,
+        host: &str,
+        network: &str,
+        rule: &str,
+    ) -> PreparedConnection<'a> {
+        PreparedConnection {
+            connection: conn,
+            host_key: host.to_lowercase(),
+            process_label: String::new(),
+            process_key: String::new(),
+            network_key: network.to_lowercase(),
+            chains_label: String::new(),
+            chains_key: String::new(),
+            rule_key: rule.to_lowercase(),
+            search_key: String::new(),
+        }
+    }
+
+    #[test]
+    fn connection_sort_tiebreaks_deterministically_by_host_and_id() {
+        let c1 = Connection {
+            id: "2".into(),
+            metadata: ConnectionMetadata::default(),
+            upload: 100,
+            download: 500,
+            start: String::new(),
+            chains: vec![],
+            rule: "RuleA".into(),
+        };
+        let c2 = Connection {
+            id: "1".into(),
+            metadata: ConnectionMetadata::default(),
+            upload: 200,
+            download: 500,
+            start: String::new(),
+            chains: vec![],
+            rule: "RuleA".into(),
+        };
+        let p_b = make_prepared(&c1, "beta.example", "tcp", "RuleA");
+        let p_a = make_prepared(&c2, "alpha.example", "tcp", "RuleA");
+        let mut items = [p_b, p_a];
+        items.sort_by(|a, b| compare_connections(a, b, ConnectionSort::Download, true));
+        assert_eq!(items[0].host_key, "alpha.example");
+        assert_eq!(items[1].host_key, "beta.example");
+
+        items.sort_by(|a, b| compare_connections(a, b, ConnectionSort::Upload, true));
+        assert_eq!(items[0].connection.id, "1");
+        assert_eq!(items[1].connection.id, "2");
     }
 }

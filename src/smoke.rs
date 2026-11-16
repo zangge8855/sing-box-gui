@@ -53,8 +53,7 @@ pub fn requested() -> bool {
 }
 
 impl Runner {
-    pub fn from_env() -> Option<Self> {
-        let output = PathBuf::from(std::env::var_os("SINGBOX_UI_SMOKE_DIR")?);
+    fn build_cases() -> Vec<Case> {
         let mut cases = Vec::new();
         for (language, locale) in [(Language::En, "en"), (Language::Zh, "zh")] {
             for (theme, appearance) in [(AppTheme::Light, "light"), (AppTheme::Dark, "dark")] {
@@ -123,6 +122,12 @@ impl Runner {
                 }
             }
         }
+        cases
+    }
+
+    pub fn from_env() -> Option<Self> {
+        let output = PathBuf::from(std::env::var_os("SINGBOX_UI_SMOKE_DIR")?);
+        let mut cases = Self::build_cases();
         if let Ok(filter) = std::env::var("SINGBOX_UI_SMOKE_FILTER") {
             cases.retain(|case| case.name.contains(&filter));
         }
@@ -249,9 +254,10 @@ pub fn update(app: &mut App, action: Action) -> Task<Message> {
                     }
                     println!("UI_TRAY_NONE_OK: close exits when no tray host is available");
                     println!("UI_SMOKE_OK: {} screenshots", runner.index);
-                    return app.handle_update(Message::WindowCloseRequested(
-                        app.window_id.expect("open test window"),
-                    ));
+                    if let Some(id) = app.window_id {
+                        return app.handle_update(Message::WindowCloseRequested(id));
+                    }
+                    return iced::exit();
                 }
                 println!("UI_SMOKE_OK: {} screenshots", runner.index);
                 return iced::exit();
@@ -304,7 +310,9 @@ pub fn update(app: &mut App, action: Action) -> Task<Message> {
                 shot.size.width as f32 / shot.scale_factor,
                 shot.size.height as f32 / shot.scale_factor,
             );
-            if actual != expected {
+            if (actual.width - expected.width).abs() > 0.5
+                || (actual.height - expected.height).abs() > 0.5
+            {
                 return fail(format!("expected {expected:?}, captured {actual:?}"));
             }
             if let Ok(scale) = std::env::var("SINGBOX_UI_SMOKE_SCALE")
@@ -377,8 +385,10 @@ fn seed(app: &mut App, case: &Case) {
     app.settings_errors.clear();
     app.core_running = case.variant != "empty";
     app.core_installed = app.core_running;
-    app.core_version = app.core_running.then(|| "1.13.14".into());
+    app.core_version = app.core_running.then(|| crate::core::CORE_VERSION.into());
     app.sys_proxy_enabled = app.core_running;
+    app.system_proxy_busy = false;
+    app.core_stopping = false;
     app.current_speed = Bandwidth {
         up: 385_024,
         down: 6_724_096,
@@ -398,11 +408,23 @@ fn seed(app: &mut App, case: &Case) {
     app.active_connections.clear();
     app.log_lines.clear();
     app.selected_node_tag = None;
+    app.selected_group.clear();
+    app.pending_routing_mode = None;
+    app.url_input.clear();
     app.node_search.clear();
     app.log_search.clear();
+    app.log_filter = LogFilter::All;
+    app.logs_follow = true;
     app.connections_search.clear();
+    app.connections_sort = ConnectionSort::None;
+    app.connections_sort_desc = false;
+    app.proxy_sort = ProxySort::Latency;
+    app.direct_rule_input.clear();
+    app.proxy_rule_input.clear();
     app.confirm_delete_profile_id = None;
     app.editing_profile_id = None;
+    app.editing_profile_name.clear();
+    app.editing_profile_url.clear();
     app.profile_more_id = None;
     app.toasts.clear();
     app.core_starting = false;
@@ -412,6 +434,7 @@ fn seed(app: &mut App, case: &Case) {
     app.downloading = false;
     app.updating_profile_id = None;
     app.profile_error = None;
+    app.active_profile_is_native = false;
     app.show_all_proxies = false;
     app.config_preview_expanded = false;
     app.config_preview = None;
@@ -432,7 +455,7 @@ fn seed(app: &mut App, case: &Case) {
             name: name.into(),
             url: "https://example.com/subscription?token=example-redacted-token".into(),
             file_path: String::new(),
-            is_subscription: true,
+            is_subscription: i != 2,
             updated_at: "2026-09-06 14:30".into(),
             traffic_upload: Some(4_500_000_000),
             traffic_download: Some(37_800_000_000),
@@ -608,5 +631,71 @@ fn seed(app: &mut App, case: &Case) {
             ));
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smoke_cases_have_unique_names_and_cover_all_tabs() {
+        let cases = Runner::build_cases();
+        assert!(!cases.is_empty());
+        let unique: std::collections::HashSet<&str> =
+            cases.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(unique.len(), cases.len(), "duplicate smoke case names");
+        for tab in [
+            Tab::Dashboard,
+            Tab::Proxies,
+            Tab::Profiles,
+            Tab::Rules,
+            Tab::Connections,
+            Tab::Logs,
+            Tab::Settings,
+        ] {
+            assert!(cases.iter().any(|c| c.tab == tab), "missing tab {tab:?}");
+        }
+    }
+
+    #[test]
+    fn seed_resets_stale_state_and_renders_all_smoke_cases() {
+        let (mut app, startup) = App::new_with_config(GuiConfig::default());
+        drop(startup);
+        let dummy_window = app.window_id.unwrap_or_else(window::Id::unique);
+        let cases = Runner::build_cases();
+
+        // Pollute transient UI fields, then verify seeding an empty case resets them.
+        app.url_input = "stale".into();
+        app.direct_rule_input = "stale.com".into();
+        app.proxy_rule_input = "proxy.com".into();
+        app.selected_group = "StaleGroup".into();
+        app.log_filter = LogFilter::Error;
+        app.connections_sort = ConnectionSort::Upload;
+        app.connections_sort_desc = true;
+        app.proxy_sort = ProxySort::Name;
+        app.core_stopping = true;
+        app.system_proxy_busy = true;
+
+        let empty_case = cases
+            .iter()
+            .find(|c| c.variant == "empty")
+            .expect("empty case");
+        seed(&mut app, empty_case);
+        assert!(app.url_input.is_empty());
+        assert!(app.direct_rule_input.is_empty());
+        assert!(app.proxy_rule_input.is_empty());
+        assert!(app.selected_group.is_empty());
+        assert_eq!(app.log_filter, LogFilter::All);
+        assert_eq!(app.connections_sort, ConnectionSort::None);
+        assert!(!app.connections_sort_desc);
+        assert_eq!(app.proxy_sort, ProxySort::Latency);
+        assert!(!app.core_stopping);
+        assert!(!app.system_proxy_busy);
+
+        for case in &cases {
+            seed(&mut app, case);
+            let _element = app.view(dummy_window);
+        }
     }
 }

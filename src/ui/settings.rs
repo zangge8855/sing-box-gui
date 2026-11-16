@@ -385,24 +385,33 @@ pub fn render<'a>(
         }
 
         // Visually separate instant-apply Appearance from draft settings.
-        let appearance = container(
-            column![
+        let appearance_hint = container(
+            text(tr(lang, "appearance_instant_hint"))
+                .size(theme::TYPE_MICRO)
+                .color(theme::info_text(theme)),
+        )
+        .padding([2, 8])
+        .style(|t| theme::badge_colored(theme::INFO, t));
+        let appearance_title = text(tr(lang, "appearance_settings"))
+            .size(theme::TYPE_HEADING)
+            .font(theme::ui_font(iced::font::Weight::Semibold))
+            .color(text_primary);
+        let appearance_header: Element<'_, Message> =
+            if size.width >= crate::ui::SETTINGS_2COL_W && size.width < 865.0 {
+                column![appearance_title, appearance_hint].spacing(6).into()
+            } else {
                 row![
-                    text(tr(lang, "appearance_settings"))
-                        .size(theme::TYPE_HEADING)
-                        .font(theme::ui_font(iced::font::Weight::Semibold))
-                        .color(text_primary),
+                    appearance_title,
                     Space::new().width(Length::Fill),
-                    container(
-                        text(tr(lang, "appearance_instant_hint"))
-                            .size(theme::TYPE_MICRO)
-                            .color(theme::info_text(theme)),
-                    )
-                    .padding([2, 8])
-                    .style(|t| theme::badge_colored(theme::INFO, t)),
+                    appearance_hint,
                 ]
                 .spacing(crate::ui::SP_8)
-                .align_y(Alignment::Center),
+                .align_y(Alignment::Center)
+                .into()
+            };
+        let appearance = container(
+            column![
+                appearance_header,
                 container(inline("app_language", None, None, lang_picker.into()))
                     .padding([12, 0])
                     .width(Length::Fill),
@@ -975,5 +984,38 @@ pub struct IntervalOption {
 impl std::fmt::Display for IntervalOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.label)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picker_options_display_their_labels() {
+        assert_eq!(
+            LanguageOption {
+                lang: Language::Zh,
+                label: "简体中文"
+            }
+            .to_string(),
+            "简体中文"
+        );
+        assert_eq!(
+            ThemeOption {
+                theme: AppTheme::Auto,
+                label: "Follow System"
+            }
+            .to_string(),
+            "Follow System"
+        );
+        assert_eq!(
+            IntervalOption {
+                hours: 6,
+                label: "Every 6 hours"
+            }
+            .to_string(),
+            "Every 6 hours"
+        );
     }
 }

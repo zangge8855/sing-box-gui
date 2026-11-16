@@ -91,14 +91,146 @@ pub fn truncate_chars(s: &str, max_chars: usize) -> String {
 fn is_wide(c: char) -> bool {
     matches!(c as u32,
         0x1100..=0x115F
+        | 0x231A..=0x23FF
+        | 0x2600..=0x27BF
+        | 0x2B00..=0x2BFF
         | 0x2E80..=0xA4CF
         | 0xAC00..=0xD7A3
         | 0xF900..=0xFAFF
-        | 0xFE30..=0xFE4F
+        | 0xFE10..=0xFE1F
+        | 0xFE30..=0xFE6F
         | 0xFF00..=0xFF60
         | 0xFFE0..=0xFFE6
-        | 0x1F300..=0x1FAFF
+        | 0x1F000..=0x1FAFF
         | 0x20000..=0x3FFFD)
+}
+
+fn is_regional_indicator(c: char) -> bool {
+    ('\u{1F1E6}'..='\u{1F1FF}').contains(&c)
+}
+
+fn is_combining_or_extend(c: char) -> bool {
+    matches!(c as u32,
+        0x0300..=0x036F
+        | 0x0483..=0x0489
+        | 0x0591..=0x05BD
+        | 0x05BF
+        | 0x05C1..=0x05C2
+        | 0x05C4..=0x05C5
+        | 0x05C7
+        | 0x0610..=0x061A
+        | 0x064B..=0x065F
+        | 0x0670
+        | 0x06D6..=0x06ED
+        | 0x0900..=0x0903
+        | 0x093A..=0x094F
+        | 0x0951..=0x0957
+        | 0x0962..=0x0963
+        | 0x0E31
+        | 0x0E34..=0x0E3A
+        | 0x0E47..=0x0E4E
+        | 0x1160..=0x11FF
+        | 0x1AB0..=0x1AFF
+        | 0x1DC0..=0x1DFF
+        | 0x20D0..=0x20FF
+        | 0xD7B0..=0xD7FF
+        | 0xFE00..=0xFE0F
+        | 0xFE20..=0xFE2F
+        | 0x1F3FB..=0x1F3FF
+        | 0xE0020..=0xE007F
+        | 0xE0100..=0xE01EF)
+}
+
+fn is_zero_width_scalar(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{00AD}'
+    ) || (c.is_control() && c != '\t')
+        || is_combining_or_extend(c)
+}
+
+/// Split off the leading Unicode grapheme cluster from a non-empty UTF-8 slice.
+fn next_grapheme(s: &str) -> (&str, &str) {
+    let mut iter = s.char_indices();
+    let Some((_, c0)) = iter.next() else {
+        return ("", "");
+    };
+    let mut end = c0.len_utf8();
+
+    // Keep CRLF together.
+    if c0 == '\r' && s[end..].starts_with('\n') {
+        end += 1;
+        return (&s[..end], &s[end..]);
+    }
+
+    // Keep regional-indicator pairs (flag emoji) together.
+    if is_regional_indicator(c0)
+        && let Some(c1) = s[end..].chars().next()
+        && is_regional_indicator(c1)
+    {
+        end += c1.len_utf8();
+    }
+
+    loop {
+        while let Some(c) = s[end..].chars().next() {
+            if is_combining_or_extend(c) {
+                end += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        // Glue ZWJ (`\u{200D}`) plus the joined base glyph (and its extenders).
+        if let Some('\u{200D}') = s[end..].chars().next() {
+            end += '\u{200D}'.len_utf8();
+            if let Some(joined) = s[end..].chars().next()
+                && !matches!(joined, '\r' | '\n')
+            {
+                end += joined.len_utf8();
+                continue;
+            }
+        }
+        break;
+    }
+
+    (&s[..end], &s[end..])
+}
+
+fn last_grapheme_start(s: &str) -> usize {
+    let mut last_start = 0;
+    let mut pos = 0;
+    let mut rest = s;
+    while !rest.is_empty() {
+        let (cluster, next) = next_grapheme(rest);
+        last_start = pos;
+        pos += cluster.len();
+        rest = next;
+    }
+    last_start
+}
+
+fn cluster_em(cluster: &str, base_em: fn(char) -> f32) -> f32 {
+    let Some(c0) = cluster.chars().next() else {
+        return 0.0;
+    };
+    if cluster.contains('\u{200D}') {
+        return 1.25;
+    }
+    if is_regional_indicator(c0) {
+        return if cluster.chars().nth(1).is_some() {
+            1.3
+        } else {
+            1.0
+        };
+    }
+    if is_zero_width_scalar(c0) {
+        return 0.0;
+    }
+    let w = base_em(c0);
+    if cluster.contains('\u{FE0F}') {
+        w.max(1.0)
+    } else {
+        w
+    }
 }
 
 /// A field label followed by its colon: full-width "：" in Chinese, where the
@@ -149,6 +281,9 @@ fn sans_em(c: char) -> f32 {
         'A'..='Z' => 0.74,
         '…' => 0.76,
         '→' => 0.88,
+        '—' => 1.0,
+        '–' => 0.56,
+        '•' => 0.40,
         _ => 0.62,
     }
 }
@@ -165,32 +300,84 @@ pub const SEMIBOLD_WIDTH: f32 = 1.03;
 /// little slack for platforms that fall back to the regular face.
 pub const LIGHT_WIDTH: f32 = 0.96;
 
+fn measure_with(s: &str, size: f32, em: fn(char) -> f32) -> f32 {
+    let mut sum_em = 0.0f32;
+    let mut rest = s;
+    while !rest.is_empty() {
+        let (cluster, next) = next_grapheme(rest);
+        sum_em += cluster_em(cluster, em);
+        rest = next;
+    }
+    sum_em * size
+}
+
+fn trim_dangling_suffix(s: &str) -> &str {
+    s.trim_end_matches(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '·' | '-' | '–' | '—' | '/' | '→' | ',' | '，' | '、' | '|' | '•'
+            )
+    })
+}
+
 fn fit_with(s: &str, max_px: f32, size: f32, em: fn(char) -> f32) -> String {
-    let total: f32 = s.chars().map(em).sum::<f32>() * size;
+    if s.is_empty() {
+        return String::new();
+    }
+    if !size.is_finite() || size <= 0.0 {
+        return if max_px.is_nan() || max_px < 0.0 {
+            "…".to_string()
+        } else {
+            s.to_string()
+        };
+    }
+    if max_px.is_infinite() && max_px.is_sign_positive() {
+        return s.to_string();
+    }
+    if max_px.is_nan() || max_px <= 0.0 {
+        return "…".to_string();
+    }
+    let total = measure_with(s, size, em);
     if total <= max_px {
         return s.to_string();
     }
-    let budget = max_px - em('…') * size;
-    let mut used = 0.0;
+    let ellipsis_px = em('…') * size;
+    let budget = max_px - ellipsis_px;
+    if budget <= 0.0 {
+        return "…".to_string();
+    }
+    let mut used = 0.0f32;
     let mut out = String::new();
-    for c in s.chars() {
-        let w = em(c) * size;
+    let mut rest = s;
+    while !rest.is_empty() {
+        let (cluster, next) = next_grapheme(rest);
+        let w = cluster_em(cluster, em) * size;
         if used + w > budget {
             break;
         }
         used += w;
-        out.push(c);
+        out.push_str(cluster);
+        rest = next;
     }
-    let trimmed = out
-        .trim_end()
-        .trim_end_matches(['·', '-', '/', '→', ','])
-        .trim_end();
-    format!("{trimmed}…")
+    let mut trimmed = trim_dangling_suffix(&out);
+    let mut result = format!("{trimmed}…");
+    if max_px >= ellipsis_px {
+        while measure_with(&result, size, em) > max_px && !trimmed.is_empty() {
+            let prev_end = last_grapheme_start(trimmed);
+            trimmed = trim_dangling_suffix(&trimmed[..prev_end]);
+            result = format!("{trimmed}…");
+        }
+    }
+    result
 }
 
 /// Estimated rendered width of `s` in the proportional UI font.
 pub fn text_width(s: &str, size: f32) -> f32 {
-    s.chars().map(sans_em).sum::<f32>() * size
+    if !size.is_finite() || size <= 0.0 {
+        return 0.0;
+    }
+    measure_with(s, size, sans_em)
 }
 
 /// Ellipsize `s` so it fits `max_px` at `size` in the proportional UI font.
@@ -276,5 +463,43 @@ mod tests {
         assert!(!out.contains("→…"), "{out}");
         assert_eq!(fit_mono("abcdefghij", 34.0, 10.0), "abcde…");
         assert_eq!(fit_mono("abc", 0.0, 10.0), "…");
+    }
+
+    #[test]
+    fn fit_width_preserves_grapheme_clusters_and_handles_edge_budgets() {
+        // Flag emoji pair is never split into a half-flag regional indicator.
+        let flag = "🇭🇰🇺🇸🇯🇵";
+        let out = fit_width(flag, 35.0, 14.0);
+        assert!(out.ends_with('…'), "{out}");
+        let prefix = out.trim_end_matches('…');
+        assert_eq!(prefix.chars().count() % 2, 0, "split flag pair in {out:?}");
+
+        // ZWJ emoji sequence stays intact or drops cleanly without dangling ZWJ.
+        let family = "👨‍👩‍👧 Family Node";
+        let out_zwj = fit_width(family, 28.0, 14.0);
+        assert!(!out_zwj.contains('\u{200D}') || out_zwj.starts_with("👨‍👩‍👧"));
+
+        // Combining accents stay attached to their base letter.
+        let accented = "Cafe\u{0301} Express";
+        let out_acc = fit_width(accented, 42.0, 14.0);
+        assert!(out_acc.starts_with("Cafe\u{0301}") || !out_acc.ends_with('\u{0301}'));
+
+        // Multiple chained separators never dangle.
+        let chained = "Hong Kong · - Premium";
+        let out_sep = fit_width(chained, 78.0, 14.0);
+        assert!(
+            !out_sep.ends_with("·…") && !out_sep.ends_with("-…"),
+            "{out_sep}"
+        );
+
+        // Degenerate inputs never panic or overshoot.
+        assert_eq!(fit_width("", 0.0, 14.0), "");
+        assert_eq!(fit_width("abc", -10.0, 14.0), "…");
+        assert_eq!(fit_width("abc", f32::NAN, 14.0), "…");
+        assert_eq!(fit_width("abc", f32::INFINITY, 14.0), "abc");
+        assert_eq!(text_width("abc", -5.0), 0.0);
+
+        // Zero-width markers add zero advance width.
+        assert_eq!(text_width("a\u{200B}b", 14.0), text_width("ab", 14.0));
     }
 }

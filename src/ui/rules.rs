@@ -80,6 +80,7 @@ pub fn render<'a>(
             direct_input,
             direct_lists,
             !is_compact && direct_rows < proxy_rows,
+            is_compact,
             item_px,
             lang,
             theme,
@@ -89,6 +90,7 @@ pub fn render<'a>(
             proxy_input,
             proxy_lists,
             !is_compact && proxy_rows < direct_rows,
+            is_compact,
             item_px,
             lang,
             theme,
@@ -114,11 +116,13 @@ pub fn render<'a>(
 
 /// One target (direct or proxy): a single input that accepts domains and IP
 /// ranges alike, over every rule it holds, each tagged with its kind.
+#[allow(clippy::too_many_arguments)]
 fn rule_card<'a>(
     target: RuleTarget,
     input_value: &'a str,
     lists: [(RuleField, &'a [String]); 2],
     stretch: bool,
+    is_compact: bool,
     item_px: f32,
     lang: Language,
     theme: &iced::Theme,
@@ -293,10 +297,31 @@ fn rule_card<'a>(
 
     let mut card = container(card_items)
         .padding(theme::CARD_PAD)
-        .width(Length::FillPortion(1))
+        .width(if is_compact {
+            Length::Fill
+        } else {
+            Length::FillPortion(1)
+        })
         .style(theme::card_bg);
     if stretch {
         card = card.height(Length::Fill);
     }
     card.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::GuiConfig;
+
+    #[test]
+    fn rules_render_handles_empty_and_populated_lists() {
+        let mut cfg = GuiConfig::default();
+        let _ = render(&cfg, "", "", &iced::Theme::Light);
+        cfg.language = Language::Zh;
+        cfg.custom_bypass_domains
+            .push("very-long-domain.example.internal".into());
+        cfg.custom_proxy_ips.push("1.1.1.1/32".into());
+        let _ = render(&cfg, "example.com", "invalid/ip", &iced::Theme::Dark);
+    }
 }

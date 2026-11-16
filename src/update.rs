@@ -14,17 +14,10 @@ struct ParsedVersion {
     pre: Option<(PreReleaseKind, Vec<u64>, String)>,
 }
 
-#[allow(dead_code)]
-fn extract_trailing_number(s: &str) -> u64 {
-    let mut num_str = String::new();
-    for c in s.chars().rev() {
-        if c.is_ascii_digit() {
-            num_str.insert(0, c);
-        } else {
-            break;
-        }
-    }
-    num_str.parse::<u64>().unwrap_or(0)
+fn normalize_pre_label(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| !c.is_ascii_digit() && !matches!(c, '.' | '-' | '_'))
+        .collect()
 }
 
 fn parse_pre_release(suffix: &str) -> (PreReleaseKind, Vec<u64>, String) {
@@ -52,37 +45,48 @@ fn parse_pre_release(suffix: &str) -> (PreReleaseKind, Vec<u64>, String) {
         if ch.is_ascii_digit() {
             cur.push(ch);
         } else if !cur.is_empty() {
-            if let Ok(v) = cur.parse::<u64>() {
-                nums.push(v);
-            }
+            nums.push(cur.parse::<u64>().unwrap_or(u64::MAX));
             cur.clear();
         }
     }
-    if !cur.is_empty()
-        && let Ok(v) = cur.parse::<u64>()
-    {
-        nums.push(v);
+    if !cur.is_empty() {
+        nums.push(cur.parse::<u64>().unwrap_or(u64::MAX));
     }
     if nums.is_empty() {
         nums.push(0);
     }
 
-    (kind, nums, lower)
+    (kind, nums, normalize_pre_label(&lower))
 }
 
 fn parse_version(tag: &str) -> Option<ParsedVersion> {
-    let normalized = tag.trim().trim_start_matches(['v', 'V']);
-    let without_build = normalized.split('+').next().unwrap_or(normalized);
+    let trimmed = tag.trim();
+    let normalized = trimmed.strip_prefix(['v', 'V']).unwrap_or(trimmed);
+    let without_build = match normalized.split_once('+') {
+        Some((prefix, build)) => {
+            if build.trim().is_empty() {
+                return None;
+            }
+            prefix
+        }
+        None => normalized,
+    };
     let (core_str, revision, pre_str) = match without_build.split_once('-') {
         Some((core, suffix)) => {
+            if suffix.trim().is_empty() {
+                return None;
+            }
             if let Some((rev_part, rest)) = suffix.split_once('-') {
                 if !rev_part.is_empty() && rev_part.chars().all(|c| c.is_ascii_digit()) {
-                    (core, rev_part.parse::<u64>().unwrap_or(0), Some(rest))
+                    if rest.trim().is_empty() {
+                        return None;
+                    }
+                    (core, rev_part.parse::<u64>().ok()?, Some(rest))
                 } else {
                     (core, 0, Some(suffix))
                 }
-            } else if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
-                (core, suffix.parse::<u64>().unwrap_or(0), None)
+            } else if suffix.chars().all(|c| c.is_ascii_digit()) {
+                (core, suffix.parse::<u64>().ok()?, None)
             } else {
                 (core, 0, Some(suffix))
             }
@@ -96,9 +100,10 @@ fn parse_version(tag: &str) -> Option<ParsedVersion> {
 
     let mut core = Vec::new();
     for part in core_str.split('.') {
-        let Ok(num) = part.parse::<u64>() else {
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
             return None;
-        };
+        }
+        let num = part.parse::<u64>().ok()?;
         core.push(num);
     }
     if core.is_empty() {
@@ -134,11 +139,7 @@ pub fn normalize_version_tag(tag: &str) -> Vec<u64> {
     let mut result = parsed.core;
     result.push(parsed.revision);
     if let Some((_, nums, _)) = parsed.pre {
-        result.push(
-            nums.last()
-                .copied()
-                .unwrap_or_else(|| extract_trailing_number(tag)),
-        );
+        result.push(nums.last().copied().unwrap_or(0));
     }
     result
 }
@@ -308,5 +309,37 @@ mod tests {
         assert!(!is_remote_version_newer("2026.7.13-1", "2026.7.13-1-rc.1"));
         assert!(is_remote_version_newer("2026.7.13", "2026.7.13-1-alpha.1"));
         assert!(!is_remote_version_newer("1.0.x", "1.0.1"));
+    }
+
+    #[test]
+    fn malformed_suffixes_and_equivalent_prerelease_separators() {
+        // Malformed empty pre-release / build suffixes / double v prefix must fail closed.
+        assert_eq!(normalize_version_tag("1.0.0-"), Vec::<u64>::new());
+        assert_eq!(normalize_version_tag("1.0.0-1-"), Vec::<u64>::new());
+        assert_eq!(normalize_version_tag("1.0.0- "), Vec::<u64>::new());
+        assert_eq!(normalize_version_tag("1.0.0+"), Vec::<u64>::new());
+        assert_eq!(normalize_version_tag("vv1.0.0"), Vec::<u64>::new());
+        assert!(!is_remote_version_newer("1.0.0-", "1.0.0"));
+        assert!(!is_remote_version_newer("1.0.0", "vv2.0.0"));
+
+        // Equivalent pre-release punctuation or zero-padding must not trigger false upgrades.
+        assert!(!is_remote_version_newer("1.0.0-rc.1", "1.0.0-rc1"));
+        assert!(!is_remote_version_newer("1.0.0-rc1", "1.0.0-rc.1"));
+        assert!(!is_remote_version_newer("1.0.0-alpha-1", "1.0.0-alpha.1"));
+        assert!(!is_remote_version_newer("1.0.0-rc01", "1.0.0-rc1"));
+
+        // Multi-segment numeric pre-releases and huge numeric runs.
+        assert!(is_remote_version_newer(
+            "1.0.0-alpha.1.2",
+            "1.0.0-alpha.1.10"
+        ));
+        assert!(!is_remote_version_newer(
+            "1.0.0-alpha.1.10",
+            "1.0.0-alpha.1.2"
+        ));
+        assert!(is_remote_version_newer(
+            "1.0.0-dev.1",
+            "1.0.0-dev.99999999999999999999999"
+        ));
     }
 }

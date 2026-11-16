@@ -433,9 +433,11 @@ pub fn render<'a>(
                     let mut name_row = row![
                         text(fit_width(
                             &profile.name,
-                            info_w - if is_active { 100.0 } else { 0.0 },
+                            (info_w - if is_active { 100.0 } else { 0.0 }).max(40.0),
                             theme::TYPE_HEADING * SEMIBOLD_WIDTH,
                         ))
+                        .shaping(text::Shaping::Advanced)
+                        .wrapping(text::Wrapping::None)
                         .color(text_primary)
                         .size(theme::TYPE_HEADING)
                         .font(theme::ui_font(iced::font::Weight::Semibold))
@@ -510,32 +512,12 @@ pub fn render<'a>(
                 card_elements.push(container(profile_card).width(Length::Fill).into());
             }
 
-            // Calculate columns based on width
             // Profiles are operational records, not promotional cards. A
             // single aligned list scans faster and avoids a dashboard mosaic.
-            let cols = 1;
-
-            let mut grid_rows = Column::new().spacing(theme::GRID_GAP);
-            let mut current_row = iced::widget::Row::new().spacing(theme::GRID_GAP);
-            let total_cards = card_elements.len();
-
-            for (i, card) in card_elements.into_iter().enumerate() {
-                current_row = current_row.push(container(card).width(Length::FillPortion(1)));
-                if (i + 1) % cols == 0 {
-                    grid_rows = grid_rows.push(current_row);
-                    current_row = iced::widget::Row::new().spacing(theme::GRID_GAP);
-                }
-            }
-
-            let remaining_elements = total_cards % cols;
-            if remaining_elements > 0 {
-                for _ in remaining_elements..cols {
-                    current_row =
-                        current_row.push(container(text("")).width(Length::FillPortion(1)));
-                }
-                grid_rows = grid_rows.push(current_row);
-            }
-            grid_rows.into()
+            Column::with_children(card_elements)
+                .spacing(theme::GRID_GAP)
+                .width(Length::Fill)
+                .into()
         };
 
         let mut main_layout_col = column![add_form,]
@@ -600,6 +582,27 @@ pub fn mask_sensitive_url(url: &str) -> String {
     if has_password {
         let _ = parsed.set_password(Some("******"));
     }
+    // Proxy share links (trojan://password@host, vless://uuid@host, etc.) store
+    // their secret in `username` without a `:` password separator.
+    let is_proxy_share_scheme = matches!(
+        parsed.scheme(),
+        "vless"
+            | "vmess"
+            | "trojan"
+            | "ss"
+            | "shadowsocks"
+            | "hy2"
+            | "hysteria"
+            | "hysteria2"
+            | "tuic"
+            | "socks"
+            | "socks5"
+            | "socks4"
+    );
+    let masked_username = is_proxy_share_scheme && !parsed.username().is_empty() && !has_password;
+    if masked_username {
+        let _ = parsed.set_username("******");
+    }
     let mut query_changed = false;
     let query_pairs: Vec<(String, String)> = parsed
         .query_pairs()
@@ -624,7 +627,7 @@ pub fn mask_sensitive_url(url: &str) -> String {
     {
         parsed.set_fragment(Some("******"));
     }
-    if has_password || query_changed || parsed.fragment() == Some("******") {
+    if has_password || masked_username || query_changed || parsed.fragment() == Some("******") {
         return parsed.to_string();
     }
     url.to_string()
@@ -658,6 +661,17 @@ mod tests {
         assert!(masked.contains("user:******@example.com"));
         assert!(masked.contains("token=******"));
         assert!(masked.contains("name=a+b") || masked.contains("name=a%20b"));
+
+        let vless = mask_sensitive_url(
+            "vless://11111111-1111-1111-1111-111111111111@node.example:443?api-key=secretkey#HK",
+        );
+        assert!(!vless.contains("11111111-1111"), "vless={vless}");
+        assert!(vless.contains("******@node.example:443"), "vless={vless}");
+        assert!(vless.contains("api-key=******"), "vless={vless}");
+
+        let trojan = mask_sensitive_url("trojan://super-secret-pass@node.example:443#JP");
+        assert!(!trojan.contains("super-secret-pass"), "trojan={trojan}");
+        assert!(trojan.contains("******@node.example:443"));
     }
 
     /// Structural: shipped profiles UI source must not use bare numeric text sizes

@@ -39,6 +39,8 @@ pub enum Message {
         node: String,
     },
     GroupNodeSelected {
+        generation: u64,
+        profile_id: Option<String>,
         group: String,
         node: String,
         error: Option<String>,
@@ -54,7 +56,10 @@ pub enum Message {
         field: RuleField,
         index: usize,
     },
-    ProxiesFetched(Result<std::collections::HashMap<String, crate::api::ProxyInfo>, String>),
+    ProxiesFetched {
+        generation: u64,
+        result: Result<std::collections::HashMap<String, crate::api::ProxyInfo>, String>,
+    },
     ToggleCore,
     NewLogBatch(Vec<String>),
     TrafficUpdated {
@@ -77,9 +82,11 @@ pub enum Message {
         is_subscription: bool,
         ignored_settings: Vec<&'static str>,
         from_auto_update: bool,
+        is_update: bool,
     },
     SelectProfile(String),
     ActiveNodesLoaded {
+        generation: u64,
         profile_id: String,
         is_native_json: bool,
         ignored_settings: Vec<&'static str>,
@@ -97,6 +104,8 @@ pub enum Message {
     AutoUpdateDue(Vec<String>),
     SelectNode(String),
     NodeSelected {
+        generation: u64,
+        profile_id: Option<String>,
         tag: String,
         error: Option<String>,
     },
@@ -123,17 +132,27 @@ pub enum Message {
     SystemThemeDetected(bool),
     RoutingModeChanged(RoutingMode),
     ModeSet {
+        generation: u64,
         mode: RoutingMode,
         result: Result<(), String>,
     },
     SaveSettings,
     DiscardSettings,
     FetchConnections,
-    ConnectionsFetched(Result<crate::api::ConnectionsResponse, String>),
+    ConnectionsFetched {
+        generation: u64,
+        result: Result<crate::api::ConnectionsResponse, String>,
+    },
     CloseConnection(String),
-    ConnectionClosed(Result<String, String>),
+    ConnectionClosed {
+        generation: u64,
+        result: Result<String, String>,
+    },
     CloseAllConnections,
-    AllConnectionsClosed(Result<(), String>),
+    AllConnectionsClosed {
+        generation: u64,
+        result: Result<(), String>,
+    },
     TrayIconClicked,
     #[cfg(target_os = "linux")]
     TrayUnavailable,
@@ -186,7 +205,10 @@ pub enum Message {
     ToggleAutoSysProxy,
     CheckUpdate,
     /// Result of GitHub latest-release check (tag + optional platform asset URL).
-    UpdateChecked(Result<AppUpdateInfo, String>),
+    UpdateChecked {
+        generation: u64,
+        result: Result<AppUpdateInfo, String>,
+    },
     /// User (or auto-flow) requested download + install of a release asset.
     DownloadAppUpdate {
         tag: String,
@@ -218,7 +240,10 @@ pub enum Message {
     ToggleConfigPreview,
     CopyConfigPreview,
     /// Async result of `generate_preview_config` (runs off the UI thread).
-    ConfigPreviewGenerated(String),
+    ConfigPreviewGenerated {
+        generation: u64,
+        text: String,
+    },
     ToggleProfileMore(String),
     ToggleShowAllProxies,
     CoreLivenessChecked(bool),

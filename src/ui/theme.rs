@@ -154,7 +154,7 @@ pub const WARNING: Color = Color::from_rgb8(0xD3, 0x95, 0x2A);
 pub const DANGER: Color = Color::from_rgb8(0xB4, 0x3A, 0x2E);
 pub const DANGER_HOVER: Color = Color::from_rgb8(0xA6, 0x33, 0x28);
 pub const DANGER_PRESSED: Color = Color::from_rgb8(0x93, 0x2C, 0x23);
-pub const DANGER_DISABLED: Color = Color::from_rgb8(0x6A, 0x3B, 0x36);
+pub const DANGER_DISABLED: Color = Color::from_rgb8(0x5A, 0x2F, 0x2B);
 
 /// Map proxy protocol to a distinct, muted hue for visual scanning. Tones sit
 /// at mid luminance so the same hue reads on paper and ink once tinted.
@@ -178,53 +178,191 @@ pub fn protocol_color(node_type: &str) -> Color {
 /// in "business", "de" in "node", or "in" in "direct" are not locations).
 pub fn detect_region_code(name: &str) -> Option<&'static str> {
     let lower = name.to_lowercase();
-    let tokens: Vec<_> = lower
-        .split(|c: char| !c.is_ascii_alphabetic())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let tokens: Vec<(usize, &str)> = {
+        let mut out = Vec::new();
+        let bytes = name.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i].is_ascii_alphabetic() {
+                let start = i;
+                while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                out.push((start, &name[start..i]));
+            } else {
+                i += 1;
+            }
+        }
+        out
+    };
     if lower.contains("自动")
         || lower.contains("直连")
-        || tokens.iter().any(|t| matches!(*t, "auto" | "direct"))
+        || tokens
+            .iter()
+            .any(|(_, t)| t.eq_ignore_ascii_case("auto") || t.eq_ignore_ascii_case("direct"))
     {
         return None;
     }
-    for (code, flag, keywords) in [
-        ("HK", "🇭🇰", &["香港", "hongkong", "hong kong"][..]),
-        ("JP", "🇯🇵", &["日本", "japan", "tokyo", "osaka"][..]),
+
+    const REGIONS: &[(&str, &str, &[&str])] = &[
+        ("HK", "🇭🇰", &["香港", "hongkong", "hong kong"]),
+        (
+            "JP",
+            "🇯🇵",
+            &["日本", "japan", "tokyo", "東京", "osaka", "大阪", "名古屋"],
+        ),
         (
             "US",
             "🇺🇸",
             &[
                 "美国",
+                "美國",
                 "united states",
                 "america",
                 "los angeles",
+                "洛杉矶",
+                "洛杉磯",
                 "san jose",
-            ][..],
+                "圣何塞",
+                "聖何塞",
+                "new york",
+                "纽约",
+                "紐約",
+                "seattle",
+                "西雅图",
+                "西雅圖",
+                "san francisco",
+                "silicon valley",
+                "chicago",
+                "dallas",
+                "usa",
+            ],
         ),
-        ("SG", "🇸🇬", &["新加坡", "singapore", "狮城"][..]),
-        ("TW", "🇹🇼", &["台湾", "taiwan", "台北"][..]),
-        ("KR", "🇰🇷", &["韩国", "korea", "首尔", "seoul"][..]),
-        ("DE", "🇩🇪", &["德国", "germany", "frankfurt"][..]),
+        (
+            "SG",
+            "🇸🇬",
+            &["新加坡", "singapore", "狮城", "獅城", "坡县", "坡縣"],
+        ),
+        (
+            "TW",
+            "🇹🇼",
+            &["台湾", "台灣", "taiwan", "台北", "臺北", "新北", "高雄"],
+        ),
+        (
+            "KR",
+            "🇰🇷",
+            &["韩国", "韓國", "korea", "首尔", "首爾", "seoul"],
+        ),
+        (
+            "DE",
+            "🇩🇪",
+            &[
+                "德国",
+                "德國",
+                "germany",
+                "frankfurt",
+                "法兰克福",
+                "法蘭克福",
+            ],
+        ),
         (
             "GB",
             "🇬🇧",
-            &["英国", "britain", "united kingdom", "london"][..],
+            &[
+                "英国",
+                "英國",
+                "britain",
+                "united kingdom",
+                "london",
+                "伦敦",
+                "倫敦",
+            ],
         ),
-        ("CA", "🇨🇦", &["加拿大", "canada", "toronto"][..]),
-        ("AU", "🇦🇺", &["澳大利亚", "australia", "sydney"][..]),
-        ("RU", "🇷🇺", &["俄罗斯", "russia", "moscow"][..]),
-        ("FR", "🇫🇷", &["法国", "france", "paris"][..]),
-        ("NL", "🇳🇱", &["荷兰", "netherlands", "amsterdam"][..]),
-        ("TR", "🇹🇷", &["土耳其", "turkey", "istanbul"][..]),
-        ("IN", "🇮🇳", &["印度", "india"][..]),
-    ] {
-        if name.contains(flag)
-            || keywords.iter().any(|keyword| lower.contains(keyword))
-            || tokens
-                .iter()
-                .any(|token| token.eq_ignore_ascii_case(code) || (code == "GB" && *token == "uk"))
-        {
+        (
+            "CA",
+            "🇨🇦",
+            &[
+                "加拿大",
+                "canada",
+                "toronto",
+                "多伦多",
+                "多倫多",
+                "vancouver",
+                "温哥华",
+                "溫哥華",
+            ],
+        ),
+        (
+            "AU",
+            "🇦🇺",
+            &[
+                "澳大利亚",
+                "澳大利亞",
+                "澳洲",
+                "australia",
+                "sydney",
+                "悉尼",
+                "雪梨",
+                "melbourne",
+                "墨尔本",
+                "墨爾本",
+            ],
+        ),
+        (
+            "RU",
+            "🇷🇺",
+            &["俄罗斯", "俄羅斯", "russia", "moscow", "莫斯科"],
+        ),
+        ("FR", "🇫🇷", &["法国", "法國", "france", "paris", "巴黎"]),
+        (
+            "NL",
+            "🇳🇱",
+            &["荷兰", "荷蘭", "netherlands", "amsterdam", "阿姆斯特丹"],
+        ),
+        (
+            "TR",
+            "🇹🇷",
+            &["土耳其", "turkey", "istanbul", "伊斯坦布尔", "伊斯坦堡"],
+        ),
+        (
+            "ID",
+            "🇮🇩",
+            &["印度尼西亚", "印度尼西亞", "印尼", "indonesia", "jakarta"],
+        ),
+        (
+            "IN",
+            "🇮🇳",
+            &["印度", "india", "mumbai", "bangalore", "new delhi"],
+        ),
+    ];
+
+    // Explicit flag emoji takes priority over secondary keywords in relay names.
+    for &(code, flag, _) in REGIONS {
+        if name.contains(flag) {
+            return Some(code);
+        }
+    }
+
+    for &(code, _, keywords) in REGIONS {
+        if keywords.iter().any(|keyword| lower.contains(keyword)) {
+            return Some(code);
+        }
+        // Avoid false positives: "ID" is too ambiguous in English ("ID"), "in"
+        // is an English preposition unless uppercase "IN", and "100GB" is a
+        // data cap rather than Great Britain.
+        if code == "ID" {
+            continue;
+        }
+        let token_hit = tokens.iter().any(|&(start, token)| {
+            if code == "IN" {
+                return token == "IN";
+            }
+            if code == "GB" && start > 0 && name.as_bytes()[start - 1].is_ascii_digit() {
+                return false;
+            }
+            token.eq_ignore_ascii_case(code) || (code == "GB" && token.eq_ignore_ascii_case("uk"))
+        });
+        if token_hit {
             return Some(code);
         }
     }
@@ -676,7 +814,7 @@ pub fn button_primary(theme: &iced::Theme, status: button::Status) -> button::St
             button::Status::Pressed => (ACCENT_BRIGHT_PRESSED, ACCENT_INK),
             button::Status::Disabled => (
                 mix(CARD_DARK, ACCENT_BRIGHT, 0.22),
-                with_alpha(TEXT_PRIMARY_DARK, 0.45),
+                with_alpha(TEXT_PRIMARY_DARK, 0.65),
             ),
             button::Status::Active => (ACCENT_BRIGHT, ACCENT_INK),
         }
@@ -685,8 +823,8 @@ pub fn button_primary(theme: &iced::Theme, status: button::Status) -> button::St
             button::Status::Hovered => (ACCENT_HOVER, Color::WHITE),
             button::Status::Pressed => (ACCENT_PRESSED, Color::WHITE),
             button::Status::Disabled => (
-                mix(CARD_LIGHT_BG, ACCENT, 0.35),
-                with_alpha(Color::WHITE, 0.85),
+                mix(CARD_LIGHT_BG, ACCENT, 0.14),
+                with_alpha(TEXT_MUTED_LIGHT, 0.92),
             ),
             button::Status::Active => (ACCENT, Color::WHITE),
         }
@@ -770,7 +908,7 @@ pub fn button_danger(_theme: &iced::Theme, status: button::Status) -> button::St
     button::Style {
         background: Some(Background::Color(bg)),
         text_color: if matches!(status, button::Status::Disabled) {
-            with_alpha(Color::WHITE, 0.6)
+            with_alpha(Color::WHITE, 0.72)
         } else {
             Color::WHITE
         },
@@ -1139,7 +1277,7 @@ pub fn input_field(theme: &iced::Theme, status: text_input::Status) -> text_inpu
         placeholder: mix(
             input_surface(theme),
             text_tertiary(theme),
-            if dark { 0.62 } else { 0.66 },
+            if dark { 0.88 } else { 0.94 },
         ),
         selection: with_alpha(accent(theme), 0.28),
         icon: text_muted(theme),
@@ -1357,6 +1495,10 @@ mod tests {
         (hi + 0.05) / (lo + 0.05)
     }
 
+    fn composite_over(base: Color, fg: Color) -> Color {
+        mix(base, fg, fg.a)
+    }
+
     #[test]
     fn semantic_text_is_readable_in_both_themes() {
         for theme in [iced::Theme::Light, iced::Theme::Dark] {
@@ -1364,6 +1506,7 @@ mod tests {
                 button::Status::Active,
                 button::Status::Hovered,
                 button::Status::Pressed,
+                button::Status::Disabled,
             ] {
                 for style in [
                     button_primary(&theme, status),
@@ -1371,17 +1514,40 @@ mod tests {
                     button_secondary(&theme, status),
                 ] {
                     if let Some(Background::Color(fill)) = style.background {
+                        let effective_fg = composite_over(fill, style.text_color);
                         assert!(
-                            contrast_ratio(style.text_color, fill) >= 4.5,
-                            "button text {:?} on {fill:?}",
-                            style.text_color
+                            contrast_ratio(effective_fg, fill) >= 4.5,
+                            "button text {:?} (effective {:?}) on {fill:?} ({status:?})",
+                            style.text_color,
+                            effective_fg
                         );
                     }
                 }
-                let power = power_button(true)(&theme, status);
-                if let Some(Background::Color(fill)) = power.background {
-                    assert!(contrast_ratio(power.text_color, fill) >= 4.5);
+                for running in [true, false] {
+                    let power = power_button(running)(&theme, status);
+                    if let Some(Background::Color(fill)) = power.background {
+                        let effective_fg = composite_over(fill, power.text_color);
+                        assert!(
+                            contrast_ratio(effective_fg, fill) >= 4.5,
+                            "power button ({running}, {status:?}) unreadable"
+                        );
+                    }
                 }
+            }
+            let input_s = input_field(&theme, text_input::Status::Active);
+            if let Background::Color(fill) = input_s.background {
+                assert!(
+                    contrast_ratio(input_s.placeholder, fill) >= 4.5,
+                    "input placeholder unreadable on {theme:?}"
+                );
+            }
+            let nav_active = nav_item(true)(&theme, button::Status::Active);
+            if let Some(Background::Color(overlay)) = nav_active.background {
+                let effective_bg = composite_over(sidebar_surface(&theme), overlay);
+                assert!(
+                    contrast_ratio(nav_active.text_color, effective_bg) >= 4.5,
+                    "active nav item unreadable on {theme:?}"
+                );
             }
             for color in [
                 text_primary(&theme),
@@ -1396,6 +1562,7 @@ mod tests {
                 for surface in [
                     bg(&theme),
                     card_surface(&theme),
+                    elevated_surface(&theme),
                     console_surface(&theme),
                     sidebar_surface(&theme),
                     input_surface(&theme),
@@ -1455,16 +1622,29 @@ mod tests {
             "business",
             "Auto",
             "自动选择",
+            "Auto - 香港",
             "DIRECT",
             "direct connection",
             "premium",
             "reliable",
+            "Node in Europe",
+            "Traffic 100GB",
+            "Relay 50gb Plan",
+            "User ID Check",
         ] {
             assert_eq!(detect_region_code(name), None, "{name}");
         }
         assert_eq!(detect_region_code("HK-01"), Some("HK"));
         assert_eq!(detect_region_code("US 02 / Premium"), Some("US"));
         assert_eq!(detect_region_code("🇯🇵 東京 JP"), Some("JP"));
+        assert_eq!(detect_region_code("東京 01"), Some("JP"));
+        assert_eq!(detect_region_code("台灣 臺北 01"), Some("TW"));
+        assert_eq!(detect_region_code("GB-01"), Some("GB"));
+        assert_eq!(detect_region_code("UK London"), Some("GB"));
+        assert_eq!(detect_region_code("IN-Mumbai-01"), Some("IN"));
+        assert_eq!(detect_region_code("印度尼西亚 01"), Some("ID"));
+        assert_eq!(detect_region_code("Indonesia Jakarta"), Some("ID"));
+        assert_eq!(detect_region_code("🇺🇸 Relay via HK"), Some("US"));
     }
 
     #[test]

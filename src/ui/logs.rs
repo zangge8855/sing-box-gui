@@ -17,7 +17,7 @@ pub fn get_logs_scrollable_id() -> &'static iced::widget::Id {
 }
 
 /// Below this page width the toolbar stacks under the title.
-const LOGS_TOOLBAR_INLINE_W: f32 = 840.0;
+const LOGS_TOOLBAR_INLINE_W: f32 = 870.0;
 /// Below this the second toolbar row wraps instead of pushing the actions right.
 const LOGS_TOOLBAR_SPREAD_W: f32 = 640.0;
 
@@ -399,5 +399,15 @@ mod tests {
         // The level tag beats message keywords, and GUI notices have none.
         assert_eq!(level_token("14:30 INFO retry after error").unwrap().1, 1);
         assert!(level_token("[GUI] Failed to remove staged update").is_none());
+
+        // Consecutive spaces keep byte indices UTF-8 aligned.
+        let spaced = "2026  ERROR 香港超时";
+        let (range, severity) = level_token(spaced).unwrap();
+        assert_eq!(&spaced[range], "ERROR");
+        assert_eq!(severity, 3);
+        assert_eq!(keyword_severity("FAILED TO CONNECT"), 3);
+        assert_eq!(keyword_severity("WARNING: SLOW"), 2);
+        assert_eq!(keyword_severity("INFO: OK"), 1);
+        assert_eq!(keyword_severity("TRACE"), 0);
     }
 }

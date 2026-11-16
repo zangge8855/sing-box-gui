@@ -145,6 +145,25 @@ mod tests {
         let icon = iced::window::icon::from_file_data(bytes, None);
         assert!(icon.is_ok(), "Failed to load icon: {:?}", icon.err());
     }
+
+    #[test]
+    fn usage_bar_portions_cover_all_edge_ratios() {
+        assert_eq!(usage_bar_portions(0.0), (0, 1000));
+        assert_eq!(usage_bar_portions(-0.5), (0, 1000));
+        assert_eq!(usage_bar_portions(f32::NAN), (0, 1000));
+        assert_eq!(usage_bar_portions(0.5), (500, 500));
+        assert_eq!(usage_bar_portions(0.0001), (1, 999));
+        assert_eq!(usage_bar_portions(0.9999), (999, 1));
+        assert_eq!(usage_bar_portions(1.0), (1000, 0));
+        assert_eq!(usage_bar_portions(2.0), (1000, 0));
+    }
+
+    #[test]
+    fn page_content_width_stays_non_negative_on_narrow_and_capped_widths() {
+        assert_eq!(page_content_width(0.0, true), 0.0);
+        assert_eq!(page_content_width(575.0, true), 543.0);
+        assert_eq!(page_content_width(2000.0, false), PAGE_MAX_WIDTH - 48.0);
+    }
 }
 
 // ── Spacing scale ────────────────────────────────────────────────────────────
@@ -440,8 +459,29 @@ pub fn loading_row_animated<'a>(
     .into()
 }
 
+fn usage_bar_portions(ratio: f32) -> (u16, u16) {
+    let clamped = if ratio.is_finite() {
+        ratio.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    if clamped <= 0.0 {
+        (0, 1000)
+    } else if clamped >= 1.0 {
+        (1000, 0)
+    } else {
+        let filled = ((clamped * 1000.0).round() as u16).clamp(1, 999);
+        (filled, 1000 - filled)
+    }
+}
+
 /// Thin subscription usage meter: jade until 75%, amber to 90%, then red.
 pub fn usage_bar<'a>(ratio: f32, theme: &iced::Theme) -> Element<'a, Message> {
+    let ratio = if ratio.is_finite() {
+        ratio.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let fill = if ratio >= 0.9 {
         ui_theme::DANGER
     } else if ratio >= 0.75 {
@@ -449,9 +489,9 @@ pub fn usage_bar<'a>(ratio: f32, theme: &iced::Theme) -> Element<'a, Message> {
     } else {
         ui_theme::accent(theme)
     };
-    let segment = |portion: f32, color: Option<iced::Color>| {
+    let segment = |portion: u16, color: Option<iced::Color>| {
         container(Space::new())
-            .width(Length::FillPortion((portion * 1000.0).max(1.0) as u16))
+            .width(Length::FillPortion(portion))
             .height(4.0)
             .style(move |_| container::Style {
                 background: color.map(iced::Background::Color),
@@ -462,7 +502,15 @@ pub fn usage_bar<'a>(ratio: f32, theme: &iced::Theme) -> Element<'a, Message> {
                 ..Default::default()
             })
     };
-    container(row![segment(ratio, Some(fill)), segment(1.0 - ratio, None)].width(Length::Fill))
+    let (filled, rest) = usage_bar_portions(ratio);
+    let mut track = row![].width(Length::Fill);
+    if filled > 0 {
+        track = track.push(segment(filled, Some(fill)));
+    }
+    if rest > 0 {
+        track = track.push(segment(rest, None));
+    }
+    container(track)
         .width(Length::Fill)
         .style(|t| container::Style {
             background: Some(iced::Background::Color(ui_theme::border_color(t))),

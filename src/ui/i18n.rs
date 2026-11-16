@@ -1031,6 +1031,10 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
     ),
     // Core lifecycle
     ("Core not installed", "内核未安装"),
+    (
+        "sing-box core not found! Please download it or specify correct path in Settings.",
+        "未找到 sing-box 内核！请先下载或在设置中指定正确路径。",
+    ),
     ("Core startup cancelled", "已取消启动内核"),
     ("Exit code", "退出码"),
     (
@@ -1042,10 +1046,20 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
     ("Configuration check failed", "配置检查未通过"),
     ("Failed to run config check", "无法运行配置检查"),
     ("Failed to run sing-box check", "无法运行 sing-box 检查"),
+    ("sing-box check failed", "sing-box 检查失败"),
     ("Failed to start process", "无法启动内核进程"),
     ("Failed to capture stdout/stderr", "无法捕获内核输出"),
+    ("Failed to poll core process", "查询内核进程状态失败"),
+    ("Failed to signal core process", "向内核进程发送信号失败"),
+    ("Failed to create JobObject", "创建进程作业对象失败"),
+    ("Failed to set JobObject info", "设置进程作业对象属性失败"),
+    (
+        "Failed to assign process to JobObject",
+        "将进程加入作业对象失败",
+    ),
     ("Failed to run core version", "无法读取内核版本"),
     ("Core version check failed", "内核版本检查失败"),
+    ("Empty version output", "内核版本输出为空"),
     ("Failed to serialize final config", "生成运行配置失败"),
     // Core download and install
     (
@@ -1068,10 +1082,22 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
         "Core release asset URL is not an official sing-box download",
         "内核下载地址不是 sing-box 官方地址",
     ),
+    (
+        "Core release asset has an invalid size",
+        "内核发布资产大小无效",
+    ),
+    (
+        "Release asset contains an invalid SHA-256 digest",
+        "发布资产包含无效的 SHA-256 摘要",
+    ),
     ("Failed to download core", "下载内核失败"),
     (
         "Downloaded core archive exceeds the 256 MiB safety limit",
         "内核压缩包超过 256 MiB 安全上限",
+    ),
+    (
+        "Downloaded core archive exceeds the expected release asset size",
+        "下载的内核压缩包超过预期的发布文件大小",
     ),
     (
         "Core download size does not match release metadata",
@@ -1079,12 +1105,48 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
     ),
     ("Core download size mismatch", "内核下载大小不符"),
     (
+        "Downloaded core binary has an invalid size",
+        "下载的内核程序大小无效",
+    ),
+    (
+        "Downloaded core binary size does not match archive entry",
+        "下载的内核程序大小与压缩包记录不符",
+    ),
+    (
         "Core archive SHA-256 verification failed",
         "内核压缩包 SHA-256 校验失败",
     ),
+    (
+        "Core archive contains ambiguous duplicate binaries",
+        "内核压缩包包含重复的可执行文件",
+    ),
     ("Invalid zip archive", "zip 压缩包无效"),
+    ("Failed to open temp zip", "打开临时 zip 文件失败"),
+    ("Failed to read zip entry", "读取 zip 条目失败"),
+    ("Failed to create staged core", "创建暂存内核文件失败"),
+    ("Failed to flush staged core", "刷新暂存内核文件缓存失败"),
+    ("Failed to open temp archive", "打开临时压缩包失败"),
+    ("Failed to inspect tar.gz", "检查 tar.gz 压缩包失败"),
+    ("Failed to read tar entry", "读取 tar 条目失败"),
+    ("Invalid tar entry path", "tar 条目路径无效"),
+    (
+        "Failed to mark staged core executable",
+        "设置暂存内核可执行权限失败",
+    ),
+    (
+        "Core destination path has no parent directory",
+        "内核目标路径没有上级目录",
+    ),
     ("Failed to extract core", "解压内核失败"),
     ("Core extraction task failed", "内核解压任务失败"),
+    (
+        "Could not find sing-box.exe inside downloaded zip package",
+        "下载的 zip 包中找不到 sing-box.exe",
+    ),
+    (
+        "Could not find sing-box inside downloaded zip package",
+        "下载的 zip 包中找不到 sing-box",
+    ),
     (
         "Could not find sing-box inside downloaded tar package",
         "下载的 tar 包中找不到 sing-box",
@@ -1099,11 +1161,23 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
     ),
     ("Failed to create bin directory", "创建内核目录失败"),
     // Clash API
+    ("Invalid Clash API port", "Clash API 端口无效"),
+    ("Proxy selector cannot be empty", "代理选择器不能为空"),
+    ("Proxy node tag cannot be empty", "代理节点标签不能为空"),
+    ("Connection ID cannot be empty", "连接 ID 不能为空"),
+    ("Routing mode cannot be empty", "路由模式不能为空"),
     ("Failed to fetch proxies", "获取节点列表失败"),
     ("Proxy API returned an error", "节点接口返回错误"),
+    ("Failed to parse proxies response", "解析节点列表响应失败"),
     ("Failed to select proxy", "切换节点失败"),
     ("Latency test request failed", "测速请求失败"),
+    ("Failed to parse delay response", "解析测速响应失败"),
     ("Failed to fetch connections", "获取连接列表失败"),
+    ("Connections API returned an error", "连接接口返回错误"),
+    (
+        "Failed to parse connections response",
+        "解析连接列表响应失败",
+    ),
     ("Failed to close connection", "关闭连接失败"),
     ("Failed to close all connections", "关闭全部连接失败"),
     ("Failed to set mode", "切换路由模式失败"),
@@ -1119,13 +1193,23 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
         "Update asset is missing a valid SHA-256 digest",
         "更新文件缺少有效的 SHA-256 摘要",
     ),
+    ("Update asset has an invalid size", "更新资产大小无效"),
+    ("Invalid update URL", "更新地址无效"),
     (
         "Update asset size does not match release metadata",
         "更新文件大小与发布信息不符",
     ),
     (
+        "Update asset exceeds its declared size limit",
+        "更新资产超过声明的大小限制",
+    ),
+    (
         "Downloaded update size does not match release metadata",
         "下载的更新大小与发布信息不符",
+    ),
+    (
+        "Downloaded update is too small to be a binary",
+        "下载的更新文件过小，不是有效程序",
     ),
     (
         "Update SHA-256 verification failed",
@@ -1135,7 +1219,26 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
         "Update URL is not an official sing-box-gui release asset",
         "更新地址不是 sing-box-gui 官方发布文件",
     ),
+    (
+        "Current executable has no parent directory",
+        "当前程序没有上级目录",
+    ),
+    ("Failed to read download body", "读取下载数据失败"),
+    ("Failed to create update file", "创建更新文件失败"),
     ("Failed to write update file", "写入更新文件失败"),
+    ("Failed to flush update file", "刷新更新文件缓存失败"),
+    ("Failed to sync update file", "同步更新文件到磁盘失败"),
+    ("Failed to stat update file", "读取更新文件信息失败"),
+    ("Failed to chmod update file", "设置更新文件权限失败"),
+    ("Failed to write update script", "写入更新脚本失败"),
+    ("Failed to stat update script", "读取更新脚本信息失败"),
+    ("Failed to chmod update script", "设置更新脚本权限失败"),
+    ("Failed to spawn update script", "启动更新脚本失败"),
+    ("Failed to build HTTP client", "构建 HTTP 客户端失败"),
+    (
+        "Failed to build direct HTTP client",
+        "构建直连 HTTP 客户端失败",
+    ),
     (
         "In-app update is not supported on this platform",
         "此平台不支持应用内更新",
@@ -1189,6 +1292,7 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
         "创建开机自启目录失败",
     ),
     ("Failed to remove autostart entry", "移除开机自启项失败"),
+    ("Failed to remove LaunchAgent", "移除 LaunchAgent 失败"),
     (
         "Failed to serialize system proxy backup",
         "序列化系统代理备份失败",
@@ -1423,6 +1527,7 @@ mod tests {
     fn literal_ui_translation_keys_resolve_in_both_languages() {
         let sources = [
             include_str!("../main.rs"),
+            include_str!("../tray.rs"),
             include_str!("dashboard.rs"),
             include_str!("profiles.rs"),
             include_str!("proxies.rs"),
@@ -1431,9 +1536,16 @@ mod tests {
             include_str!("rules.rs"),
             include_str!("settings.rs"),
             include_str!("mod.rs"),
+            include_str!("toast.rs"),
             include_str!("util.rs"),
+            include_str!("../smoke.rs"),
         ];
-        let needles = ["tr(lang, \"", "self.tr(\""];
+        let needles = [
+            "tr(lang, \"",
+            "self.tr(\"",
+            "self.tr_detail(\"",
+            "tr_detail(\"",
+        ];
         let mut checked = std::collections::BTreeSet::new();
 
         for source in sources {
@@ -1464,5 +1576,121 @@ mod tests {
         }
 
         assert!(checked.len() > 80, "translation audit scanned too few keys");
+    }
+
+    #[test]
+    fn all_en_and_zh_keys_and_placeholders_match() {
+        let src = include_str!("i18n.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("i18n source");
+        let en_block = src
+            .split("Language::En => match key {")
+            .nth(1)
+            .and_then(|s| s.split("_ => key,").next())
+            .expect("En block");
+        let zh_block = src
+            .split("Language::Zh => match key {")
+            .nth(1)
+            .and_then(|s| s.split("_ => key,").next())
+            .expect("Zh block");
+
+        let collect_keys = |block: &str| {
+            let mut keys = Vec::new();
+            for line in block.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('"')
+                    && let Some((raw_key, rest)) = trimmed[1..].split_once('"')
+                    && rest.trim_start().starts_with("=>")
+                {
+                    keys.push(raw_key.to_string());
+                }
+            }
+            keys
+        };
+
+        let en_keys = collect_keys(en_block);
+        let zh_keys = collect_keys(zh_block);
+        let en_set: std::collections::BTreeSet<_> = en_keys.iter().cloned().collect();
+        let zh_set: std::collections::BTreeSet<_> = zh_keys.iter().cloned().collect();
+        assert_eq!(en_keys.len(), en_set.len(), "duplicate keys in En");
+        assert_eq!(zh_keys.len(), zh_set.len(), "duplicate keys in Zh");
+        assert_eq!(en_set, zh_set, "En/Zh key mismatch");
+
+        for key in &en_set {
+            let key_static: &'static str = Box::leak(key.clone().into_boxed_str());
+            let en = tr(Language::En, key_static);
+            let zh = tr(Language::Zh, key_static);
+            assert!(!en.is_empty(), "empty En value for {key}");
+            assert!(!zh.is_empty(), "empty Zh value for {key}");
+            assert_eq!(
+                en.matches("{}").count(),
+                zh.matches("{}").count(),
+                "placeholder count mismatch for {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn localize_error_handles_api_and_update_errors() {
+        let out = localize_error(
+            Language::Zh,
+            "Failed to parse proxies response: expected value",
+        );
+        assert!(out.starts_with("解析节点列表响应失败："), "{out}");
+        let upd = localize_error(Language::Zh, "Failed to spawn update script: denied");
+        assert!(upd.starts_with("启动更新脚本失败："), "{upd}");
+    }
+
+    #[test]
+    fn localize_error_covers_new_core_api_and_platform_phrases() {
+        let samples = [
+            "Invalid Clash API port: 0",
+            "Proxy selector cannot be empty",
+            "Proxy node tag cannot be empty",
+            "Connection ID cannot be empty",
+            "Routing mode cannot be empty",
+            "Downloaded core archive exceeds the expected release asset size: 123",
+            "Downloaded core binary size does not match archive entry: 123",
+            "Config check failed: sing-box check failed: exit status 1",
+            "Core archive contains ambiguous duplicate binaries",
+            "Failed to open temp zip: io error",
+            "Failed to read zip entry: corrupt",
+            "Failed to create staged core: denied",
+            "Failed to flush staged core: disk full",
+            "Could not find sing-box.exe inside downloaded zip package",
+            "Could not find sing-box inside downloaded zip package",
+            "Failed to open temp archive: io error",
+            "Failed to inspect tar.gz: corrupt",
+            "Failed to read tar entry: truncated",
+            "Invalid tar entry path: ../bin",
+            "Failed to mark staged core executable: permission denied",
+            "Core destination path has no parent directory",
+            "sing-box core not found! Please download it or specify correct path in Settings.",
+            "Failed to remove LaunchAgent: permission denied",
+        ];
+
+        for sample in samples {
+            assert_eq!(localize_error(Language::En, sample), sample);
+            let zh = localize_error(Language::Zh, sample);
+            assert_ne!(zh, sample, "phrase was not translated: {sample}");
+            assert!(
+                zh.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+                "translation lacks CJK characters for {sample}: {zh}"
+            );
+            assert!(
+                !zh.contains(": "),
+                "ASCII colon remained after localize_error for {sample}: {zh}"
+            );
+        }
+
+        assert_eq!(
+            localize_error(Language::Zh, "Invalid Clash API port: 0"),
+            "Clash API 端口无效：0"
+        );
+        assert_eq!(
+            localize_error(Language::Zh, "Config check failed: sing-box check failed"),
+            "配置检查未通过：sing-box 检查失败"
+        );
     }
 }

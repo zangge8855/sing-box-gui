@@ -87,7 +87,7 @@ class TrayHost:
         while context.pending():
             context.iteration(False)
         command_file = self.control / "command"
-        command = command_file.read_text() if command_file.exists() else ""
+        command = command_file.read_text(encoding="utf-8", errors="replace") if command_file.exists() else ""
         if not command or command == self.last_command:
             return
         self.last_command = command
@@ -147,7 +147,9 @@ def run_session(args):
         weston = str(root / "bin/weston")
         modules = root / "lib64"
         env["LD_LIBRARY_PATH"] = f"{modules}:{modules}/weston"
-        backend = next(modules.glob("libweston-*/headless-backend.so"))
+        backend = next(modules.glob("libweston-*/headless-backend.so"), None)
+        if backend is None:
+            raise RuntimeError(f"Could not find headless-backend.so under {modules}")
         env["WESTON_MODULE_MAP"] = (
             f"headless-backend.so={backend};"
             f"desktop-shell.so={modules}/weston/desktop-shell.so"
@@ -159,9 +161,10 @@ def run_session(args):
     config.write_text(
         f"[core]\nidle-time=0\n[shell]\n{client}panel-position=none\nlocking=false\n"
         "background-type=solid\nbackground-color=0xff202020\nanimation=none\n"
-        "startup-animation=none\n[input-method]\npath=\n"
+        "startup-animation=none\n[input-method]\npath=\n",
+        encoding="utf-8",
     )
-    (output / "weston.log").write_text("")
+    (output / "weston.log").write_text("", encoding="utf-8")
     command = [
         weston, "--backend=headless-backend.so", "--shell=desktop-shell.so",
         f"--width={1920 * args.scale}", f"--height={1200 * args.scale}",
@@ -174,8 +177,8 @@ def run_session(args):
     if major >= 12:
         command.append("--renderer=noop")
     compositor = application = None
-    with (output / "compositor.log").open("w") as compositor_log, \
-            (output / "application.log").open("w") as app_log:
+    with (output / "compositor.log").open("w", encoding="utf-8") as compositor_log, \
+            (output / "application.log").open("w", encoding="utf-8") as app_log:
         try:
             compositor = subprocess.Popen(
                 command, env=env, stdout=compositor_log, stderr=subprocess.STDOUT
@@ -203,10 +206,10 @@ def run_session(args):
         finally:
             stop(application)
             stop(compositor)
-    log = (output / "application.log").read_text()
+    log = (output / "application.log").read_text(encoding="utf-8", errors="replace")
     match = re.search(r"UI_SMOKE_OK: (\d+) screenshots", log)
     tray_marker = "UI_TRAY_NONE_OK:" if args.no_tray else "UI_TRAY_OK:"
-    if not match or int(match[1]) == 0 or tray_marker not in log:
+    if "UI_SMOKE_FAILED:" in log or not match or int(match[1]) == 0 or tray_marker not in log:
         raise RuntimeError("Screenshot or tray validation did not finish")
     if len(list(output.glob("*.png"))) < int(match[1]):
         raise RuntimeError("Some screenshots are missing")
@@ -219,7 +222,7 @@ def run_session(args):
         "weston": version.strip(),
         "elapsed_seconds": round(time.monotonic() - started, 2),
     }
-    (output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+    (output / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"Wayland {args.scale}x ({args.backend}): {match[1]} screenshots; tray checks passed; output: {output}")
 
 
@@ -268,7 +271,7 @@ def main():
             for name in ("application.log", "weston.log"):
                 path = output / name
                 if path.exists():
-                    print(path.read_text()[-8000:])
+                    print(path.read_text(encoding="utf-8", errors="replace")[-8000:])
             raise SystemExit("Wayland UI smoke check failed; see the output logs")
 
 
