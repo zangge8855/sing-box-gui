@@ -29,6 +29,15 @@ impl RoutingMode {
             RoutingMode::Direct => "Direct",
         }
     }
+
+    /// i18n key of the label shown on the routing-mode switch.
+    pub fn label_key(&self) -> &'static str {
+        match self {
+            RoutingMode::Rule => "mode_rules",
+            RoutingMode::Global => "mode_global",
+            RoutingMode::Direct => "mode_direct",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -262,7 +262,7 @@ pub fn render<'a>(
 
         let check_btn = || small_btn("btn_check_update", Some(Message::CheckUpdate), false);
         let current_version =
-            tr(lang, "app_version_current").replace("{}", env!("CARGO_PKG_VERSION"));
+            tr(lang, "app_version_current").replace("{}", concat!("v", env!("CARGO_PKG_VERSION")));
         let caption = |s: String, color| text(s).size(theme::TYPE_CAPTION).color(color);
         let (update_status_el, update_control): (
             Element<'a, Message>,
@@ -358,7 +358,10 @@ pub fn render<'a>(
             UpdateStatus::Error(err) => (
                 column![
                     caption(tr(lang, "status_check_failed").to_string(), danger),
-                    caption(err.clone(), text_muted),
+                    caption(
+                        crate::ui::i18n::localize_error(lang, err).into_owned(),
+                        text_muted,
+                    ),
                 ]
                 .spacing(3)
                 .into(),
@@ -742,7 +745,10 @@ pub fn render<'a>(
                 row![
                     column![
                         caption(tr(lang, "core_install_failed").to_string(), danger),
-                        caption(error.clone(), text_muted),
+                        caption(
+                            crate::ui::i18n::localize_error(lang, error).into_owned(),
+                            text_muted,
+                        ),
                     ]
                     .spacing(3)
                     .width(Length::Fill),

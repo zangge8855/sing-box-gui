@@ -1135,7 +1135,7 @@ impl App {
         self.latency_test_gen = self.latency_test_gen.wrapping_add(1);
         if let Some(msg) = core::take_unexpected_core_exit() {
             let detail = redact_log_line(&msg);
-            self.push_log(format!("[GUI] {detail}"));
+            self.push_log(format!("[GUI] Core stopped unexpectedly: {detail}"));
             self.toast_error(self.tr_detail("core_unexpected_exit", &detail));
         }
         if let Some(cancel_tx) = self.traffic_cancel_tx.take() {
@@ -1272,9 +1272,24 @@ impl App {
         ui::i18n::tr(self.gui_config.language, key)
     }
 
-    /// "Label: detail", with the full-width colon Chinese text expects.
+    /// Localized, language-appropriately separated list of setting label keys.
+    fn setting_names(&self, keys: &[&'static str]) -> String {
+        let sep = match self.gui_config.language {
+            state::Language::Zh => "、",
+            state::Language::En => ", ",
+        };
+        keys.iter()
+            .map(|k| self.tr(k))
+            .collect::<Vec<_>>()
+            .join(sep)
+    }
+
+    /// "Label: detail", with the full-width colon Chinese text expects. The
+    /// detail's known error phrases are translated as well.
     fn tr_detail(&self, key: &'static str, detail: impl std::fmt::Display) -> String {
-        ui::util::labelled(self.gui_config.language, self.tr(key), detail)
+        let lang = self.gui_config.language;
+        let detail = detail.to_string();
+        ui::util::labelled(lang, self.tr(key), ui::i18n::localize_error(lang, &detail))
     }
 
     /// Start next queued auto-update if idle.
@@ -1855,7 +1870,7 @@ impl App {
                         self.core_running = false;
                         self.force_stop_after_start = false;
                         self.push_log(format!("[GUI] Error starting core: {detail}"));
-                        self.toast_error(self.tr("core_start_failed").to_string() + ": " + &detail);
+                        self.toast_error(self.tr_detail("core_start_failed", &detail));
                         // Drop pending restart so we don't loop on a broken config.
                         self.pending_core_restart = false;
                         self.pending_tray_check_sync = true;
@@ -1933,7 +1948,7 @@ impl App {
                 if !ignored.is_empty() {
                     self.toast_info(
                         self.tr("native_json_ignored_toast")
-                            .replace("{}", &ignored.join(", ")),
+                            .replace("{}", &self.setting_names(&ignored)),
                     );
                 }
                 Task::none()
@@ -2105,9 +2120,7 @@ impl App {
                         let detail = redact_log_line(&e);
                         self.core_install_state = state::CoreInstallState::Error(detail.clone());
                         self.push_log(format!("[GUI ERROR] Failed to download core: {detail}"));
-                        self.toast_error(
-                            self.tr("core_install_failed").to_string() + ": " + &detail,
-                        );
+                        self.toast_error(self.tr_detail("core_install_failed", &detail));
                     }
                 }
                 Task::none()
@@ -2296,7 +2309,7 @@ impl App {
                     if !from_auto_update && !ignored_settings.is_empty() {
                         self.toast_info(
                             self.tr("native_json_ignored_toast")
-                                .replace("{}", &ignored_settings.join(", ")),
+                                .replace("{}", &self.setting_names(&ignored_settings)),
                         );
                     }
                     self.notify_native_on_load = false;
@@ -2350,7 +2363,7 @@ impl App {
                 if notify_native && !ignored_settings.is_empty() {
                     self.toast_info(
                         self.tr("native_json_ignored_toast")
-                            .replace("{}", &ignored_settings.join(", ")),
+                            .replace("{}", &self.setting_names(&ignored_settings)),
                     );
                 }
                 self.active_profile_nodes = result.unwrap_or_default();
@@ -2995,7 +3008,7 @@ impl App {
                     self.config_dirty = true;
                     self.toast_success(
                         self.tr("routing_mode_pending")
-                            .replace("{}", mode.as_clash_mode()),
+                            .replace("{}", self.tr(mode.label_key())),
                     );
                     self.start_config_save()
                 }
@@ -3017,16 +3030,19 @@ impl App {
                         self.config_dirty = true;
                         self.toast_success(
                             self.tr("routing_mode_switched")
-                                .replace("{}", mode.as_clash_mode()),
+                                .replace("{}", self.tr(mode.label_key())),
                         );
                         self.start_config_save()
                     }
                     Err(error) => {
                         self.pending_tray_check_sync = true;
-                        self.toast_error(
-                            self.tr("routing_mode_failed")
-                                .replace("{}", &redact_log_line(&error)),
-                        );
+                        self.toast_error(self.tr("routing_mode_failed").replace(
+                            "{}",
+                            &ui::i18n::localize_error(
+                                self.gui_config.language,
+                                &redact_log_line(&error),
+                            ),
+                        ));
                         self.reveal_window_on_tray_error()
                     }
                 }
@@ -3537,7 +3553,8 @@ impl App {
                             sha256: Some(sha256),
                             size: Some(size),
                         };
-                        self.toast_error(self.tr("update_download_failed").replace("{}", &e));
+                        let detail = ui::i18n::localize_error(self.gui_config.language, &e);
+                        self.toast_error(self.tr("update_download_failed").replace("{}", &detail));
                         Task::none()
                     }
                 }

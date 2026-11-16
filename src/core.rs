@@ -119,10 +119,8 @@ pub fn format_core_early_exit_error(exit_code: Option<i32>, lines: &[String]) ->
 
 fn format_unexpected_exit(exit_code: Option<i32>) -> String {
     match exit_code {
-        Some(c) => format!(
-            "Core process exited unexpectedly (code {c}). Check logs for FATAL/ERROR details."
-        ),
-        None => "Core process exited unexpectedly. Check logs for FATAL/ERROR details.".to_string(),
+        Some(c) => format!("Exit code {c}. Check the logs for FATAL/ERROR details."),
+        None => "Check the logs for FATAL/ERROR details.".to_string(),
     }
 }
 

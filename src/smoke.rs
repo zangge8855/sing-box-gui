@@ -98,13 +98,26 @@ impl Runner {
                     (Tab::Profiles, "bottom"),
                     (Tab::Dashboard, "bottom"),
                     (Tab::Rules, "bottom"),
+                    (Tab::Dashboard, "toasts"),
+                    (Tab::Dashboard, "starting"),
+                    (Tab::Dashboard, "installing"),
+                    (Tab::Settings, "pending"),
+                    (Tab::Settings, "update"),
+                    (Tab::Proxies, "testing"),
+                    (Tab::Profiles, "error"),
                 ] {
+                    // The update row sits below the fold at the compact size.
+                    let (width, height) = if variant == "update" {
+                        (1080, 750)
+                    } else {
+                        (640, 480)
+                    };
                     cases.push(Case {
-                        name: format!("{locale}-{appearance}-640-{tab:?}-{variant}"),
+                        name: format!("{locale}-{appearance}-{width}-{tab:?}-{variant}"),
                         tab,
                         language,
                         theme,
-                        size: Size::new(640.0, 480.0),
+                        size: Size::new(width as f32, height as f32),
                         variant,
                     });
                 }
@@ -392,6 +405,13 @@ fn seed(app: &mut App, case: &Case) {
     app.editing_profile_id = None;
     app.profile_more_id = None;
     app.toasts.clear();
+    app.core_starting = false;
+    app.core_install_state = CoreInstallState::Idle;
+    app.update_status = UpdateStatus::NotChecked;
+    app.latency_testing = false;
+    app.downloading = false;
+    app.updating_profile_id = None;
+    app.profile_error = None;
     app.show_all_proxies = false;
     app.config_preview_expanded = false;
     app.config_preview = None;
@@ -537,6 +557,55 @@ fn seed(app: &mut App, case: &Case) {
         "no-matches" => {
             app.node_search = "no-matching-node".into();
             app.log_search = "no-matching-log".into();
+        }
+        "toasts" => {
+            app.toasts.push(Toast::success(crate::ui::i18n::tr(
+                case.language,
+                "toast_sub_ok",
+            )));
+            app.toasts.push(Toast::error(app.tr_detail(
+                "profile_download_failed",
+                crate::ui::i18n::localize_error(
+                    case.language,
+                    "Download failed with status: 404 Not Found",
+                ),
+            )));
+        }
+        "starting" => {
+            app.core_running = false;
+            app.core_starting = true;
+            app.sys_proxy_enabled = false;
+        }
+        "installing" => {
+            app.core_running = false;
+            app.core_installed = false;
+            app.core_version = None;
+            app.sys_proxy_enabled = false;
+            app.core_install_state = CoreInstallState::Downloading;
+        }
+        "pending" => app.settings_draft.mixed_port = "7890".into(),
+        "update" => {
+            app.update_status = UpdateStatus::NewVersion {
+                tag: "v2026.12.1".into(),
+                download_url: Some("https://example.com/sing-box-gui".into()),
+                sha256: Some("0".repeat(64)),
+                size: Some(9_437_184),
+            }
+        }
+        "testing" => {
+            app.latency_testing = true;
+            for node in &mut app.active_profile_nodes {
+                node.latency = None;
+            }
+        }
+        "error" => {
+            app.profile_error = Some(app.tr_detail(
+                "profile_download_failed",
+                crate::ui::i18n::localize_error(
+                    case.language,
+                    "Profile contained no parseable proxy nodes (unsupported schemes or bad links).",
+                ),
+            ));
         }
         _ => {}
     }

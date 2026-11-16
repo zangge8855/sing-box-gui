@@ -178,6 +178,8 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "logs_count_fmt",
     "profile_kind_local",
     "native_json_ignored_toast",
+    "ignored_custom_rules",
+    "ignored_dns_fake_ip",
     "update_dir_readonly",
     "core_start_cancelled",
     "detached_core_detected",
@@ -530,7 +532,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_open" => "Open",
             "core_status_installed" => "Installed",
             "core_status_missing" => "Not installed",
-            "app_version_current" => "Version {}",
+            "app_version_current" => "Installed {}",
             "help_config_preview" => "The full configuration handed to sing-box.",
 
             // UI polish additions
@@ -561,6 +563,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "logs_count_fmt" => "{} / {} lines",
             "profile_kind_local" => "Local / Share Link",
             "native_json_ignored_toast" => "Native sing-box JSON active; GUI settings skipped: {}",
+            "ignored_custom_rules" => "Custom Rules",
+            "ignored_dns_fake_ip" => "DNS / Fake-IP",
             "update_dir_readonly" => {
                 "Install folder is read-only; opened release page to download and replace manually."
             }
@@ -882,7 +886,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "settings_advanced" => "高级",
             "settings_core" => "内核",
             "help_mixed_port" => "本机 HTTP 与 SOCKS5 共用的监听端口。",
-            "help_api_port" => "本机控制接口，用于切换节点、测速与流量统计。",
+            "help_api_port" => "用于切换节点、测速与流量统计的本机接口。",
             "help_dns_local" => "解析国内及直连域名。",
             "help_dns_remote" => "经代理解析其他域名。",
             "data_dir_label" => "数据目录",
@@ -921,6 +925,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "logs_count_fmt" => "{} / {} 条日志",
             "profile_kind_local" => "本地配置 / 分享链接",
             "native_json_ignored_toast" => "当前为原生 sing-box JSON 配置，以下 GUI 设置不生效：{}",
+            "ignored_custom_rules" => "自定义分流规则",
+            "ignored_dns_fake_ip" => "DNS 与 Fake-IP",
             "update_dir_readonly" => "安装目录为只读，已打开下载页面，请手动下载并替换程序。",
             "core_start_cancelled" => "已取消启动内核",
             "detached_core_detected" => {
@@ -935,10 +941,461 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
     }
 }
 
+/// Error phrases produced by the networking, parsing, core and platform
+/// layers, keyed by their English text the way a gettext catalog is. Those
+/// layers stay language-neutral; [`localize_error`] translates at the
+/// display boundary and leaves OS / library detail untouched.
+const ERROR_CATALOG: &[(&str, &str)] = &[
+    // Profile import and subscription download
+    ("Profile source is empty", "配置来源为空"),
+    (
+        "Profile is larger than the 16 MiB safety limit",
+        "配置超过 16 MiB 安全上限",
+    ),
+    (
+        "Subscription is larger than the 16 MiB safety limit",
+        "订阅内容超过 16 MiB 安全上限",
+    ),
+    (
+        "Profile is neither valid UTF-8 nor GBK-compatible text",
+        "配置不是有效的 UTF-8 或 GBK 文本",
+    ),
+    ("Download request failed", "下载请求失败"),
+    ("Download failed with status", "服务器返回错误状态"),
+    ("Failed to read local file", "读取本地文件失败"),
+    ("Failed to read content", "读取内容失败"),
+    ("Failed to read active profile", "读取当前配置失败"),
+    ("Failed to read profile file", "读取配置文件失败"),
+    ("Profile parse task failed", "配置解析任务失败"),
+    ("Profile save task failed", "配置保存任务失败"),
+    ("No active profile selected", "尚未选择配置"),
+    (
+        "Active profile config file not found!",
+        "找不到当前配置文件",
+    ),
+    // Profile parsing
+    ("Invalid JSON structure", "JSON 结构无效"),
+    ("Invalid YAML structure", "YAML 结构无效"),
+    ("Invalid Clash configuration format", "Clash 配置格式无效"),
+    ("YAML parsing failed", "YAML 解析失败"),
+    ("JSON parsing failed", "JSON 解析失败"),
+    (
+        "No 'proxies' key found in config file",
+        "配置文件缺少 proxies 字段",
+    ),
+    (
+        "No 'proxies' key found in Clash config",
+        "Clash 配置缺少 proxies 字段",
+    ),
+    (
+        "'proxies' must be a sequence/list",
+        "proxies 字段必须是列表",
+    ),
+    ("Invalid native Sing-Box JSON", "原生 sing-box JSON 无效"),
+    (
+        "Native Sing-Box JSON must be a JSON object",
+        "原生 sing-box JSON 必须是对象",
+    ),
+    (
+        "Native sing-box JSON must be a configuration object",
+        "原生 sing-box JSON 必须是配置对象",
+    ),
+    (
+        "Native sing-box JSON must contain an 'outbounds' or 'endpoints' array",
+        "原生 sing-box JSON 必须包含 outbounds 或 endpoints 数组",
+    ),
+    (
+        "Native sing-box JSON contains only unsupported ShadowsocksR (shadowsocksr) outbounds, which were removed in sing-box 1.6.0.",
+        "原生 sing-box JSON 只包含 ShadowsocksR 节点，sing-box 1.6.0 起已不再支持。",
+    ),
+    (
+        "No supported proxy nodes remain after removing unsupported ShadowsocksR (shadowsocksr) outbounds, which were removed in sing-box 1.6.0.",
+        "移除 ShadowsocksR 节点后没有可用节点（sing-box 1.6.0 起已不再支持 ShadowsocksR）。",
+    ),
+    (
+        "Profile contained no parseable proxy nodes (unsupported schemes or bad links).",
+        "未解析到任何代理节点（协议不支持或链接有误）。",
+    ),
+    (
+        "No supported proxy nodes could be converted.",
+        "没有可转换的代理节点。",
+    ),
+    ("Unsupported proxy types", "不支持的类型"),
+    (
+        "ShadowsocksR was removed in sing-box 1.6.0.",
+        "sing-box 1.6.0 起已不再支持 ShadowsocksR。",
+    ),
+    (
+        "Use a native sing-box JSON profile for endpoint-only or custom outbound types.",
+        "仅 endpoint 或自定义出站类型请改用原生 sing-box JSON 配置。",
+    ),
+    // Core lifecycle
+    ("Core not installed", "内核未安装"),
+    ("Core startup cancelled", "已取消启动内核"),
+    ("Exit code", "退出码"),
+    (
+        "Check the logs for FATAL/ERROR details.",
+        "请在日志中查看 FATAL/ERROR 详情。",
+    ),
+    ("Failed to inspect core process", "无法读取内核进程状态"),
+    ("Config check failed", "配置检查未通过"),
+    ("Configuration check failed", "配置检查未通过"),
+    ("Failed to run config check", "无法运行配置检查"),
+    ("Failed to run sing-box check", "无法运行 sing-box 检查"),
+    ("Failed to start process", "无法启动内核进程"),
+    ("Failed to capture stdout/stderr", "无法捕获内核输出"),
+    ("Failed to run core version", "无法读取内核版本"),
+    ("Core version check failed", "内核版本检查失败"),
+    ("Failed to serialize final config", "生成运行配置失败"),
+    // Core download and install
+    (
+        "Failed to fetch core release metadata",
+        "获取内核版本信息失败",
+    ),
+    (
+        "Failed to parse core release metadata",
+        "解析内核版本信息失败",
+    ),
+    (
+        "Core release metadata returned status",
+        "内核版本信息返回错误状态",
+    ),
+    (
+        "Official core asset not found",
+        "未找到适用于本平台的官方内核",
+    ),
+    (
+        "Core release asset URL is not an official sing-box download",
+        "内核下载地址不是 sing-box 官方地址",
+    ),
+    ("Failed to download core", "下载内核失败"),
+    (
+        "Downloaded core archive exceeds the 256 MiB safety limit",
+        "内核压缩包超过 256 MiB 安全上限",
+    ),
+    (
+        "Core download size does not match release metadata",
+        "内核下载大小与发布信息不符",
+    ),
+    ("Core download size mismatch", "内核下载大小不符"),
+    (
+        "Core archive SHA-256 verification failed",
+        "内核压缩包 SHA-256 校验失败",
+    ),
+    ("Invalid zip archive", "zip 压缩包无效"),
+    ("Failed to extract core", "解压内核失败"),
+    ("Core extraction task failed", "内核解压任务失败"),
+    (
+        "Could not find sing-box inside downloaded tar package",
+        "下载的 tar 包中找不到 sing-box",
+    ),
+    (
+        "Downloaded file does not match this platform's binary format",
+        "下载的文件与本平台的程序格式不符",
+    ),
+    (
+        "Failed to install the downloaded core",
+        "安装下载的内核失败",
+    ),
+    ("Failed to create bin directory", "创建内核目录失败"),
+    // Clash API
+    ("Failed to fetch proxies", "获取节点列表失败"),
+    ("Proxy API returned an error", "节点接口返回错误"),
+    ("Failed to select proxy", "切换节点失败"),
+    ("Latency test request failed", "测速请求失败"),
+    ("Failed to fetch connections", "获取连接列表失败"),
+    ("Failed to close connection", "关闭连接失败"),
+    ("Failed to close all connections", "关闭全部连接失败"),
+    ("Failed to set mode", "切换路由模式失败"),
+    ("Server returned status code", "服务器返回状态码"),
+    ("Server returned error code", "服务器返回错误码"),
+    ("Server returned error status", "服务器返回错误状态"),
+    ("Server returned error", "服务器返回错误"),
+    ("API unavailable", "控制接口不可用"),
+    // App update
+    ("No GitHub release published yet", "尚未发布任何版本"),
+    ("Failed to parse JSON", "解析响应失败"),
+    (
+        "Update asset is missing a valid SHA-256 digest",
+        "更新文件缺少有效的 SHA-256 摘要",
+    ),
+    (
+        "Update asset size does not match release metadata",
+        "更新文件大小与发布信息不符",
+    ),
+    (
+        "Downloaded update size does not match release metadata",
+        "下载的更新大小与发布信息不符",
+    ),
+    (
+        "Update SHA-256 verification failed",
+        "更新文件 SHA-256 校验失败",
+    ),
+    (
+        "Update URL is not an official sing-box-gui release asset",
+        "更新地址不是 sing-box-gui 官方发布文件",
+    ),
+    ("Failed to write update file", "写入更新文件失败"),
+    (
+        "In-app update is not supported on this platform",
+        "此平台不支持应用内更新",
+    ),
+    ("Request failed", "请求失败"),
+    // System proxy and autostart
+    (
+        "System proxy is not supported on this platform",
+        "此平台不支持系统代理",
+    ),
+    (
+        "Autostart is not supported on this platform",
+        "此平台不支持开机自启",
+    ),
+    (
+        "No enabled macOS network service was found",
+        "未找到已启用的 macOS 网络服务",
+    ),
+    (
+        "Failed to open Windows proxy settings",
+        "无法打开 Windows 代理设置",
+    ),
+    (
+        "Failed to read Windows proxy settings",
+        "读取 Windows 代理设置失败",
+    ),
+    (
+        "Failed to update Windows proxy server",
+        "更新 Windows 代理服务器失败",
+    ),
+    (
+        "Failed to update Windows proxy state",
+        "更新 Windows 代理状态失败",
+    ),
+    ("Failed to disable Windows proxy", "关闭 Windows 代理失败"),
+    ("Failed to run gsettings", "无法运行 gsettings"),
+    (
+        "Failed to open autostart registry key",
+        "无法打开开机自启注册表项",
+    ),
+    (
+        "Failed to write autostart registry",
+        "写入开机自启注册表失败",
+    ),
+    (
+        "Failed to delete autostart registry value",
+        "删除开机自启注册表项失败",
+    ),
+    (
+        "Failed to create autostart directory",
+        "创建开机自启目录失败",
+    ),
+    ("Failed to remove autostart entry", "移除开机自启项失败"),
+    (
+        "Failed to serialize system proxy backup",
+        "序列化系统代理备份失败",
+    ),
+    (
+        "Failed to clear Windows proxy backup marker",
+        "清除 Windows 代理备份标记失败",
+    ),
+    (
+        "Failed to restore Windows bypass list",
+        "恢复 Windows 代理例外列表失败",
+    ),
+    (
+        "Failed to restore Windows proxy server",
+        "恢复 Windows 代理服务器失败",
+    ),
+    (
+        "Failed to restore Windows proxy state",
+        "恢复 Windows 代理状态失败",
+    ),
+    (
+        "Failed to back up Windows proxy state",
+        "备份 Windows 代理状态失败",
+    ),
+    (
+        "Failed to back up Windows proxy server",
+        "备份 Windows 代理服务器失败",
+    ),
+    (
+        "Failed to back up Windows bypass list",
+        "备份 Windows 代理例外列表失败",
+    ),
+    (
+        "Failed to mark Windows proxy backup",
+        "标记 Windows 代理备份失败",
+    ),
+    (
+        "Failed to update Windows proxy bypass list",
+        "更新 Windows 代理例外列表失败",
+    ),
+    (
+        "Failed to parse GNOME proxy port",
+        "无法解析 GNOME 代理端口",
+    ),
+    (
+        "Failed to parse macOS proxy port",
+        "无法解析 macOS 代理端口",
+    ),
+    ("Invalid Linux proxy backup", "Linux 代理备份无效"),
+    (
+        "Invalid macOS proxy backup service",
+        "macOS 代理备份中的网络服务无效",
+    ),
+    (
+        "Invalid macOS proxy backup entries",
+        "macOS 代理备份条目无效",
+    ),
+    ("Failed to run", "无法运行"),
+    ("rollback failed", "回滚失败"),
+    // Saving app data
+    ("Failed to serialize config", "序列化配置失败"),
+    (
+        "Target file has no parent directory",
+        "目标文件没有上级目录",
+    ),
+    ("Failed to create data directory", "创建数据目录失败"),
+    ("Failed to create temporary file", "创建临时文件失败"),
+    ("Failed to write temporary file", "写入临时文件失败"),
+    ("Failed to flush temporary file", "临时文件写入磁盘失败"),
+    (
+        "Failed to restrict temporary file permissions",
+        "限制临时文件权限失败",
+    ),
+    ("Failed to create recovery backup", "创建恢复备份失败"),
+    ("Failed to commit temporary file", "替换目标文件失败"),
+    // Shared
+    ("Failed to resolve current executable", "无法定位当前程序"),
+    ("permission denied", "权限不足"),
+    ("Permission denied", "权限不足"),
+    ("Access is denied.", "拒绝访问。"),
+    ("timed out", "请求超时"),
+];
+
+/// Translate the known phrases of an error message for display. Chained
+/// errors ("Failed to download core: Server returned error: 404") translate
+/// link by link; anything the catalog does not know (OS errors, URLs,
+/// sing-box's own output) passes through verbatim.
+pub fn localize_error(lang: Language, message: &str) -> std::borrow::Cow<'_, str> {
+    if lang == Language::En {
+        return std::borrow::Cow::Borrowed(message);
+    }
+    let mut out = String::with_capacity(message.len() + 16);
+    let mut rest = message;
+    let mut changed = false;
+    while let Some(c) = rest.chars().next() {
+        let at_word_start = !out
+            .chars()
+            .next_back()
+            .is_some_and(|p| p.is_ascii_alphanumeric());
+        let hit = at_word_start
+            .then(|| {
+                ERROR_CATALOG
+                    .iter()
+                    .filter(|(en, _)| {
+                        rest.starts_with(en)
+                            && !rest[en.len()..]
+                                .chars()
+                                .next()
+                                .is_some_and(|n| n.is_ascii_alphanumeric())
+                    })
+                    .max_by_key(|(en, _)| en.len())
+            })
+            .flatten();
+        let Some((en, zh)) = hit else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+            continue;
+        };
+        changed = true;
+        // A translated phrase carries CJK punctuation: "：" for a following
+        // detail, and no stray space after a full stop.
+        while out.ends_with(' ') && is_cjk_punct_end(&out[..out.len() - 1]) {
+            out.pop();
+        }
+        // A translated sentence turns the ASCII full stop before it into "。".
+        if zh.ends_with('。') && out.ends_with(". ") {
+            out.truncate(out.len() - 2);
+            out.push('。');
+        }
+        out.push_str(zh);
+        rest = &rest[en.len()..];
+        if let Some(after) = rest.strip_prefix(": ") {
+            out.push('：');
+            rest = after;
+        } else if zh.ends_with('。') {
+            rest = rest.trim_start_matches(' ');
+        }
+    }
+    if changed {
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(message)
+    }
+}
+
+fn is_cjk_punct_end(s: &str) -> bool {
+    s.ends_with(['。', '：', '）'])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::state::Language;
+
+    #[test]
+    fn localize_error_translates_known_phrases_and_keeps_detail() {
+        let en = "Download failed with status: 404 Not Found";
+        assert_eq!(localize_error(Language::En, en), en);
+        assert_eq!(
+            localize_error(Language::Zh, en),
+            "服务器返回错误状态：404 Not Found"
+        );
+        // Chained errors translate link by link; unknown detail passes through.
+        assert_eq!(
+            localize_error(
+                Language::Zh,
+                "Failed to download core: Server returned error: 503 Service Unavailable"
+            ),
+            "下载内核失败：服务器返回错误：503 Service Unavailable"
+        );
+        // Multi-sentence messages lose the ASCII sentence spacing.
+        assert_eq!(
+            localize_error(
+                Language::Zh,
+                "No supported proxy nodes could be converted. Unsupported proxy types: foo, bar. Use a native sing-box JSON profile for endpoint-only or custom outbound types."
+            ),
+            "没有可转换的代理节点。不支持的类型：foo, bar。仅 endpoint 或自定义出站类型请改用原生 sing-box JSON 配置。"
+        );
+        assert_eq!(
+            localize_error(
+                Language::Zh,
+                "Exit code 1. Check the logs for FATAL/ERROR details."
+            ),
+            "退出码 1。请在日志中查看 FATAL/ERROR 详情。"
+        );
+        // Phrases only match on word boundaries.
+        assert_eq!(localize_error(Language::Zh, "xtimed out"), "xtimed out");
+        // Nothing recognised: borrowed, untouched.
+        let raw = "FATAL[0000] start service: initialize inbound";
+        assert!(matches!(
+            localize_error(Language::Zh, raw),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn error_catalog_is_translated_and_unambiguous() {
+        let mut seen = std::collections::HashSet::new();
+        for (en, zh) in ERROR_CATALOG {
+            assert!(seen.insert(*en), "duplicate catalog phrase: {en}");
+            assert!(
+                zh.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+                "untranslated catalog entry: {en}"
+            );
+            assert!(!zh.contains(": "), "ASCII colon in translation: {zh}");
+        }
+    }
 
     #[test]
     fn polish_keys_resolve_in_en_and_zh() {

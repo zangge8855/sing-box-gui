@@ -4315,6 +4315,7 @@ fn default_tun_inbound() -> serde_json::Value {
 /// Report GUI settings that are ignored because a native sing-box JSON profile
 /// manages its own routing, DNS, or dial options directly.
 #[allow(dead_code)] // Exported for Wave 2 main/UI wiring
+/// GUI settings a native sing-box JSON profile overrides, as i18n label keys.
 pub fn native_json_ignored_settings(raw: &str, config: &GuiConfig) -> Vec<&'static str> {
     if !is_native_json_profile(raw) {
         return Vec::new();
@@ -4330,19 +4331,19 @@ pub fn native_json_ignored_settings(raw: &str, config: &GuiConfig) -> Vec<&'stat
         || !config.custom_bypass_ips.is_empty()
         || !config.custom_proxy_ips.is_empty()
     {
-        ignored.push("Custom Rules");
+        ignored.push("ignored_custom_rules");
     }
     if config.fake_ip
         || config.dns_server_remote != defaults.dns_server_remote
         || config.dns_server_local != defaults.dns_server_local
     {
-        ignored.push("DNS / Fake-IP");
+        ignored.push("ignored_dns_fake_ip");
     }
     if config.tcp_fast_open {
-        ignored.push("TCP Fast Open");
+        ignored.push("tcp_fast_open_label");
     }
     if config.tcp_multipath {
-        ignored.push("TCP Multipath");
+        ignored.push("tcp_multipath_label");
     }
     ignored
 }
@@ -6177,10 +6178,10 @@ proxies:
         assert_eq!(
             ignored,
             vec![
-                "Custom Rules",
-                "DNS / Fake-IP",
-                "TCP Fast Open",
-                "TCP Multipath"
+                "ignored_custom_rules",
+                "ignored_dns_fake_ip",
+                "tcp_fast_open_label",
+                "tcp_multipath_label"
             ]
         );
     }

@@ -142,8 +142,17 @@ pub fn render<'a>(
             (text_tertiary, false, tr(lang, "status_stopped"), text_muted)
         };
         let can_start = has_profile && core_installed;
-        let disabled_reason =
-            (!core_running && !core_busy && !can_start).then_some(if !core_installed {
+        // While the core downloads, the setup card already shows progress; a
+        // "install core first" warning beside it would read as a contradiction.
+        let core_install_busy = matches!(
+            core_install_state,
+            CoreInstallState::Downloading
+                | CoreInstallState::Verifying
+                | CoreInstallState::Extracting
+                | CoreInstallState::Installing
+        );
+        let disabled_reason = (!core_running && !core_busy && !can_start && !core_install_busy)
+            .then_some(if !core_installed {
                 "btn_install_core_first"
             } else {
                 "btn_import_profile_first"
@@ -763,7 +772,7 @@ fn onboarding_card<'a>(
                     text(tr(lang, "core_install_failed"))
                         .size(theme::TYPE_CAPTION)
                         .color(theme::danger_text(theme)),
-                    text(err.as_str())
+                    text(crate::ui::i18n::localize_error(lang, err).into_owned())
                         .size(theme::TYPE_CAPTION)
                         .color(text_muted),
                 ]

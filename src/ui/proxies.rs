@@ -463,6 +463,7 @@ pub fn render<'a>(
                             server,
                             port,
                             latency,
+                            latency_testing,
                             active,
                             is_selector,
                             selectable,
@@ -667,6 +668,7 @@ pub fn render<'a>(
                     Some(&node.server),
                     Some(node.port),
                     node.latency,
+                    latency_testing,
                     is_selected,
                     false,
                     node.selectable,
@@ -772,6 +774,7 @@ fn render_proxy_card<'a>(
     server: Option<&'a str>,
     port: Option<u16>,
     latency: Option<u64>,
+    testing: bool,
     is_selected: bool,
     is_selector: bool,
     direct_selectable: bool,
@@ -805,6 +808,8 @@ fn render_proxy_card<'a>(
                 theme::danger_text(theme)
             },
         ),
+        // Untested nodes read "—"; during a test run they read as pending.
+        None if testing => ("…".to_string(), theme::text_tertiary(theme)),
         None => ("—".to_string(), theme::text_tertiary(theme)),
     };
     let latency_w = 12.0 + text_width(&latency_label, theme::TYPE_CAPTION) * 1.04;
