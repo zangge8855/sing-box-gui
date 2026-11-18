@@ -1,6 +1,6 @@
 [package]
 name = "sing-box-gui"
-version = "2026.11.16-2"
+version = "2026.11.18"
 edition = "2024"
 rust-version = "1.88"
 
