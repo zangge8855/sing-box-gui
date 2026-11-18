@@ -19,13 +19,16 @@ pub struct TrayState {
 static EVENT_RX: OnceLock<Mutex<Option<mpsc::Receiver<Message>>>> = OnceLock::new();
 static EVENT_TX: OnceLock<mpsc::Sender<Message>> = OnceLock::new();
 
-fn send(message: Message) {
-    let tx = EVENT_TX.get_or_init(|| {
+fn ensure_channel() -> &'static mpsc::Sender<Message> {
+    EVENT_TX.get_or_init(|| {
         let (tx, rx) = mpsc::channel(32);
         let _ = EVENT_RX.set(Mutex::new(Some(rx)));
         tx
-    });
-    let _ = tx.try_send(message);
+    })
+}
+
+fn send(message: Message) {
+    let _ = ensure_channel().try_send(message);
 }
 
 pub fn events() -> impl iced::futures::Stream<Item = Message> {
@@ -33,12 +36,17 @@ pub fn events() -> impl iced::futures::Stream<Item = Message> {
         32,
         |mut output: futures::channel::mpsc::Sender<Message>| async move {
             // Initialize the channel before a platform has produced an event.
-            send(Message::NoOp);
+            let _ = ensure_channel();
             struct Lease(Option<mpsc::Receiver<Message>>);
             impl Drop for Lease {
                 fn drop(&mut self) {
-                    if let Some(slot) = EVENT_RX.get() {
-                        *slot.lock().unwrap_or_else(|e| e.into_inner()) = self.0.take();
+                    if let Some(rx) = self.0.take()
+                        && let Some(slot) = EVENT_RX.get()
+                    {
+                        let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+                        if guard.is_none() {
+                            *guard = Some(rx);
+                        }
                     }
                 }
             }
@@ -61,6 +69,9 @@ pub fn events() -> impl iced::futures::Stream<Item = Message> {
 pub use platform::Tray;
 
 fn decode_tray_icon_rgba(bytes: &[u8], size: u32) -> Option<Vec<u8>> {
+    if size == 0 {
+        return None;
+    }
     let image = image::load_from_memory(bytes).ok()?;
     Some(
         image
@@ -98,6 +109,7 @@ mod platform {
             let (tx, mut rx) = watch::channel(state);
             let available = Arc::new(AtomicBool::new(false));
             let online = available.clone();
+            let spawn_online = Arc::new(Mutex::new(None));
             // Neither D-Bus connection setup nor menu updates block Iced.
             std::thread::spawn(move || {
                 let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
@@ -109,13 +121,36 @@ mod platform {
                 runtime.block_on(async move {
                     loop {
                         let state = *rx.borrow_and_update();
+                        *spawn_online.lock().unwrap_or_else(|e| e.into_inner()) = None;
                         let service = LinuxTray {
                             state,
                             available: online.clone(),
+                            spawn_online: spawn_online.clone(),
                         };
                         match service.spawn().await {
                             Ok(handle) => {
-                                online.store(true, Ordering::Release);
+                                let went_offline = {
+                                    let mut guard =
+                                        spawn_online.lock().unwrap_or_else(|e| e.into_inner());
+                                    match *guard {
+                                        None => {
+                                            *guard = Some(true);
+                                            online.store(true, Ordering::Release);
+                                            false
+                                        }
+                                        Some(true) => {
+                                            online.store(true, Ordering::Release);
+                                            false
+                                        }
+                                        Some(false) => {
+                                            online.store(false, Ordering::Release);
+                                            true
+                                        }
+                                    }
+                                };
+                                if went_offline {
+                                    send(Message::TrayUnavailable);
+                                }
                                 let mut receiver_closed = false;
                                 loop {
                                     match rx.changed().await {
@@ -155,6 +190,8 @@ mod platform {
                                 // GNOME may have no AppIndicator extension, or the
                                 // session bus may not be ready during autostart.
                                 // Keep the window usable and retry without log spam.
+                                *spawn_online.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    Some(false);
                                 online.store(false, Ordering::Release);
                                 tokio::select! {
                                     changed = rx.changed() => {
@@ -197,9 +234,10 @@ mod platform {
         }
     }
 
-    struct LinuxTray {
-        state: TrayState,
-        available: Arc<AtomicBool>,
+    pub(super) struct LinuxTray {
+        pub(super) state: TrayState,
+        pub(super) available: Arc<AtomicBool>,
+        pub(super) spawn_online: Arc<Mutex<Option<bool>>>,
     }
 
     impl ksni::Tray for LinuxTray {
@@ -299,10 +337,12 @@ mod platform {
         }
 
         fn watcher_online(&self) {
+            *self.spawn_online.lock().unwrap_or_else(|e| e.into_inner()) = Some(true);
             self.available.store(true, Ordering::Release);
         }
 
         fn watcher_offline(&self, _: ksni::OfflineReason) -> bool {
+            *self.spawn_online.lock().unwrap_or_else(|e| e.into_inner()) = Some(false);
             if self.available.swap(false, Ordering::AcqRel) {
                 send(Message::TrayUnavailable);
             }
@@ -314,25 +354,25 @@ mod platform {
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod platform {
     use super::*;
+    use std::cell::Cell;
     use tray_icon::{
         TrayIcon, TrayIconBuilder,
         menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     };
 
-    pub struct Tray {
-        icon: Option<TrayIcon>,
-        show: MenuItem,
-        exit: MenuItem,
-        core: MenuItem,
-        proxy: CheckMenuItem,
-        modes: Submenu,
-        rule: CheckMenuItem,
-        global: CheckMenuItem,
-        direct: CheckMenuItem,
+    pub(super) struct TrayMenu {
+        pub(super) show: MenuItem,
+        pub(super) exit: MenuItem,
+        pub(super) core: MenuItem,
+        pub(super) proxy: CheckMenuItem,
+        pub(super) modes: Submenu,
+        pub(super) rule: CheckMenuItem,
+        pub(super) global: CheckMenuItem,
+        pub(super) direct: CheckMenuItem,
     }
 
-    impl Tray {
-        pub fn new(state: TrayState) -> Self {
+    impl TrayMenu {
+        pub(super) fn new() -> (Self, Menu) {
             let show = MenuItem::with_id("show_window", "", true, None);
             let exit = MenuItem::with_id("exit_app", "", true, None);
             let core = MenuItem::with_id("toggle_core", "", true, None);
@@ -352,6 +392,54 @@ mod platform {
                 &PredefinedMenuItem::separator(),
                 &exit,
             ]);
+            (
+                Self {
+                    show,
+                    exit,
+                    core,
+                    proxy,
+                    modes,
+                    rule,
+                    global,
+                    direct,
+                },
+                menu,
+            )
+        }
+
+        pub(super) fn apply_state(&self, state: TrayState) {
+            let label = |key| tr(state.language, key);
+            self.show.set_text(label("tray_show_window"));
+            self.exit.set_text(label("tray_exit"));
+            self.core.set_text(label(if state.core_running {
+                "tray_stop_core"
+            } else {
+                "tray_start_core"
+            }));
+            self.proxy.set_text(label("tray_system_proxy"));
+            self.proxy.set_checked(state.system_proxy_enabled);
+            self.modes.set_text(label("tray_proxy_mode"));
+            self.rule.set_text(label("tray_rules"));
+            self.global.set_text(label("tray_global"));
+            self.direct.set_text(label("tray_direct"));
+            self.rule
+                .set_checked(state.routing_mode == RoutingMode::Rule);
+            self.global
+                .set_checked(state.routing_mode == RoutingMode::Global);
+            self.direct
+                .set_checked(state.routing_mode == RoutingMode::Direct);
+        }
+    }
+
+    pub struct Tray {
+        icon: Option<TrayIcon>,
+        menu: TrayMenu,
+        last_state: Cell<Option<TrayState>>,
+    }
+
+    impl Tray {
+        pub fn new(state: TrayState) -> Self {
+            let (tray_menu, menu) = TrayMenu::new();
 
             tray_icon::menu::MenuEvent::set_event_handler(Some(
                 |event: tray_icon::menu::MenuEvent| send(Message::TrayMenuClicked(event.id.0)),
@@ -381,14 +469,8 @@ mod platform {
                 });
             let tray = Self {
                 icon,
-                show,
-                exit,
-                core,
-                proxy,
-                modes,
-                rule,
-                global,
-                direct,
+                menu: tray_menu,
+                last_state: Cell::new(None),
             };
             tray.update(state);
             tray
@@ -399,37 +481,19 @@ mod platform {
         }
 
         pub fn update(&self, state: TrayState) {
-            self.apply_state(state);
+            if self.last_state.get() == Some(state) {
+                return;
+            }
+            self.last_state.set(Some(state));
+            self.menu.apply_state(state);
         }
 
         /// Unconditionally re-apply all menu labels and checkmark states so an
         /// auto-toggled OS `CheckMenuItem` cannot drift from application state.
         #[allow(dead_code)]
         pub fn force_update(&self, state: TrayState) {
-            self.apply_state(state);
-        }
-
-        fn apply_state(&self, state: TrayState) {
-            let label = |key| tr(state.language, key);
-            self.show.set_text(label("tray_show_window"));
-            self.exit.set_text(label("tray_exit"));
-            self.core.set_text(label(if state.core_running {
-                "tray_stop_core"
-            } else {
-                "tray_start_core"
-            }));
-            self.proxy.set_text(label("tray_system_proxy"));
-            self.proxy.set_checked(state.system_proxy_enabled);
-            self.modes.set_text(label("tray_proxy_mode"));
-            self.rule.set_text(label("tray_rules"));
-            self.global.set_text(label("tray_global"));
-            self.direct.set_text(label("tray_direct"));
-            self.rule
-                .set_checked(state.routing_mode == RoutingMode::Rule);
-            self.global
-                .set_checked(state.routing_mode == RoutingMode::Global);
-            self.direct
-                .set_checked(state.routing_mode == RoutingMode::Direct);
+            self.last_state.set(Some(state));
+            self.menu.apply_state(state);
         }
     }
 }
@@ -459,6 +523,8 @@ mod tests {
     #[test]
     fn tray_icon_decoding_produces_exact_square_rgba_and_argb() {
         let embedded = include_bytes!("../assets/tray-icon.png");
+        assert!(decode_tray_icon_rgba(embedded, 0).is_none());
+        assert!(decode_tray_icon_rgba(b"not-a-png", 32).is_none());
         for size in [22u32, 32, 48] {
             let mut rgba = decode_tray_icon_rgba(embedded, size).expect("embedded icon decodes");
             assert_eq!(rgba.len(), (size * size * 4) as usize);
@@ -481,5 +547,101 @@ mod tests {
         let mut pixel = vec![10, 20, 30, 255];
         rgba_to_argb_in_place(&mut pixel);
         assert_eq!(pixel, vec![255, 10, 20, 30]);
+    }
+
+    #[test]
+    fn tray_i18n_keys_resolve_in_en_and_zh() {
+        for lang in [Language::En, Language::Zh] {
+            for key in [
+                "tray_show_window",
+                "tray_start_core",
+                "tray_stop_core",
+                "tray_rules",
+                "tray_global",
+                "tray_direct",
+                "tray_system_proxy",
+                "tray_proxy_mode",
+                "tray_exit",
+            ] {
+                let text = tr(lang, key);
+                assert!(!text.is_empty(), "empty tray key {key} for {lang:?}");
+                assert_ne!(text, key, "untranslated tray key {key} for {lang:?}");
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_tray_menu_updates_labels_and_checkmarks() {
+        let (menu, _root) = platform::TrayMenu::new();
+        menu.apply_state(TrayState {
+            language: Language::En,
+            core_running: false,
+            system_proxy_enabled: false,
+            routing_mode: RoutingMode::Rule,
+        });
+        assert_eq!(menu.core.text(), tr(Language::En, "tray_start_core"));
+        assert!(!menu.proxy.is_checked());
+        assert!(menu.rule.is_checked());
+        assert!(!menu.global.is_checked());
+        assert!(!menu.direct.is_checked());
+
+        menu.apply_state(TrayState {
+            language: Language::Zh,
+            core_running: true,
+            system_proxy_enabled: true,
+            routing_mode: RoutingMode::Global,
+        });
+        assert_eq!(menu.show.text(), tr(Language::Zh, "tray_show_window"));
+        assert_eq!(menu.core.text(), tr(Language::Zh, "tray_stop_core"));
+        assert_eq!(menu.exit.text(), tr(Language::Zh, "tray_exit"));
+        assert!(menu.proxy.is_checked());
+        assert!(!menu.rule.is_checked());
+        assert!(menu.global.is_checked());
+        assert!(!menu.direct.is_checked());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_tray_builds_menu_icons_and_tracks_watcher_availability() {
+        use ksni::Tray as _;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        let available = Arc::new(AtomicBool::new(false));
+        let spawn_online = Arc::new(Mutex::new(None));
+        let tray = platform::LinuxTray {
+            state: TrayState {
+                language: Language::Zh,
+                core_running: true,
+                system_proxy_enabled: true,
+                routing_mode: RoutingMode::Direct,
+            },
+            available: available.clone(),
+            spawn_online: spawn_online.clone(),
+        };
+        assert_eq!(tray.id(), "sing-box-gui");
+        assert_eq!(tray.title(), "sing-box GUI");
+        let icons = tray.icon_pixmap();
+        assert_eq!(icons.len(), 3);
+        for icon in icons {
+            assert_eq!(icon.data.len(), (icon.width * icon.height * 4) as usize);
+        }
+        assert!(tray.menu().len() >= 5);
+
+        tray.watcher_online();
+        assert!(available.load(Ordering::Acquire));
+        assert_eq!(
+            *spawn_online.lock().unwrap_or_else(|e| e.into_inner()),
+            Some(true)
+        );
+        assert!(tray.watcher_offline(ksni::OfflineReason::No));
+        assert!(!available.load(Ordering::Acquire));
+        assert_eq!(
+            *spawn_online.lock().unwrap_or_else(|e| e.into_inner()),
+            Some(false)
+        );
     }
 }

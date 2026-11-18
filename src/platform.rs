@@ -8,8 +8,13 @@ pub fn is_running_elevated() -> bool {
             type BOOL = i32;
             #[allow(clippy::upper_case_acronyms)]
             type HANDLE = *mut c_void;
+            #[link(name = "kernel32")]
             unsafe extern "system" {
                 fn GetCurrentProcess() -> HANDLE;
+                fn CloseHandle(h: HANDLE) -> BOOL;
+            }
+            #[link(name = "advapi32")]
+            unsafe extern "system" {
                 fn OpenProcessToken(process: HANDLE, access: u32, token: *mut HANDLE) -> BOOL;
                 fn GetTokenInformation(
                     token: HANDLE,
@@ -18,24 +23,23 @@ pub fn is_running_elevated() -> bool {
                     len: u32,
                     ret_len: *mut u32,
                 ) -> BOOL;
-                fn CloseHandle(h: HANDLE) -> BOOL;
             }
             // TOKEN_QUERY = 0x0008 ; TokenElevation = 20
             let mut token: HANDLE = std::ptr::null_mut();
             if OpenProcessToken(GetCurrentProcess(), 0x0008, &mut token) == 0 {
                 return false;
             }
-            let mut elevated: i32 = 0;
+            let mut elevated: u32 = 0;
             let mut ret = 0u32;
             let ok = GetTokenInformation(
                 token,
                 20,
                 &mut elevated as *mut _ as *mut c_void,
-                std::mem::size_of::<i32>() as u32,
+                std::mem::size_of::<u32>() as u32,
                 &mut ret,
             );
             CloseHandle(token);
-            ok != 0 && elevated != 0
+            ok != 0 && ret as usize >= std::mem::size_of::<u32>() && elevated != 0
         }
     }
     #[cfg(target_os = "linux")]
@@ -83,11 +87,13 @@ fn vfs_cap_has_net_admin(raw: &[u8]) -> bool {
         return false;
     }
     let magic_etc = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
-    let valid_revision = matches!(
-        magic_etc & VFS_CAP_REVISION_MASK,
-        VFS_CAP_REVISION_1 | VFS_CAP_REVISION_2 | VFS_CAP_REVISION_3
-    );
-    if !valid_revision || (magic_etc & VFS_CAP_FLAGS_EFFECTIVE) == 0 {
+    let min_len = match magic_etc & VFS_CAP_REVISION_MASK {
+        VFS_CAP_REVISION_1 => 12,
+        VFS_CAP_REVISION_2 => 20,
+        VFS_CAP_REVISION_3 => 24,
+        _ => return false,
+    };
+    if raw.len() < min_len || (magic_etc & VFS_CAP_FLAGS_EFFECTIVE) == 0 {
         return false;
     }
     let permitted_low = u32::from_le_bytes([raw[4], raw[5], raw[6], raw[7]]);
@@ -103,10 +109,28 @@ fn getcap_output_has_cap_net_admin(output: &str) -> bool {
             let Some((caps, flags)) = lower.split_once(['=', '+']) else {
                 return false;
             };
-            caps.split(',')
-                .any(|cap| cap == "cap_net_admin" || cap == "all")
-                && flags.contains('e')
-                && flags.contains('p')
+            if caps.is_empty()
+                || flags.is_empty()
+                || caps.contains('/')
+                || flags.contains('/')
+                || !caps.split(',').all(|cap| {
+                    cap == "all"
+                        || (cap.starts_with("cap_")
+                            && cap.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+                })
+            {
+                return false;
+            }
+            let positive_flags = flags.split('-').next().unwrap_or("");
+            let valid_flags = flags
+                .bytes()
+                .all(|b| matches!(b, b'e' | b'i' | b'p' | b'+' | b'-' | b'='));
+            valid_flags
+                && caps
+                    .split(',')
+                    .any(|cap| cap == "cap_net_admin" || cap == "all")
+                && positive_flags.contains('e')
+                && positive_flags.contains('p')
         })
     })
 }
@@ -126,7 +150,7 @@ fn binary_has_cap_net_admin(path: &std::path::Path) -> bool {
                 buf.len(),
             )
         };
-        if len > 0 {
+        if len >= 0 {
             let len = usize::try_from(len).unwrap_or(0).min(buf.len());
             return vfs_cap_has_net_admin(&buf[..len]);
         }
@@ -212,10 +236,14 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
                 .map_err(|e| format!("Failed to create LaunchAgents directory: {e}"))?;
             let plist = format_macos_autostart_plist(&exe.to_string_lossy());
             crate::config::atomic_write(&path, plist.as_bytes())?;
-        } else if let Err(err) = std::fs::remove_file(&path)
-            && err.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(format!("Failed to remove LaunchAgent: {err}"));
+        } else {
+            if let Err(err) = std::fs::remove_file(&path)
+                && err.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(format!("Failed to remove LaunchAgent: {err}"));
+            }
+            let _ =
+                std::fs::remove_file(agents.join("io.github.zangge8855.sing-box-gui.plist.bak"));
         }
         return Ok(());
     }
@@ -231,10 +259,13 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
                 .map_err(|e| format!("Failed to create autostart directory: {e}"))?;
             let entry = format_linux_autostart_entry(&exe.to_string_lossy());
             crate::config::atomic_write(&path, entry.as_bytes())?;
-        } else if let Err(err) = std::fs::remove_file(&path)
-            && err.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(format!("Failed to remove autostart entry: {err}"));
+        } else {
+            if let Err(err) = std::fs::remove_file(&path)
+                && err.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(format!("Failed to remove autostart entry: {err}"));
+            }
+            let _ = std::fs::remove_file(autostart.join("sing-box-gui.desktop.bak"));
         }
         return Ok(());
     }
@@ -277,18 +308,21 @@ fn xml_escape(value: &str) -> String {
 
 #[cfg(any(target_os = "linux", test))]
 fn desktop_escape(value: &str) -> String {
-    // The Exec value is unescaped twice: the Desktop Entry string escape runs
-    // before quoted-argument parsing, `%` is a field-code prefix, and `` ` ``
-    // and `$` are reserved inside quoted arguments. A literal backslash must
-    // survive both levels, hence four backslashes.
+    // The Exec value is unescaped twice: first the Desktop Entry string rule
+    // decodes `\s`, `\n`, `\t`, `\r`, and `\\` (rejecting unknown `\` escapes),
+    // then quoted-argument parsing decodes `\"`, `\$`, `` \` ``, and `\\`
+    // inside `"..."`, and finally `%` field codes expand (`%%` -> `%`).
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
         match character {
             '\\' => escaped.push_str("\\\\\\\\"),
-            '"' => escaped.push_str("\\\""),
-            '$' => escaped.push_str("\\$"),
-            '`' => escaped.push_str("\\`"),
+            '"' => escaped.push_str("\\\\\""),
+            '$' => escaped.push_str("\\\\$"),
+            '`' => escaped.push_str("\\\\`"),
             '%' => escaped.push_str("%%"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
             _ => escaped.push(character),
         }
     }
@@ -297,6 +331,64 @@ fn desktop_escape(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// Two-stage XDG Desktop Entry `Exec=` parser used to verify round-tripping
+    /// against both string unescaping (`\s`, `\n`, `\t`, `\r`, `\\`) and
+    /// double-quoted Exec argument parsing + `%%` field-code expansion.
+    fn decode_desktop_exec_first_arg(exec_line_value: &str) -> Result<String, String> {
+        // Stage 1: General Desktop Entry string unescaping.
+        let mut stage1 = String::with_capacity(exec_line_value.len());
+        let mut chars = exec_line_value.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                match chars.next() {
+                    Some('s') => stage1.push(' '),
+                    Some('n') => stage1.push('\n'),
+                    Some('t') => stage1.push('\t'),
+                    Some('r') => stage1.push('\r'),
+                    Some('\\') => stage1.push('\\'),
+                    Some(other) => return Err(format!("invalid desktop escape \\{other}")),
+                    None => return Err("trailing backslash".to_string()),
+                }
+            } else {
+                stage1.push(ch);
+            }
+        }
+
+        // Stage 2: Extract first quoted argument and unescape `"`, `` ` ``, `$`, `\`.
+        let mut s2 = stage1.chars();
+        if s2.next() != Some('"') {
+            return Err("expected opening quote".to_string());
+        }
+        let mut unquoted = String::new();
+        while let Some(ch) = s2.next() {
+            match ch {
+                '\\' => match s2.next() {
+                    Some(esc @ ('"' | '`' | '$' | '\\')) => unquoted.push(esc),
+                    Some(other) => return Err(format!("invalid exec quote escape \\{other}")),
+                    None => return Err("unterminated escape".to_string()),
+                },
+                '"' => break,
+                _ => unquoted.push(ch),
+            }
+        }
+
+        // Stage 3: Field-code expansion (`%%` -> `%`).
+        let mut final_arg = String::with_capacity(unquoted.len());
+        let mut u = unquoted.chars();
+        while let Some(ch) = u.next() {
+            if ch == '%' {
+                match u.next() {
+                    Some('%') => final_arg.push('%'),
+                    Some(code) => return Err(format!("unexpected field code %{code}")),
+                    None => return Err("trailing %".to_string()),
+                }
+            } else {
+                final_arg.push(ch);
+            }
+        }
+        Ok(final_arg)
+    }
+
     #[test]
     fn desktop_escape_covers_exec_reserved_characters() {
         assert_eq!(
@@ -307,8 +399,24 @@ mod tests {
             super::desktop_escape("/home/u/100%backup/app"),
             "/home/u/100%%backup/app"
         );
-        assert_eq!(super::desktop_escape("a$b`c\"d"), "a\\$b\\`c\\\"d");
+        assert_eq!(super::desktop_escape("a$b`c\"d"), "a\\\\$b\\\\`c\\\\\"d");
         assert_eq!(super::desktop_escape("a\\b"), "a\\\\\\\\b");
+
+        for sample in [
+            "/usr/local/bin/sing-box-gui",
+            "/opt/My App (100%)/sing-box$gui`\"\\test",
+            "/tmp/a'b c\td",
+        ] {
+            let entry = super::format_linux_autostart_entry(sample);
+            let exec_val = entry
+                .lines()
+                .find_map(|line| line.strip_prefix("Exec="))
+                .expect("Exec line");
+            assert_eq!(
+                decode_desktop_exec_first_arg(exec_val).expect("valid desktop Exec"),
+                sample
+            );
+        }
     }
 
     #[test]
@@ -364,6 +472,13 @@ mod tests {
         assert!(!super::getcap_output_has_cap_net_admin(
             "/opt/sing-box cap_net_admin=p cap_net_bind_service=ep\n"
         ));
+        // Path containing `=`/`+` or negative `-e` flag must never match.
+        assert!(!super::getcap_output_has_cap_net_admin(
+            "/home/user/all=ep/sing-box cap_net_bind_service=ep\n"
+        ));
+        assert!(!super::getcap_output_has_cap_net_admin(
+            "/opt/sing-box cap_net_admin=p-e\n"
+        ));
     }
 
     #[test]
@@ -373,8 +488,18 @@ mod tests {
 
     #[test]
     fn vfs_cap_edge_cases_and_xml_escape_work() {
-        // Short buffer and invalid revision fail closed.
+        // Short buffer, truncated v2/v3, and invalid revision fail closed.
         assert!(!super::vfs_cap_has_net_admin(&[0u8; 8]));
+        let mut truncated_v2 = [0u8; 12];
+        truncated_v2[0..4].copy_from_slice(&0x0200_0001u32.to_le_bytes());
+        truncated_v2[4..8].copy_from_slice(&(1u32 << 12).to_le_bytes());
+        assert!(!super::vfs_cap_has_net_admin(&truncated_v2));
+
+        let mut truncated_v3 = [0u8; 20];
+        truncated_v3[0..4].copy_from_slice(&0x0300_0001u32.to_le_bytes());
+        truncated_v3[4..8].copy_from_slice(&(1u32 << 12).to_le_bytes());
+        assert!(!super::vfs_cap_has_net_admin(&truncated_v3));
+
         let mut v1 = [0u8; 12];
         v1[0..4].copy_from_slice(&0x0100_0001u32.to_le_bytes());
         v1[4..8].copy_from_slice(&(1u32 << 12).to_le_bytes());

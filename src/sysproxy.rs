@@ -10,30 +10,68 @@ fn backup_path() -> std::path::PathBuf {
 }
 
 #[allow(dead_code)]
-fn save_platform_backup(platform: &str, payload: serde_json::Value) -> Result<(), String> {
+fn save_platform_backup_to(
+    path: &std::path::Path,
+    platform: &str,
+    payload: serde_json::Value,
+) -> Result<(), String> {
     let value = serde_json::json!({ "platform": platform, "payload": payload });
     let bytes = serde_json::to_vec(&value)
         .map_err(|error| format!("Failed to serialize system proxy backup: {error}"))?;
-    crate::config::atomic_write(&backup_path(), &bytes)
+    crate::config::atomic_write(path, &bytes)
 }
 
 #[allow(dead_code)]
-fn load_platform_backup(platform: &str) -> Option<serde_json::Value> {
-    let bytes = std::fs::read(backup_path()).ok()?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+fn save_platform_backup(platform: &str, payload: serde_json::Value) -> Result<(), String> {
+    save_platform_backup_to(&backup_path(), platform, payload)
+}
+
+#[allow(dead_code)]
+fn parse_platform_backup_bytes(bytes: &[u8], platform: &str) -> Option<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     (value.get("platform")?.as_str()? == platform).then(|| value.get("payload").cloned())?
 }
 
 #[allow(dead_code)]
-fn clear_platform_backup() {
-    let path = backup_path();
-    let _ = std::fs::remove_file(&path);
+fn load_platform_backup_from(path: &std::path::Path, platform: &str) -> Option<serde_json::Value> {
+    // Only fall back to `.bak` when the primary file still exists (for example if
+    // a crash left a corrupt primary); an absent primary means backup was cleared.
+    if !path.exists() {
+        return None;
+    }
+    if let Ok(bytes) = std::fs::read(path)
+        && let Some(payload) = parse_platform_backup_bytes(&bytes, platform)
+    {
+        return Some(payload);
+    }
+    let file_name = path.file_name().and_then(|name| name.to_str())?;
+    let bak_path = path.with_file_name(format!("{file_name}.bak"));
+    let bak_bytes = std::fs::read(bak_path).ok()?;
+    parse_platform_backup_bytes(&bak_bytes, platform)
+}
+
+#[allow(dead_code)]
+fn load_platform_backup(platform: &str) -> Option<serde_json::Value> {
+    load_platform_backup_from(&backup_path(), platform)
+}
+
+#[allow(dead_code)]
+fn clear_platform_backup_at(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
     if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
         let _ = std::fs::remove_file(path.with_file_name(format!("{file_name}.bak")));
     }
 }
 
+#[allow(dead_code)]
+fn clear_platform_backup() {
+    clear_platform_backup_at(&backup_path());
+}
+
 pub fn set_system_proxy(enable: bool, port: u16) -> Result<(), String> {
+    if enable && port == 0 {
+        return Err("Proxy port must be greater than zero".to_string());
+    }
     let _guard = SYSPROXY_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     match platform::set_system_proxy(enable, port) {
         Ok(()) => {
@@ -90,7 +128,8 @@ fn is_owned_proxy_endpoint(
     expected_port: u16,
     recorded_port: Option<u16>,
 ) -> bool {
-    is_loopback_proxy_host(host)
+    configured_port > 0
+        && is_loopback_proxy_host(host)
         && (expected_port == 0
             || configured_port == expected_port
             || recorded_port == Some(configured_port))
@@ -281,6 +320,194 @@ fn restore_kde_no_proxy(original: &str, current: &str) -> String {
     restore_linux_ignore_hosts(&orig, &curr).join(",")
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn parse_windows_endpoint(endpoint: &str) -> Option<(String, u16)> {
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() {
+        return None;
+    }
+    let endpoint = endpoint
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(endpoint)
+        .trim()
+        .trim_end_matches('/');
+    if let Some(rest) = endpoint.strip_prefix('[') {
+        let (host, port) = rest.split_once("]:")?;
+        let host = host.trim();
+        let port = port.trim().parse::<u16>().ok().filter(|&p| p > 0)?;
+        return (!host.is_empty()).then(|| (host.to_string(), port));
+    }
+    let (host, port) = endpoint.rsplit_once(':')?;
+    let host = host.trim();
+    if host.is_empty() || host.contains(':') {
+        return None;
+    }
+    let port = port.trim().parse::<u16>().ok().filter(|&p| p > 0)?;
+    Some((host.to_string(), port))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn parse_windows_proxy_server(value: &str) -> Option<(String, u16)> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.contains('=') {
+        for preferred in ["http", "https", "socks", "socks5", "socks4"] {
+            if let Some(found) = trimmed.split(';').find_map(|part| {
+                let (scheme, endpoint) = part.split_once('=')?;
+                scheme
+                    .trim()
+                    .eq_ignore_ascii_case(preferred)
+                    .then(|| parse_windows_endpoint(endpoint))?
+            }) {
+                return Some(found);
+            }
+        }
+        return None;
+    }
+    parse_windows_endpoint(trimmed)
+}
+
+#[cfg(any(target_os = "windows", test))]
+const CONN_VERSION_IE6: u32 = 0x3C;
+#[cfg(any(target_os = "windows", test))]
+const CONN_VERSION_IE7: u32 = 0x46;
+#[cfg(any(target_os = "windows", test))]
+const PROXY_TYPE_DIRECT: u32 = 0x01;
+#[cfg(any(target_os = "windows", test))]
+const PROXY_TYPE_PROXY: u32 = 0x02;
+#[cfg(any(target_os = "windows", test))]
+const PROXY_TYPE_AUTO_PROXY_URL: u32 = 0x04;
+#[cfg(any(target_os = "windows", test))]
+const PROXY_TYPE_AUTO_DETECT: u32 = 0x08;
+#[cfg(any(target_os = "windows", test))]
+const MAX_CONN_STRING_LEN: usize = 65_536;
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WindowsConnectionSettings {
+    version: u32,
+    counter: u32,
+    flags: u32,
+    proxy_server: Vec<u8>,
+    proxy_override: Vec<u8>,
+    autoconfig_url: Vec<u8>,
+    footer: Vec<u8>,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl WindowsConnectionSettings {
+    fn parse(blob: &[u8]) -> Option<Self> {
+        if blob.len() < 24 {
+            return None;
+        }
+        let version = u32::from_le_bytes(blob[0..4].try_into().ok()?);
+        if !matches!(version, CONN_VERSION_IE6 | CONN_VERSION_IE7) {
+            return None;
+        }
+        let counter = u32::from_le_bytes(blob[4..8].try_into().ok()?);
+        let flags = u32::from_le_bytes(blob[8..12].try_into().ok()?);
+        let mut cursor = 12usize;
+
+        let read_len_field = |cursor: &mut usize| -> Option<Vec<u8>> {
+            let len_end = cursor.checked_add(4)?;
+            let len_bytes: [u8; 4] = blob.get(*cursor..len_end)?.try_into().ok()?;
+            let len = usize::try_from(u32::from_le_bytes(len_bytes)).ok()?;
+            if len > MAX_CONN_STRING_LEN {
+                return None;
+            }
+            let data_end = len_end.checked_add(len)?;
+            let data = blob.get(len_end..data_end)?.to_vec();
+            *cursor = data_end;
+            Some(data)
+        };
+
+        let proxy_server = read_len_field(&mut cursor)?;
+        let proxy_override = read_len_field(&mut cursor)?;
+        let autoconfig_url = read_len_field(&mut cursor)?;
+        let footer = blob.get(cursor..)?.to_vec();
+
+        Some(Self {
+            version,
+            counter,
+            flags,
+            proxy_server,
+            proxy_override,
+            autoconfig_url,
+            footer,
+        })
+    }
+
+    fn encode(&self) -> Result<Vec<u8>, String> {
+        let write_len_field = |out: &mut Vec<u8>, bytes: &[u8]| -> Result<(), String> {
+            if bytes.len() > MAX_CONN_STRING_LEN {
+                return Err("Windows connection setting string exceeds maximum length".to_string());
+            }
+            let len = u32::try_from(bytes.len())
+                .map_err(|_| "Windows connection setting length overflow".to_string())?;
+            out.extend_from_slice(&len.to_le_bytes());
+            out.extend_from_slice(bytes);
+            Ok(())
+        };
+
+        let total = 12usize
+            .saturating_add(12)
+            .saturating_add(self.proxy_server.len())
+            .saturating_add(self.proxy_override.len())
+            .saturating_add(self.autoconfig_url.len())
+            .saturating_add(self.footer.len());
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(&self.version.to_le_bytes());
+        out.extend_from_slice(&self.counter.to_le_bytes());
+        out.extend_from_slice(&self.flags.to_le_bytes());
+        write_len_field(&mut out, &self.proxy_server)?;
+        write_len_field(&mut out, &self.proxy_override)?;
+        write_len_field(&mut out, &self.autoconfig_url)?;
+        out.extend_from_slice(&self.footer);
+        Ok(out)
+    }
+
+    fn default_with_proxy(port: u16) -> Self {
+        Self {
+            version: CONN_VERSION_IE7,
+            counter: 1,
+            flags: PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY,
+            proxy_server: format!("127.0.0.1:{port}").into_bytes(),
+            proxy_override: merge_windows_proxy_override("").into_bytes(),
+            autoconfig_url: Vec::new(),
+            footer: vec![0u8; 32],
+        }
+    }
+
+    fn apply_proxy(&mut self, port: u16) {
+        self.counter = self.counter.wrapping_add(1);
+        self.flags = (self.flags & !(PROXY_TYPE_AUTO_PROXY_URL | PROXY_TYPE_AUTO_DETECT))
+            | PROXY_TYPE_DIRECT
+            | PROXY_TYPE_PROXY;
+        self.proxy_server = format!("127.0.0.1:{port}").into_bytes();
+        let current_override = String::from_utf8_lossy(&self.proxy_override);
+        self.proxy_override = merge_windows_proxy_override(&current_override).into_bytes();
+        self.autoconfig_url.clear();
+    }
+
+    fn clear_proxy(&mut self) {
+        self.counter = self.counter.wrapping_add(1);
+        self.flags = (self.flags & !PROXY_TYPE_PROXY) | PROXY_TYPE_DIRECT;
+    }
+
+    fn is_owned_endpoint(&self, expected_port: u16, recorded_port: Option<u16>) -> bool {
+        if (self.flags & PROXY_TYPE_PROXY) == 0 {
+            return false;
+        }
+        let server = String::from_utf8_lossy(&self.proxy_server);
+        parse_windows_proxy_server(&server).is_some_and(|(host, port)| {
+            is_owned_proxy_endpoint(&host, port, expected_port, recorded_port)
+        })
+    }
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn parse_kde_proxy_endpoint(raw: &str) -> Option<(String, u16)> {
     let trimmed = raw.trim();
@@ -291,17 +518,22 @@ fn parse_kde_proxy_endpoint(raw: &str) -> Option<(String, u16)> {
         .split_once("://")
         .map(|(_, rest)| rest)
         .unwrap_or(trimmed)
+        .trim()
         .trim_end_matches('/');
     if let Some(rest) = without_scheme.strip_prefix('[') {
-        let (host, port) = rest.split_once("]:")?;
+        let (host, after) = rest.split_once(']')?;
         let host = host.trim();
-        let port = port.trim().parse::<u16>().ok().filter(|&p| p > 0)?;
+        let after = after.trim();
+        let port_str = after.strip_prefix(':').unwrap_or(after).trim();
+        let port = port_str.parse::<u16>().ok().filter(|&p| p > 0)?;
         return (!host.is_empty()).then(|| (host.to_string(), port));
     }
     if let Some((host, port)) = without_scheme.rsplit_once(':') {
         let host = host.trim();
-        let port = port.trim().parse::<u16>().ok().filter(|&p| p > 0)?;
-        return (!host.is_empty()).then(|| (host.to_string(), port));
+        if !host.contains(':') {
+            let port = port.trim().parse::<u16>().ok().filter(|&p| p > 0)?;
+            return (!host.is_empty()).then(|| (host.to_string(), port));
+        }
     }
     let mut parts = without_scheme.split_whitespace();
     let host = parts.next()?.trim();
@@ -311,6 +543,9 @@ fn parse_kde_proxy_endpoint(raw: &str) -> Option<(String, u16)> {
         .parse::<u16>()
         .ok()
         .filter(|&p| p > 0)?;
+    if parts.next().is_some() {
+        return None;
+    }
     (!host.is_empty()).then(|| (host.to_string(), port))
 }
 
@@ -319,7 +554,7 @@ fn is_virtual_interface(device: &str) -> bool {
     let lower = device.trim().to_ascii_lowercase();
     [
         "utun", "tun", "tap", "ppp", "ipsec", "gif", "stf", "lo", "awdl", "llw", "bridge", "anpi",
-        "ap",
+        "ap", "vmnet", "vmenet", "vboxnet", "feth", "pktap",
     ]
     .iter()
     .any(|prefix| lower.starts_with(prefix))
@@ -425,12 +660,21 @@ fn parse_active_physical_devices_from_ifconfig(output: &str) -> Vec<String> {
             }
         } else if let Some(rest) = line.strip_prefix("inet ") {
             let ip = rest.split_whitespace().next().unwrap_or("");
-            if !ip.is_empty() && !ip.starts_with("127.") && !ip.starts_with("169.254.") {
+            if let Ok(addr) = ip.parse::<std::net::Ipv4Addr>()
+                && !addr.is_loopback()
+                && !addr.is_link_local()
+                && !addr.is_unspecified()
+            {
                 has_routable_ip = true;
             }
         } else if let Some(rest) = line.strip_prefix("inet6 ") {
             let ip = rest.split(['%', ' ']).next().unwrap_or("");
-            if !ip.is_empty() && ip != "::1" && !ip.to_ascii_lowercase().starts_with("fe80:") {
+            if let Ok(addr) = ip.parse::<std::net::Ipv6Addr>()
+                && !addr.is_loopback()
+                && !addr.is_unspecified()
+                && !addr.is_multicast()
+                && (addr.segments()[0] & 0xffc0) != 0xfe80
+            {
                 has_routable_ip = true;
             }
         }
@@ -479,6 +723,15 @@ fn select_macos_service(
     }
 
     if let Some((service, _)) = services.iter().find(|(service, s_dev)| {
+        !is_secondary_service(service)
+            && s_dev
+                .as_deref()
+                .is_some_and(|dev| !is_virtual_interface(dev))
+    }) {
+        return Some(service.clone());
+    }
+
+    if let Some((service, _)) = services.iter().find(|(service, s_dev)| {
         !is_secondary_service(service) && !s_dev.as_deref().is_some_and(is_virtual_interface)
     }) {
         return Some(service.clone());
@@ -501,14 +754,37 @@ fn merge_macos_bypass_domains(raw_existing: &str) -> Vec<String> {
     merge_linux_ignore_hosts(&parse_macos_bypass_domains(raw_existing))
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn parse_macos_proxy_output(output: &str) -> Result<(bool, String, u16), String> {
+    let value = |key: &str| {
+        output
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(key))
+            .map(str::trim)
+    };
+    let enabled = value("Enabled:").is_some_and(|v| v.eq_ignore_ascii_case("yes"));
+    let host = value("Server:").unwrap_or_default().to_string();
+    let port = value("Port:")
+        .filter(|s| !s.is_empty())
+        .unwrap_or("0")
+        .parse::<u16>()
+        .map_err(|e| format!("Failed to parse macOS proxy port: {e}"))?;
+    Ok((enabled, host, port))
+}
+
 #[cfg(target_os = "windows")]
 mod platform {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use std::collections::BTreeMap;
     use std::ffi::c_void;
     use std::ptr;
-    use winreg::RegKey;
-    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, RegType};
+    use winreg::{RegKey, RegValue};
 
     const INTERNET_SETTINGS: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings";
+    const CONNECTIONS_SUBKEY: &str = "Connections";
+    const DEFAULT_CONNECTION_SETTINGS: &str = "DefaultConnectionSettings";
     const INTERNET_OPTION_REFRESH: u32 = 37;
     const INTERNET_OPTION_SETTINGS_CHANGED: u32 = 39;
     const BACKUP_MARKER: &str = "SingBoxGuiProxyBackupVersion";
@@ -517,6 +793,14 @@ mod platform {
     const BACKUP_OVERRIDE: &str = "SingBoxGuiProxyBackupOverride";
     const BACKUP_AUTOCONFIGURL: &str = "SingBoxGuiProxyBackupAutoConfigUrl";
     const BACKUP_APPLIED_PORT: &str = "SingBoxGuiProxyBackupAppliedPort";
+    const BACKUP_CONNECTIONS: &str = "SingBoxGuiProxyBackupConnections";
+
+    #[derive(serde::Serialize, serde::Deserialize, Default)]
+    struct ConnectionsBackup {
+        entries: BTreeMap<String, String>,
+        #[serde(default)]
+        created: Vec<String>,
+    }
 
     #[link(name = "wininet")]
     unsafe extern "system" {
@@ -541,35 +825,9 @@ mod platform {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn parse_proxy_server(value: &str) -> Option<(String, u16)> {
-        let endpoint = if value.contains('=') {
-            value.split(';').find_map(|part| {
-                let (scheme, endpoint) = part.split_once('=')?;
-                let scheme = scheme.trim();
-                (scheme.eq_ignore_ascii_case("http")
-                    || scheme.eq_ignore_ascii_case("https")
-                    || scheme.eq_ignore_ascii_case("socks"))
-                .then_some(endpoint.trim())
-            })?
-        } else {
-            value.trim()
-        };
-        let endpoint = endpoint
-            .split_once("://")
-            .map(|(_, rest)| rest)
-            .unwrap_or(endpoint)
-            .trim_end_matches('/');
-
-        if let Some(rest) = endpoint.strip_prefix('[') {
-            let (host, port) = rest.split_once("]:")?;
-            let host = host.trim();
-            let port = port.trim().parse::<u16>().ok().filter(|&p| p > 0)?;
-            return (!host.is_empty()).then(|| (host.to_string(), port));
-        }
-        let (host, port) = endpoint.rsplit_once(':')?;
-        let host = host.trim();
-        let port = port.trim().parse::<u16>().ok().filter(|&p| p > 0)?;
-        (!host.is_empty()).then(|| (host.to_string(), port))
+        super::parse_windows_proxy_server(value)
     }
 
     fn clear_proxy_backup(settings: &RegKey) -> Result<(), String> {
@@ -578,6 +836,7 @@ mod platform {
         let _ = settings.delete_value(BACKUP_OVERRIDE);
         let _ = settings.delete_value(BACKUP_AUTOCONFIGURL);
         let _ = settings.delete_value(BACKUP_APPLIED_PORT);
+        let _ = settings.delete_value(BACKUP_CONNECTIONS);
         match settings.delete_value(BACKUP_MARKER) {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -585,6 +844,181 @@ mod platform {
                 "Failed to clear Windows proxy backup marker: {err}"
             )),
         }
+    }
+
+    fn snapshot_connections(settings: &RegKey) -> Result<String, String> {
+        let mut backup = ConnectionsBackup::default();
+        match settings.open_subkey_with_flags(CONNECTIONS_SUBKEY, KEY_READ) {
+            Ok(conns) => {
+                for item in conns.enum_values() {
+                    if let Ok((name, value)) = item
+                        && value.vtype == RegType::REG_BINARY
+                    {
+                        backup.entries.insert(name, STANDARD.encode(&value.bytes));
+                    }
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(format!(
+                    "Failed to read Windows proxy connections settings: {err}"
+                ));
+            }
+        }
+        if !backup.entries.contains_key(DEFAULT_CONNECTION_SETTINGS) {
+            backup.created.push(DEFAULT_CONNECTION_SETTINGS.to_string());
+        }
+        serde_json::to_string(&backup)
+            .map_err(|e| format!("Failed to serialize Windows connections backup: {e}"))
+    }
+
+    fn apply_connections_proxy(settings: &RegKey, port: u16) -> Result<(), String> {
+        let (conns, _) = settings
+            .create_subkey_with_flags(CONNECTIONS_SUBKEY, KEY_READ | KEY_SET_VALUE)
+            .map_err(|e| format!("Failed to open Windows proxy connections key: {e}"))?;
+        let mut updates: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut has_default = false;
+        for item in conns.enum_values() {
+            let (name, value) = match item {
+                Ok(pair) => pair,
+                Err(_) => continue,
+            };
+            if value.vtype != RegType::REG_BINARY {
+                continue;
+            }
+            if name == DEFAULT_CONNECTION_SETTINGS {
+                has_default = true;
+            }
+            if let Some(mut parsed) = super::WindowsConnectionSettings::parse(&value.bytes) {
+                parsed.apply_proxy(port);
+                updates.push((name, parsed.encode()?));
+            }
+        }
+        if !has_default {
+            let encoded = super::WindowsConnectionSettings::default_with_proxy(port).encode()?;
+            updates.push((DEFAULT_CONNECTION_SETTINGS.to_string(), encoded));
+        }
+        for (name, bytes) in updates {
+            conns
+                .set_raw_value(
+                    &name,
+                    &RegValue {
+                        bytes,
+                        vtype: RegType::REG_BINARY,
+                    },
+                )
+                .map_err(|e| format!("Failed to update Windows connection '{name}': {e}"))?;
+        }
+        Ok(())
+    }
+
+    fn restore_connections_backup(
+        settings: &RegKey,
+        expected_port: u16,
+        recorded_port: Option<u16>,
+        force: bool,
+    ) -> Result<(), String> {
+        let Ok(raw_json) = settings.get_value::<String, _>(BACKUP_CONNECTIONS) else {
+            return Ok(());
+        };
+        let backup: ConnectionsBackup = serde_json::from_str(&raw_json)
+            .map_err(|e| format!("Failed to parse Windows connections backup: {e}"))?;
+        let conns =
+            match settings.open_subkey_with_flags(CONNECTIONS_SUBKEY, KEY_READ | KEY_SET_VALUE) {
+                Ok(key) => key,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(err) => {
+                    return Err(format!(
+                        "Failed to open Windows proxy connections key for restore: {err}"
+                    ));
+                }
+            };
+
+        for (name, encoded_bytes) in backup.entries {
+            let bytes = STANDARD
+                .decode(encoded_bytes.as_bytes())
+                .map_err(|e| format!("Failed to decode Windows connection backup '{name}': {e}"))?;
+            if !force
+                && let Ok(current) = conns.get_raw_value(&name)
+                && current.vtype == RegType::REG_BINARY
+                && let Some(parsed) = super::WindowsConnectionSettings::parse(&current.bytes)
+                && !parsed.is_owned_endpoint(expected_port, recorded_port)
+            {
+                continue;
+            }
+            conns
+                .set_raw_value(
+                    &name,
+                    &RegValue {
+                        bytes,
+                        vtype: RegType::REG_BINARY,
+                    },
+                )
+                .map_err(|e| format!("Failed to restore Windows connection '{name}': {e}"))?;
+        }
+
+        for name in backup.created {
+            if !force
+                && let Ok(current) = conns.get_raw_value(&name)
+                && current.vtype == RegType::REG_BINARY
+                && let Some(parsed) = super::WindowsConnectionSettings::parse(&current.bytes)
+                && !parsed.is_owned_endpoint(expected_port, recorded_port)
+            {
+                continue;
+            }
+            if let Err(err) = conns.delete_value(&name)
+                && err.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(format!(
+                    "Failed to clean up Windows connection '{name}': {err}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn clear_unowned_connections(settings: &RegKey, port: u16) -> Result<(), String> {
+        if port == 0 {
+            return Ok(());
+        }
+        let conns =
+            match settings.open_subkey_with_flags(CONNECTIONS_SUBKEY, KEY_READ | KEY_SET_VALUE) {
+                Ok(key) => key,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(err) => {
+                    return Err(format!(
+                        "Failed to open Windows proxy connections key: {err}"
+                    ));
+                }
+            };
+        let mut updates = Vec::new();
+        for item in conns.enum_values() {
+            let (name, value) = match item {
+                Ok(pair) => pair,
+                Err(_) => continue,
+            };
+            if value.vtype != RegType::REG_BINARY {
+                continue;
+            }
+            if let Some(mut parsed) = super::WindowsConnectionSettings::parse(&value.bytes)
+                && parsed.is_owned_endpoint(port, None)
+            {
+                parsed.clear_proxy();
+                updates.push((name, parsed.encode()?));
+            }
+        }
+        for (name, bytes) in updates {
+            conns
+                .set_raw_value(
+                    &name,
+                    &RegValue {
+                        bytes,
+                        vtype: RegType::REG_BINARY,
+                    },
+                )
+                .map_err(|e| format!("Failed to disable Windows connection '{name}': {e}"))?;
+        }
+        Ok(())
     }
 
     pub fn has_persisted_backup() -> bool {
@@ -595,6 +1029,22 @@ mod platform {
             .is_some()
     }
 
+    fn is_existing_backup_still_owned(settings: &RegKey, expected_port: u16) -> bool {
+        let current_enable: u32 = settings.get_value("ProxyEnable").unwrap_or_default();
+        if current_enable == 0 {
+            return false;
+        }
+        let current_server: String = settings.get_value("ProxyServer").unwrap_or_default();
+        let recorded_port: Option<u16> = settings
+            .get_value::<u32, _>(BACKUP_APPLIED_PORT)
+            .ok()
+            .and_then(|p| u16::try_from(p).ok())
+            .filter(|&p| p > 0);
+        parse_proxy_server(&current_server).is_some_and(|(host, port)| {
+            super::is_owned_proxy_endpoint(&host, port, expected_port, recorded_port)
+        })
+    }
+
     fn restore_proxy_backup(
         settings: &RegKey,
         expected_port: u16,
@@ -603,17 +1053,12 @@ mod platform {
         if settings.get_value::<u32, _>(BACKUP_MARKER).is_err() {
             return Ok(false);
         }
-        let current_enable: u32 = settings.get_value("ProxyEnable").unwrap_or_default();
-        let current_server: String = settings.get_value("ProxyServer").unwrap_or_default();
         let recorded_port: Option<u16> = settings
             .get_value::<u32, _>(BACKUP_APPLIED_PORT)
             .ok()
             .and_then(|p| u16::try_from(p).ok())
             .filter(|&p| p > 0);
-        let is_local_proxy = parse_proxy_server(&current_server).is_some_and(|(host, port)| {
-            super::is_owned_proxy_endpoint(&host, port, expected_port, recorded_port)
-        });
-        let still_owned = current_enable != 0 && is_local_proxy;
+        let still_owned = is_existing_backup_still_owned(settings, expected_port);
         if !force && !still_owned {
             clear_proxy_backup(settings)?;
             return Ok(true);
@@ -644,6 +1089,7 @@ mod platform {
             settings
                 .set_value("ProxyEnable", &original_enable)
                 .map_err(|e| format!("Failed to restore Windows proxy state: {e}"))?;
+            restore_connections_backup(settings, expected_port, recorded_port, force)?;
         }
 
         clear_proxy_backup(settings)?;
@@ -657,10 +1103,14 @@ mod platform {
             .map_err(|e| format!("Failed to open Windows proxy settings: {e}"))?;
         if enable {
             // Snapshot all user-controlled proxy values before the first
-            // enable. The backup survives an app restart and lets shutdown
-            // restore an already-enabled corporate proxy instead of blindly
-            // forcing Windows back to "direct".
-            let marker: Option<u32> = settings.get_value(BACKUP_MARKER).ok();
+            // enable. If a leftover backup exists from an earlier crash but the
+            // user has since disabled or changed the proxy, discard the stale
+            // backup and capture the current settings instead.
+            let mut marker: Option<u32> = settings.get_value(BACKUP_MARKER).ok();
+            if marker.is_some() && !is_existing_backup_still_owned(&settings, port) {
+                clear_proxy_backup(&settings)?;
+                marker = None;
+            }
             let current_override: String = settings.get_value("ProxyOverride").unwrap_or_default();
             let pac_to_clear = settings
                 .get_value::<String, _>("AutoConfigURL")
@@ -669,23 +1119,34 @@ mod platform {
             if marker.is_none() {
                 let original_enable: u32 = settings.get_value("ProxyEnable").unwrap_or_default();
                 let original_server: String = settings.get_value("ProxyServer").unwrap_or_default();
-                if let Some(ref pac) = pac_to_clear {
+                let connections_json = snapshot_connections(&settings)?;
+                let snapshot_result = (|| {
+                    if let Some(ref pac) = pac_to_clear {
+                        settings
+                            .set_value(BACKUP_AUTOCONFIGURL, pac)
+                            .map_err(|e| format!("Failed to back up Windows proxy state: {e}"))?;
+                    }
                     settings
-                        .set_value(BACKUP_AUTOCONFIGURL, pac)
+                        .set_value(BACKUP_ENABLE, &original_enable)
                         .map_err(|e| format!("Failed to back up Windows proxy state: {e}"))?;
+                    settings
+                        .set_value(BACKUP_SERVER, &original_server)
+                        .map_err(|e| format!("Failed to back up Windows proxy server: {e}"))?;
+                    settings
+                        .set_value(BACKUP_OVERRIDE, &current_override)
+                        .map_err(|e| format!("Failed to back up Windows bypass list: {e}"))?;
+                    settings
+                        .set_value(BACKUP_CONNECTIONS, &connections_json)
+                        .map_err(|e| format!("Failed to back up Windows connections: {e}"))?;
+                    settings
+                        .set_value(BACKUP_MARKER, &1u32)
+                        .map_err(|e| format!("Failed to mark Windows proxy backup: {e}"))?;
+                    Ok::<(), String>(())
+                })();
+                if let Err(err) = snapshot_result {
+                    let _ = clear_proxy_backup(&settings);
+                    return Err(err);
                 }
-                settings
-                    .set_value(BACKUP_ENABLE, &original_enable)
-                    .map_err(|e| format!("Failed to back up Windows proxy state: {e}"))?;
-                settings
-                    .set_value(BACKUP_SERVER, &original_server)
-                    .map_err(|e| format!("Failed to back up Windows proxy server: {e}"))?;
-                settings
-                    .set_value(BACKUP_OVERRIDE, &current_override)
-                    .map_err(|e| format!("Failed to back up Windows bypass list: {e}"))?;
-                settings
-                    .set_value(BACKUP_MARKER, &1u32)
-                    .map_err(|e| format!("Failed to mark Windows proxy backup: {e}"))?;
             } else if let Some(ref pac) = pac_to_clear
                 && settings
                     .get_value::<String, _>(BACKUP_AUTOCONFIGURL)
@@ -711,10 +1172,13 @@ mod platform {
                 settings
                     .set_value("ProxyServer", &format!("127.0.0.1:{port}"))
                     .map_err(|e| format!("Failed to update Windows proxy server: {e}"))?;
-                let _ = settings.set_value(BACKUP_APPLIED_PORT, &u32::from(port));
+                settings
+                    .set_value(BACKUP_APPLIED_PORT, &u32::from(port))
+                    .map_err(|e| format!("Failed to record Windows applied proxy port: {e}"))?;
                 settings
                     .set_value("ProxyEnable", &1u32)
                     .map_err(|e| format!("Failed to update Windows proxy state: {e}"))?;
+                apply_connections_proxy(&settings, port)?;
                 Ok::<(), String>(())
             })();
             if let Err(error) = apply_result {
@@ -738,6 +1202,7 @@ mod platform {
                     settings
                         .set_value("ProxyEnable", &0u32)
                         .map_err(|e| format!("Failed to disable Windows proxy: {e}"))?;
+                    clear_unowned_connections(&settings, port)?;
                 }
             }
         }
@@ -884,14 +1349,17 @@ mod platform {
     }
 
     fn kde_notify_reparse() {
-        let _ = Command::new("dbus-send")
-            .args([
-                "--session",
-                "--type=signal",
-                "/KIO/Scheduler",
-                "org.kde.KIO.Scheduler.reparseConfiguration",
-            ])
-            .output();
+        for signal in [
+            ("org.kde.KIO.Scheduler.reparseSlaveConfiguration", true),
+            ("org.kde.KIO.Scheduler.reparseConfiguration", false),
+        ] {
+            let mut cmd = Command::new("dbus-send");
+            cmd.args(["--session", "--type=signal", "/KIO/Scheduler", signal.0]);
+            if signal.1 {
+                cmd.arg("string:");
+            }
+            let _ = cmd.output();
+        }
     }
 
     fn kde_is_usable() -> bool {
@@ -900,13 +1368,16 @@ mod platform {
 
     fn get_gnome_system_proxy() -> Result<(bool, String, u16), String> {
         let enabled = get_gnome_value(PROXY_SCHEMA, "mode")? == "'manual'";
+        if !enabled {
+            return Ok((false, String::new(), 0));
+        }
         let host = get_gnome_value(&format!("{PROXY_SCHEMA}.http"), "host")?
             .trim_matches(['\'', '"'])
             .to_string();
         let port = get_gnome_value(&format!("{PROXY_SCHEMA}.http"), "port")?
             .parse::<u16>()
             .map_err(|e| format!("Failed to parse GNOME proxy port: {e}"))?;
-        Ok((enabled, host, port))
+        Ok((true, host, port))
     }
 
     fn get_kde_system_proxy() -> Result<(bool, String, u16), String> {
@@ -949,7 +1420,13 @@ mod platform {
             "proxy_type".to_string(),
             serde_json::Value::String(kde_read_key("ProxyType")?),
         );
-        for key in ["httpProxy", "httpsProxy", "socksProxy", "NoProxyFor"] {
+        for key in [
+            "httpProxy",
+            "httpsProxy",
+            "socksProxy",
+            "NoProxyFor",
+            "ReversedException",
+        ] {
             values.insert(
                 key.to_string(),
                 serde_json::Value::String(kde_read_key(key)?),
@@ -959,12 +1436,12 @@ mod platform {
     }
 
     fn apply_gnome(port: u16) -> Result<(), String> {
+        let existing_raw = get_gnome_value(PROXY_SCHEMA, "ignore-hosts")?;
         for service in ["http", "https", "socks"] {
             let schema = format!("{PROXY_SCHEMA}.{service}");
             set_gnome_value(&schema, "host", "'127.0.0.1'")?;
             set_gnome_value(&schema, "port", &port.to_string())?;
         }
-        let existing_raw = get_gnome_value(PROXY_SCHEMA, "ignore-hosts").unwrap_or_default();
         let merged =
             super::merge_linux_ignore_hosts(&super::parse_gsettings_string_array(&existing_raw));
         set_gnome_value(
@@ -978,13 +1455,14 @@ mod platform {
     fn apply_kde(port: u16) -> Result<(), String> {
         let http_url = format!("http://127.0.0.1:{port}");
         let socks_url = format!("socks://127.0.0.1:{port}");
-        let existing_no_proxy = kde_read_key("NoProxyFor").unwrap_or_default();
+        let existing_no_proxy = kde_read_key("NoProxyFor")?;
         let merged_no_proxy = super::merge_kde_no_proxy(&existing_no_proxy);
 
         kde_write_key("httpProxy", Some(&http_url))?;
         kde_write_key("httpsProxy", Some(&http_url))?;
         kde_write_key("socksProxy", Some(&socks_url))?;
         kde_write_key("NoProxyFor", Some(&merged_no_proxy))?;
+        kde_write_key("ReversedException", None)?;
         kde_write_key("ProxyType", Some("1"))?;
         kde_notify_reparse();
         Ok(())
@@ -1063,6 +1541,12 @@ mod platform {
             let orig = values.get(key).and_then(|v| v.as_str()).unwrap_or("");
             kde_write_key(key, (!orig.is_empty()).then_some(orig))?;
         }
+        if let Some(orig_reversed) = values.get("ReversedException").and_then(|v| v.as_str()) {
+            kde_write_key(
+                "ReversedException",
+                (!orig_reversed.is_empty()).then_some(orig_reversed),
+            )?;
+        }
         if let Some(orig_no_proxy) = values.get("NoProxyFor").and_then(|v| v.as_str()) {
             let current_no_proxy = kde_read_key("NoProxyFor").unwrap_or_default();
             let restored = super::restore_kde_no_proxy(orig_no_proxy, &current_no_proxy);
@@ -1085,6 +1569,38 @@ mod platform {
         )?;
         kde_notify_reparse();
         Ok(())
+    }
+
+    fn is_existing_linux_backup_still_owned(
+        obj: &serde_json::Map<String, serde_json::Value>,
+        expected_port: u16,
+    ) -> bool {
+        let recorded_port = obj
+            .get("applied_port")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u16::try_from(v).ok())
+            .filter(|&p| p > 0);
+        let gnome_owned = (obj.contains_key("gnome") || obj.contains_key("mode"))
+            && get_gnome_system_proxy().is_ok_and(|(enabled, host, configured_port)| {
+                enabled
+                    && super::is_owned_proxy_endpoint(
+                        &host,
+                        configured_port,
+                        expected_port,
+                        recorded_port,
+                    )
+            });
+        let kde_owned = obj.contains_key("kde")
+            && get_kde_system_proxy().is_ok_and(|(enabled, host, configured_port)| {
+                enabled
+                    && super::is_owned_proxy_endpoint(
+                        &host,
+                        configured_port,
+                        expected_port,
+                        recorded_port,
+                    )
+            });
+        gnome_owned || kde_owned
     }
 
     fn restore_backup(expected_port: u16, force: bool) -> Result<bool, String> {
@@ -1141,14 +1657,34 @@ mod platform {
                 );
             }
 
-            if let Some(mut existing) = super::load_platform_backup("linux") {
-                if let Some(obj) = existing.as_object_mut()
-                    && obj.get("applied_port").and_then(|v| v.as_u64()) != Some(u64::from(port))
-                {
-                    obj.insert("applied_port".to_string(), serde_json::json!(port));
-                    super::save_platform_backup("linux", existing)?;
+            let reusable_backup = super::load_platform_backup("linux").filter(|existing| {
+                existing
+                    .as_object()
+                    .is_some_and(|obj| is_existing_linux_backup_still_owned(obj, port))
+            });
+            if let Some(mut existing) = reusable_backup {
+                if let Some(obj) = existing.as_object_mut() {
+                    let mut dirty = false;
+                    if obj.get("applied_port").and_then(|v| v.as_u64()) != Some(u64::from(port)) {
+                        obj.insert("applied_port".to_string(), serde_json::json!(port));
+                        dirty = true;
+                    }
+                    if use_gnome && !obj.contains_key("gnome") && !obj.contains_key("mode") {
+                        obj.insert("gnome".to_string(), snapshot_gnome()?);
+                        dirty = true;
+                    }
+                    if use_kde && !obj.contains_key("kde") {
+                        obj.insert("kde".to_string(), snapshot_kde()?);
+                        dirty = true;
+                    }
+                    if dirty {
+                        super::save_platform_backup("linux", existing)?;
+                    }
                 }
             } else {
+                if super::load_platform_backup("linux").is_some() {
+                    super::clear_platform_backup();
+                }
                 let mut payload = serde_json::Map::new();
                 payload.insert("applied_port".to_string(), serde_json::json!(port));
                 if use_gnome {
@@ -1249,15 +1785,19 @@ mod platform {
         super::service_for_interface_in_order(order, device)
     }
 
+    fn default_route_interface(args: &[&str]) -> Option<String> {
+        run("route", args).ok().and_then(|route| {
+            String::from_utf8_lossy(&route.stdout)
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("interface:"))
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+    }
+
     fn default_network_service() -> Result<String, String> {
-        let route_device = run("route", &["-n", "get", "default"])
-            .ok()
-            .and_then(|route| {
-                String::from_utf8_lossy(&route.stdout)
-                    .lines()
-                    .find_map(|line| line.trim().strip_prefix("interface:"))
-                    .map(|s| s.trim().to_string())
-            });
+        let route_device = default_route_interface(&["-n", "get", "default"])
+            .or_else(|| default_route_interface(&["-n", "get", "-inet6", "default"]));
 
         let order = run("networksetup", &["-listnetworkserviceorder"])?;
         let services = super::parse_network_service_order(&String::from_utf8_lossy(&order.stdout));
@@ -1284,18 +1824,6 @@ mod platform {
 
         super::select_macos_service(&services, route_device.as_deref(), &active_devices)
             .ok_or_else(|| "No enabled macOS network service was found".to_string())
-    }
-
-    fn backup_service() -> Result<Option<String>, String> {
-        let Some(payload) = super::load_platform_backup("macos") else {
-            return Ok(None);
-        };
-        let service = payload
-            .get("service")
-            .and_then(|value| value.as_str())
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| "Invalid macOS proxy backup service".to_string())?;
-        Ok(Some(service.to_string()))
     }
 
     fn set_proxy(service: &str, kind: &str, enable: bool, port: u16) -> Result<(), String> {
@@ -1332,20 +1860,28 @@ mod platform {
     }
 
     fn parse_proxy(output: &str) -> Result<(bool, String, u16), String> {
-        let value = |key: &str| {
-            output
-                .lines()
-                .find_map(|line| line.trim().strip_prefix(key))
-                .map(str::trim)
-        };
-        let enabled = value("Enabled:").is_some_and(|v| v.eq_ignore_ascii_case("yes"));
-        let host = value("Server:").unwrap_or_default().to_string();
-        let port = value("Port:")
-            .filter(|s| !s.is_empty())
-            .unwrap_or("0")
-            .parse::<u16>()
-            .map_err(|e| format!("Failed to parse macOS proxy port: {e}"))?;
-        Ok((enabled, host, port))
+        super::parse_macos_proxy_output(output)
+    }
+
+    fn is_existing_macos_backup_still_owned(
+        payload: &serde_json::Value,
+        expected_port: u16,
+    ) -> Option<String> {
+        let service = payload
+            .get("service")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.trim().is_empty())?;
+        let recorded_port = payload
+            .get("applied_port")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u16::try_from(v).ok())
+            .filter(|&p| p > 0);
+        let output = run("networksetup", &["-getwebproxy", service]).ok()?;
+        let (enabled, host, configured_port) =
+            parse_proxy(&String::from_utf8_lossy(&output.stdout)).ok()?;
+        (enabled
+            && super::is_owned_proxy_endpoint(&host, configured_port, expected_port, recorded_port))
+        .then(|| service.to_string())
     }
 
     fn restore_backup(expected_port: u16, force: bool) -> Result<bool, String> {
@@ -1430,50 +1966,56 @@ mod platform {
     pub fn set_system_proxy(enable: bool, port: u16) -> Result<(), String> {
         if enable {
             // If the process is reapplying a proxy after a restart or a port
-            // change, keep using the service captured in the durable snapshot.
-            let service = if let Some(saved) = backup_service()? {
-                saved
-            } else {
-                default_network_service()?
+            // change, keep using the service captured in the durable snapshot,
+            // provided that service still holds our owned proxy endpoint.
+            let reusable = super::load_platform_backup("macos").and_then(|existing| {
+                is_existing_macos_backup_still_owned(&existing, port)
+                    .map(|service| (service, existing))
+            });
+            let (service, existing_backup) = match reusable {
+                Some((service, existing)) => (service, Some(existing)),
+                None => {
+                    if super::load_platform_backup("macos").is_some() {
+                        super::clear_platform_backup();
+                    }
+                    (default_network_service()?, None)
+                }
             };
             let mut snapshot_parsed: Option<Vec<(&'static str, (bool, String, u16))>> = None;
-            let current_bypass_raw =
-                if let Some(mut existing) = super::load_platform_backup("macos") {
-                    if let Some(obj) = existing.as_object_mut()
-                        && obj.get("applied_port").and_then(|v| v.as_u64()) != Some(u64::from(port))
-                    {
-                        obj.insert("applied_port".to_string(), serde_json::json!(port));
-                        super::save_platform_backup("macos", existing)?;
+            let current_bypass_raw = if let Some(mut existing) = existing_backup {
+                if let Some(obj) = existing.as_object_mut()
+                    && obj.get("applied_port").and_then(|v| v.as_u64()) != Some(u64::from(port))
+                {
+                    obj.insert("applied_port".to_string(), serde_json::json!(port));
+                    super::save_platform_backup("macos", existing)?;
+                }
+                let output = run("networksetup", &["-getproxybypassdomains", &service])?;
+                String::from_utf8_lossy(&output.stdout).into_owned()
+            } else {
+                let mut kinds = serde_json::Map::new();
+                let mut parsed = Vec::with_capacity(3);
+                for kind in ["webproxy", "securewebproxy", "socksfirewallproxy"] {
+                    let output = run("networksetup", &[&format!("-get{kind}"), &service])?;
+                    let raw = String::from_utf8_lossy(&output.stdout).into_owned();
+                    if let Ok(state) = parse_proxy(&raw) {
+                        parsed.push((kind, state));
                     }
-                    run("networksetup", &["-getproxybypassdomains", &service])
-                        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-                        .unwrap_or_default()
-                } else {
-                    let mut kinds = serde_json::Map::new();
-                    let mut parsed = Vec::with_capacity(3);
-                    for kind in ["webproxy", "securewebproxy", "socksfirewallproxy"] {
-                        let output = run("networksetup", &[&format!("-get{kind}"), &service])?;
-                        let raw = String::from_utf8_lossy(&output.stdout).into_owned();
-                        if let Ok(state) = parse_proxy(&raw) {
-                            parsed.push((kind, state));
-                        }
-                        kinds.insert(kind.to_string(), serde_json::Value::String(raw));
-                    }
-                    snapshot_parsed = Some(parsed);
-                    let bypass = run("networksetup", &["-getproxybypassdomains", &service])
-                        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-                        .unwrap_or_default();
-                    super::save_platform_backup(
-                        "macos",
-                        serde_json::json!({
-                            "service": service,
-                            "applied_port": port,
-                            "kinds": kinds,
-                            "bypass": bypass,
-                        }),
-                    )?;
-                    bypass
-                };
+                    kinds.insert(kind.to_string(), serde_json::Value::String(raw));
+                }
+                snapshot_parsed = Some(parsed);
+                let bypass_output = run("networksetup", &["-getproxybypassdomains", &service])?;
+                let bypass = String::from_utf8_lossy(&bypass_output.stdout).into_owned();
+                super::save_platform_backup(
+                    "macos",
+                    serde_json::json!({
+                        "service": service,
+                        "applied_port": port,
+                        "kinds": kinds,
+                        "bypass": bypass,
+                    }),
+                )?;
+                bypass
+            };
             let existing_domains = super::parse_macos_bypass_domains(&current_bypass_raw);
             let merged_domains = super::merge_macos_bypass_domains(&current_bypass_raw);
             let apply_result = (|| {
@@ -1726,6 +2268,191 @@ en1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
 
         assert_eq!(parse_kde_proxy_endpoint(":2080"), None);
         assert_eq!(parse_kde_proxy_endpoint("127.0.0.1:0"), None);
+        assert_eq!(parse_kde_proxy_endpoint("::1"), None);
+        assert_eq!(parse_kde_proxy_endpoint("fe80::1"), None);
+        assert_eq!(
+            parse_kde_proxy_endpoint("[::1] 2080"),
+            Some(("::1".to_string(), 2080))
+        );
+        assert_eq!(
+            parse_kde_proxy_endpoint("::1 2080"),
+            Some(("::1".to_string(), 2080))
+        );
+    }
+
+    #[test]
+    fn reject_zero_port_and_zero_configured_ownership() {
+        assert!(!is_owned_proxy_endpoint("127.0.0.1", 0, 0, None));
+        assert!(!is_owned_proxy_endpoint("127.0.0.1", 0, 2080, Some(0)));
+        assert!(set_system_proxy(true, 0).is_err());
+    }
+
+    #[test]
+    fn platform_backup_atomic_persistence_and_corrupt_primary_recovery() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("system-proxy-backup.json");
+        let bak_path = dir.path().join("system-proxy-backup.json.bak");
+
+        save_platform_backup_to(&path, "linux", serde_json::json!({"applied_port": 2080}))
+            .expect("first save");
+        save_platform_backup_to(&path, "linux", serde_json::json!({"applied_port": 2081}))
+            .expect("second save creates .bak");
+        assert!(bak_path.exists());
+        assert_eq!(
+            load_platform_backup_from(&path, "linux")
+                .and_then(|v| v.get("applied_port").and_then(|p| p.as_u64())),
+            Some(2081)
+        );
+        assert!(load_platform_backup_from(&path, "macos").is_none());
+
+        // Corrupt primary falls back to `.bak` while primary still exists.
+        std::fs::write(&path, b"{broken").expect("corrupt primary");
+        assert_eq!(
+            load_platform_backup_from(&path, "linux")
+                .and_then(|v| v.get("applied_port").and_then(|p| p.as_u64())),
+            Some(2080)
+        );
+
+        // Once cleared, even a lingering `.bak` must never resurrect the backup.
+        clear_platform_backup_at(&path);
+        assert!(!path.exists());
+        assert!(!bak_path.exists());
+        std::fs::write(
+            &bak_path,
+            br#"{"platform":"linux","payload":{"applied_port":9999}}"#,
+        )
+        .expect("write stray bak");
+        assert!(load_platform_backup_from(&path, "linux").is_none());
+    }
+
+    #[test]
+    fn windows_proxy_server_priority_and_ipv6_rejections() {
+        assert_eq!(
+            parse_windows_proxy_server("https=10.0.0.1:8443;http=127.0.0.1:2080"),
+            Some(("127.0.0.1".to_string(), 2080))
+        );
+        assert_eq!(
+            parse_windows_proxy_server("http=invalid;https=127.0.0.1:2081"),
+            Some(("127.0.0.1".to_string(), 2081))
+        );
+        assert_eq!(
+            parse_windows_proxy_server("socks5=127.0.0.1:1080"),
+            Some(("127.0.0.1".to_string(), 1080))
+        );
+        assert_eq!(
+            parse_windows_proxy_server("[::1]:2080"),
+            Some(("::1".to_string(), 2080))
+        );
+        assert_eq!(parse_windows_proxy_server("::1"), None);
+        assert_eq!(parse_windows_proxy_server("fe80::1"), None);
+        assert_eq!(parse_windows_proxy_server("ftp=127.0.0.1:21"), None);
+    }
+
+    #[test]
+    fn windows_connections_binary_parse_bounds_and_mutation() {
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&CONN_VERSION_IE7.to_le_bytes());
+        blob.extend_from_slice(&u32::MAX.to_le_bytes());
+        blob.extend_from_slice(
+            &(PROXY_TYPE_DIRECT | PROXY_TYPE_AUTO_DETECT | PROXY_TYPE_AUTO_PROXY_URL).to_le_bytes(),
+        );
+        let pac = b"http://example.com/proxy.pac";
+        let ovr = b"*.corp.local";
+        blob.extend_from_slice(&0u32.to_le_bytes()); // proxy_len = 0
+        blob.extend_from_slice(&(ovr.len() as u32).to_le_bytes());
+        blob.extend_from_slice(ovr);
+        blob.extend_from_slice(&(pac.len() as u32).to_le_bytes());
+        blob.extend_from_slice(pac);
+        blob.extend_from_slice(&[0xAA; 32]);
+
+        let mut parsed = WindowsConnectionSettings::parse(&blob).expect("valid 0x46 blob");
+        assert_eq!(parsed.version, CONN_VERSION_IE7);
+        assert_eq!(parsed.counter, u32::MAX);
+        assert!(!parsed.is_owned_endpoint(2080, None));
+
+        parsed.apply_proxy(2080);
+        assert_eq!(parsed.counter, 0);
+        assert_eq!(parsed.flags, PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY);
+        assert_eq!(parsed.proxy_server, b"127.0.0.1:2080");
+        assert!(parsed.autoconfig_url.is_empty());
+        assert_eq!(parsed.footer, vec![0xAA; 32]);
+        assert!(parsed.is_owned_endpoint(2080, None));
+        assert!(parsed.is_owned_endpoint(2081, Some(2080)));
+        assert!(!parsed.is_owned_endpoint(7890, Some(7890)));
+
+        let mut foreign = parsed.clone();
+        foreign.proxy_server = b"127.0.0.1:7890".to_vec();
+        assert!(!foreign.is_owned_endpoint(2080, Some(2080)));
+
+        let encoded = parsed.encode().expect("encode");
+        let reparsed = WindowsConnectionSettings::parse(&encoded).expect("reparse");
+        assert_eq!(reparsed, parsed);
+
+        parsed.clear_proxy();
+        assert_eq!(parsed.flags, PROXY_TYPE_DIRECT);
+        assert!(!parsed.is_owned_endpoint(2080, None));
+
+        let fresh = WindowsConnectionSettings::default_with_proxy(3080);
+        assert!(fresh.is_owned_endpoint(3080, None));
+        assert_eq!(fresh.footer.len(), 32);
+
+        // IE6 (0x3C) with 28-byte footer round-trips cleanly.
+        let mut ie6 = vec![0u8; 24 + 28];
+        ie6[0..4].copy_from_slice(&CONN_VERSION_IE6.to_le_bytes());
+        ie6[4..8].copy_from_slice(&7u32.to_le_bytes());
+        ie6[8..12].copy_from_slice(&PROXY_TYPE_DIRECT.to_le_bytes());
+        let parsed_ie6 = WindowsConnectionSettings::parse(&ie6).expect("valid 0x3C");
+        assert_eq!(parsed_ie6.footer.len(), 28);
+
+        // Bounds and version safety: reject short buffers, unknown versions, and length overflows.
+        assert!(WindowsConnectionSettings::parse(&[0u8; 23]).is_none());
+        let mut bad_ver = ie6.clone();
+        bad_ver[0..4].copy_from_slice(&0x99u32.to_le_bytes());
+        assert!(WindowsConnectionSettings::parse(&bad_ver).is_none());
+        let mut bad_len = vec![0u8; 24];
+        bad_len[0..4].copy_from_slice(&CONN_VERSION_IE7.to_le_bytes());
+        bad_len[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(WindowsConnectionSettings::parse(&bad_len).is_none());
+        bad_len[12..16].copy_from_slice(&10u32.to_le_bytes());
+        assert!(WindowsConnectionSettings::parse(&bad_len).is_none());
+    }
+
+    #[test]
+    fn macos_proxy_output_and_ipv6_interface_filtering() {
+        assert_eq!(
+            parse_macos_proxy_output("Enabled: Yes\nServer: 127.0.0.1\nPort: 2080\n"),
+            Ok((true, "127.0.0.1".to_string(), 2080))
+        );
+        assert_eq!(
+            parse_macos_proxy_output("Enabled: No\nServer:\nPort:\n"),
+            Ok((false, String::new(), 0))
+        );
+        assert!(parse_macos_proxy_output("Enabled: Yes\nServer: 127.0.0.1\nPort: bad\n").is_err());
+
+        let ifconfig = "\
+vmenet0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet 192.168.64.1 netmask 0xffffff00
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet6 fe80::1%en0 prefixlen 64 scopeid 0x4
+\tinet6 fea0::2 prefixlen 64
+\tstatus: active
+en1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet6 2001:db8::42 prefixlen 64 autoconf secured
+\tstatus: active
+";
+        assert_eq!(
+            parse_active_physical_devices_from_ifconfig(ifconfig),
+            vec!["en1".to_string()]
+        );
+
+        let services = vec![
+            ("Corporate VPN".to_string(), None),
+            ("Wi-Fi".to_string(), Some("en0".to_string())),
+        ];
+        assert_eq!(
+            select_macos_service(&services, None, &[]),
+            Some("Wi-Fi".to_string())
+        );
     }
 
     #[cfg(target_os = "macos")]
