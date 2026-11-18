@@ -21,6 +21,7 @@ pub enum SystemProxyContext {
     CoreStop,
     UnexpectedCoreStop,
     SettingsReapply,
+    StartupRecovery,
     Exit,
     Update,
 }
@@ -119,6 +120,7 @@ pub enum Message {
         saved_config: GuiConfig,
         result: Result<(), String>,
     },
+    #[allow(dead_code)]
     StartupSystemProxyChecked(Result<bool, String>),
     SystemProxySetFinished {
         target: bool,
@@ -261,6 +263,7 @@ pub enum Message {
     /// Checks whether tray initialized in normal startup when `--no-tray` or tray failure applies.
     StartupTrayCheck,
     /// Startup check for a detached `sing-box` instance left alive by `close_core_on_exit == false`.
+    #[allow(dead_code)]
     StartupDetachedCoreChecked {
         detached_running: bool,
         stopped_result: Option<Result<bool, String>>,
@@ -303,4 +306,12 @@ pub enum Message {
     },
     SortConnections(crate::state::ConnectionSort),
     SetProxySort(crate::state::ProxySort),
+    /// Unified off-thread startup probe checking OS proxy state, crash-recovery
+    /// backup presence, and detached core liveness together.
+    StartupEnvironmentChecked {
+        proxy_check: Result<bool, String>,
+        detached_running: bool,
+        stopped_result: Option<Result<bool, String>>,
+        has_backup: bool,
+    },
 }

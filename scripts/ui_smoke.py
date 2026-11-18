@@ -87,7 +87,7 @@ class TrayHost:
         while context.pending():
             context.iteration(False)
         command_file = self.control / "command"
-        command = command_file.read_text(encoding="utf-8", errors="replace") if command_file.exists() else ""
+        command = command_file.read_text(encoding="utf-8", errors="replace").strip() if command_file.exists() else ""
         if not command or command == self.last_command:
             return
         self.last_command = command
@@ -139,6 +139,13 @@ def run_session(args):
     started = time.monotonic()
     runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     output = args.output.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    binary = args.binary.resolve()
+    if not binary.is_file():
+        raise RuntimeError(f"Smoke binary does not exist: {binary}")
+    if not args.filter:
+        for stale in output.glob("*.png"):
+            stale.unlink()
     env = os.environ.copy()
     weston = "weston"
     client = ""
@@ -156,7 +163,10 @@ def run_session(args):
         )
         client = f"client={root}/libexec/weston-desktop-shell\n"
     version = subprocess.check_output([weston, "--version"], env=env, text=True)
-    major = int(re.search(r"\b(\d+)\.", version)[1])
+    version_match = re.search(r"\b(\d+)\.", version)
+    if version_match is None:
+        raise RuntimeError(f"Could not parse Weston version from output: {version!r}")
+    major = int(version_match[1])
     config = runtime / "weston.ini"
     config.write_text(
         f"[core]\nidle-time=0\n[shell]\n{client}panel-position=none\nlocking=false\n"
@@ -190,7 +200,7 @@ def run_session(args):
                 time.sleep(0.05)
             host = None if args.no_tray else TrayHost(Path(env["SINGBOX_UI_SMOKE_CONTROL_DIR"]))
             application = subprocess.Popen(
-                [str(args.binary.resolve())], env=env, stdout=app_log, stderr=subprocess.STDOUT,
+                [str(binary)], env=env, stdout=app_log, stderr=subprocess.STDOUT,
             )
             deadline = time.monotonic() + 600
             while application.poll() is None:
@@ -211,8 +221,14 @@ def run_session(args):
     tray_marker = "UI_TRAY_NONE_OK:" if args.no_tray else "UI_TRAY_OK:"
     if "UI_SMOKE_FAILED:" in log or not match or int(match[1]) == 0 or tray_marker not in log:
         raise RuntimeError("Screenshot or tray validation did not finish")
-    if len(list(output.glob("*.png"))) < int(match[1]):
+    pngs = list(output.glob("*.png"))
+    if len(pngs) < int(match[1]):
         raise RuntimeError("Some screenshots are missing")
+    for png in pngs:
+        with png.open("rb") as f:
+            header = f.read(8)
+        if header != b"\x89PNG\r\n\x1a\n" or png.stat().st_size <= 8:
+            raise RuntimeError(f"Invalid PNG output: {png}")
     result = {
         "renderer": args.backend,
         "scale": args.scale,
@@ -260,17 +276,30 @@ def main():
             SINGBOX_UI_SMOKE_TRAY="0" if args.no_tray else "1",
             SINGBOX_UI_SMOKE_CONTROL_DIR=str(control),
         )
-        result = subprocess.run(
-            ["dbus-run-session", "--", sys.executable, str(Path(__file__).resolve()),
-             *sys.argv[1:], "--session"],
-            env=env, capture_output=True, text=True, timeout=640,
-        )
+        try:
+            result = subprocess.run(
+                ["dbus-run-session", "--", sys.executable, str(Path(__file__).resolve()),
+                 *sys.argv[1:], "--session"],
+                env=env, capture_output=True, text=True, timeout=640,
+            )
+        except subprocess.TimeoutExpired as exc:
+            if exc.stdout:
+                print(exc.stdout, end="")
+            if exc.stderr:
+                print(exc.stderr)
+            for name in ("application.log", "weston.log", "compositor.log"):
+                path = output / name
+                if path.exists():
+                    print(f"=== {name} ===")
+                    print(path.read_text(encoding="utf-8", errors="replace")[-8000:])
+            raise SystemExit("Wayland UI smoke check timed out; see the output logs")
         print(result.stdout, end="")
         if result.returncode:
             print(result.stderr)
-            for name in ("application.log", "weston.log"):
+            for name in ("application.log", "weston.log", "compositor.log"):
                 path = output / name
                 if path.exists():
+                    print(f"=== {name} ===")
                     print(path.read_text(encoding="utf-8", errors="replace")[-8000:])
             raise SystemExit("Wayland UI smoke check failed; see the output logs")
 
