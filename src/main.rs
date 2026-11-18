@@ -5596,8 +5596,9 @@ fn redact_log_line(line: &str) -> String {
 
         if let Some(sep_idx) = part.find("://") {
             let scheme_start = part[..sep_idx]
-                .rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
-                .map_or(0, |idx| idx + 1);
+                .char_indices()
+                .rfind(|&(_, c)| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+                .map_or(0, |(idx, c)| idx + c.len_utf8());
             let scheme = &part[scheme_start..sep_idx];
             let scheme_lower = scheme.to_ascii_lowercase();
             let candidate = &part[scheme_start..];
@@ -7384,6 +7385,14 @@ mod tests {
         assert!(!redacted.contains("pwd=abc"));
         assert!(redacted.contains("vless://[REDACTED]"));
         assert!(redacted.contains("TROJAN://[REDACTED]"));
+
+        // Multi-byte UTF-8 prefixes immediately before `://` must not panic.
+        let utf8_redacted =
+            redact_log_line("导入vless://secret@host:443 链接https://example.com?token=abc");
+        assert!(!utf8_redacted.contains("secret"));
+        assert!(!utf8_redacted.contains("token=abc"));
+        assert!(utf8_redacted.contains("导入vless://[REDACTED]"));
+        assert!(utf8_redacted.contains("链接https://example.com"));
 
         // Clipboard import never exposes inline secrets inside url_input.
         let (mut app, _) = App::new_with_config(GuiConfig::default());

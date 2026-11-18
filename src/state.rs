@@ -252,18 +252,27 @@ where
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
+fn deserialize_nonzero_u16_or<'de, D>(deserializer: D, default: u16) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u16>::deserialize(deserializer)?
+        .filter(|port| *port > 0)
+        .unwrap_or(default))
+}
+
 fn deserialize_null_mixed_port<'de, D>(deserializer: D) -> Result<u16, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    Ok(Option::<u16>::deserialize(deserializer)?.unwrap_or(2080))
+    deserialize_nonzero_u16_or(deserializer, 2080)
 }
 
 fn deserialize_null_api_port<'de, D>(deserializer: D) -> Result<u16, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    Ok(Option::<u16>::deserialize(deserializer)?.unwrap_or(9090))
+    deserialize_nonzero_u16_or(deserializer, 9090)
 }
 
 fn deserialize_null_true<'de, D>(deserializer: D) -> Result<bool, D::Error>
@@ -746,11 +755,15 @@ mod tests {
         let null_subs: GuiConfig = serde_json::from_value(serde_json::json!({
             "subscriptions": null,
             "routing_mode": null,
-            "theme": null
+            "theme": null,
+            "mixed_port": 0,
+            "api_port": 0
         }))
         .unwrap();
         assert!(null_subs.subscriptions.is_empty());
         assert_eq!(null_subs.routing_mode, RoutingMode::Rule);
         assert_eq!(null_subs.theme, AppTheme::Auto);
+        assert_eq!(null_subs.mixed_port, 2080);
+        assert_eq!(null_subs.api_port, 9090);
     }
 }
