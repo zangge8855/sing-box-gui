@@ -1120,6 +1120,13 @@ fn render_proxy_card<'a>(
                     .color(theme::text_primary(theme)),
             ]
             .spacing(2);
+            if proto_truncated {
+                tip_col = tip_col.push(
+                    text(proto_upper)
+                        .size(theme::TYPE_CAPTION)
+                        .color(theme::text_muted(theme)),
+                );
+            }
             if server_truncated && let Some(addr) = server_label {
                 tip_col = tip_col.push(
                     text(addr)
@@ -1293,7 +1300,7 @@ fn empty_nodes_spec(
 mod tests {
     use super::{
         EmptyAction, card_columns, card_width, clean_node_display_name, compare_nodes,
-        empty_nodes_spec,
+        empty_nodes_spec, render_proxy_card,
     };
     use crate::state::ProxySort;
 
@@ -1439,5 +1446,39 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn render_proxy_card_covers_truncated_protocol_server_and_name_tooltips() {
+        let _ = render_proxy_card(
+            "HK-01",
+            "very-long-custom-protocol-identifier",
+            Some("very-long-relay-server-address.example.com"),
+            Some(443),
+            Some(42),
+            false,
+            true,
+            true,
+            true,
+            Some("Proxy".into()),
+            236.0,
+            &iced::Theme::Dark,
+            crate::state::Language::En,
+        );
+        let _ = render_proxy_card(
+            "🇭🇰 超长节点名称用于验证代理卡片省略与提示框渲染完整性",
+            "vless",
+            None,
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+            None,
+            236.0,
+            &iced::Theme::Light,
+            crate::state::Language::Zh,
+        );
     }
 }

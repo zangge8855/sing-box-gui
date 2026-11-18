@@ -224,6 +224,9 @@ fn cluster_em(cluster: &str, base_em: fn(char) -> f32) -> f32 {
     let Some(c0) = cluster.chars().next() else {
         return 0.0;
     };
+    if is_zero_width_scalar(c0) {
+        return 0.0;
+    }
     if cluster.contains('\u{200D}') {
         return 1.25;
     }
@@ -236,9 +239,6 @@ fn cluster_em(cluster: &str, base_em: fn(char) -> f32) -> f32 {
     }
     if cluster.contains('\u{20E3}') {
         return 1.1;
-    }
-    if is_zero_width_scalar(c0) {
-        return 0.0;
     }
     let w = base_em(c0);
     if cluster.contains('\u{FE0F}') {
@@ -547,11 +547,15 @@ mod tests {
 
     #[test]
     fn fit_width_handles_non_emoji_zwj_keycaps_and_tiny_budgets() {
-        // Non-emoji letters separated by ZWJ must not collapse into 1.25 em.
+        // Non-emoji letters separated by ZWJ must not collapse into 1.25 em,
+        // and standalone/dangling ZWJ must add zero advance width.
         let zwj_ascii = "a\u{200D}b\u{200D}c\u{200D}d\u{200D}e\u{200D}f\u{200D}g\u{200D}h";
+        assert_eq!(text_width("a\u{200D}b", 14.0), text_width("ab", 14.0));
+        assert_eq!(text_width("👨\u{200D}", 14.0), text_width("👨", 14.0));
         assert!(text_width(zwj_ascii, 14.0) > 50.0);
         let fitted = fit_width(zwj_ascii, 36.0, 14.0);
         assert!(fitted.ends_with('…'), "{fitted:?}");
+        assert!(fitted.starts_with("a\u{200D}b"), "{fitted:?}");
         assert!(text_width(&fitted, 14.0) <= 36.0, "{fitted:?}");
         assert!(!fitted.ends_with("\u{200D}…"), "{fitted:?}");
 
