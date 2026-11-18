@@ -15,8 +15,11 @@ pub enum Tab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RoutingMode {
     #[default]
+    #[serde(alias = "rule", alias = "RULE")]
     Rule,
+    #[serde(alias = "global", alias = "GLOBAL")]
     Global,
+    #[serde(alias = "direct", alias = "DIRECT")]
     Direct,
 }
 
@@ -103,13 +106,20 @@ impl Toast {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Profile {
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub id: String,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub name: String,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub url: String,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub file_path: String,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub is_subscription: bool,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub updated_at: String,
     /// Bytes uploaded (from subscription-userinfo), if known.
     #[serde(default)]
@@ -207,7 +217,16 @@ impl LogFilter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Language {
     #[default]
+    #[serde(alias = "en", alias = "EN", alias = "en-US", alias = "en_US")]
     En,
+    #[serde(
+        alias = "zh",
+        alias = "ZH",
+        alias = "zh-CN",
+        alias = "zh_CN",
+        alias = "zh-Hans",
+        alias = "zh-Hant"
+    )]
     Zh,
 }
 
@@ -225,56 +244,174 @@ impl Language {
     }
 }
 
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+fn deserialize_null_mixed_port<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u16>::deserialize(deserializer)?.unwrap_or(2080))
+}
+
+fn deserialize_null_api_port<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u16>::deserialize(deserializer)?.unwrap_or(9090))
+}
+
+fn deserialize_null_true<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<bool>::deserialize(deserializer)?.unwrap_or(true))
+}
+
+fn deserialize_null_language<'de, D>(deserializer: D) -> Result<Language, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(
+        Option::<Language>::deserialize(deserializer)?.unwrap_or_else(|| {
+            Language::from_locale(sys_locale::get_locale().as_deref().unwrap_or("en"))
+        }),
+    )
+}
+
+fn deserialize_non_empty_string_or<'de, D>(
+    deserializer: D,
+    default: fn() -> String,
+) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(default))
+}
+
+fn deserialize_non_empty_dns_local<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_non_empty_string_or(deserializer, default_dns_local)
+}
+
+fn deserialize_non_empty_dns_remote<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_non_empty_string_or(deserializer, default_dns_remote)
+}
+
+fn deserialize_non_empty_latency_url<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_non_empty_string_or(deserializer, default_latency_url)
+}
+
+fn deserialize_latency_timeout_ms<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u32>::deserialize(deserializer)?
+        .filter(|ms| *ms > 0)
+        .unwrap_or_else(default_latency_timeout_ms))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuiConfig {
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub subscriptions: Vec<Profile>,
     pub active_profile_id: Option<String>,
+    #[serde(deserialize_with = "deserialize_null_mixed_port")]
     pub mixed_port: u16,
+    #[serde(deserialize_with = "deserialize_null_api_port")]
     pub api_port: u16,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub routing_mode: RoutingMode,
     pub core_path: Option<String>,
+    #[serde(
+        default = "default_dns_local",
+        deserialize_with = "deserialize_non_empty_dns_local"
+    )]
     pub dns_server_local: String,
+    #[serde(
+        default = "default_dns_remote",
+        deserialize_with = "deserialize_non_empty_dns_remote"
+    )]
     pub dns_server_remote: String,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub start_on_boot: bool,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub tun_mode: bool,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub system_proxy_enabled: bool,
     /// True only when this application enabled the currently configured
     /// system proxy. Persisting ownership lets a restarted GUI safely clean up
     /// a proxy it previously installed without touching an unrelated proxy.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub system_proxy_owned: bool,
+    #[serde(deserialize_with = "deserialize_null_language")]
     pub language: Language,
     pub selected_node_tag: Option<String>,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub fake_ip: bool,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub tcp_fast_open: bool,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub tcp_multipath: bool,
+    #[serde(default = "default_true", deserialize_with = "deserialize_null_true")]
     pub close_core_on_exit: bool,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub theme: AppTheme,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub auto_start_core: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub auto_sys_proxy: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub custom_bypass_domains: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub custom_proxy_domains: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub custom_bypass_ips: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub custom_proxy_ips: Vec<String>,
     /// Auto-update subscriptions every N hours (0 = disabled).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub auto_update_interval_hours: u32,
     /// When stopping the core, also disable system proxy (default true).
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", deserialize_with = "deserialize_null_true")]
     pub disable_proxy_on_core_stop: bool,
     /// URL used by Clash API latency tests (default Cloudflare 204).
-    #[serde(default = "default_latency_url")]
+    #[serde(
+        default = "default_latency_url",
+        deserialize_with = "deserialize_non_empty_latency_url"
+    )]
     pub latency_test_url: String,
     /// Latency test timeout in milliseconds.
-    #[serde(default = "default_latency_timeout_ms")]
+    #[serde(
+        default = "default_latency_timeout_ms",
+        deserialize_with = "deserialize_latency_timeout_ms"
+    )]
     pub latency_test_timeout_ms: u32,
+}
+
+fn default_dns_local() -> String {
+    "223.5.5.5".to_string()
+}
+
+fn default_dns_remote() -> String {
+    "8.8.8.8".to_string()
 }
 
 fn default_latency_url() -> String {
@@ -292,8 +429,11 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AppTheme {
     #[default]
+    #[serde(alias = "auto", alias = "AUTO", alias = "system", alias = "System")]
     Auto,
+    #[serde(alias = "dark", alias = "DARK")]
     Dark,
+    #[serde(alias = "light", alias = "LIGHT")]
     Light,
 }
 
@@ -555,5 +695,62 @@ mod tests {
         draft = RuntimeSettingsDraft::from_config(&config);
         draft.tun_mode = !draft.tun_mode;
         assert!(draft.has_pending_changes(&config));
+    }
+
+    #[test]
+    fn legacy_nulls_empty_defaults_and_enum_aliases_migrate_cleanly() {
+        let config: GuiConfig = serde_json::from_value(serde_json::json!({
+            "subscriptions": [{
+                "id": "legacy",
+                "name": null,
+                "url": null,
+                "file_path": "legacy.json"
+            }],
+            "active_profile_id": "legacy",
+            "mixed_port": null,
+            "api_port": null,
+            "routing_mode": "global",
+            "language": "zh_CN",
+            "theme": "system",
+            "dns_server_local": "   ",
+            "dns_server_remote": null,
+            "latency_test_url": "",
+            "latency_test_timeout_ms": 0,
+            "close_core_on_exit": null,
+            "disable_proxy_on_core_stop": null,
+            "custom_bypass_domains": null,
+            "custom_proxy_ips": null
+        }))
+        .unwrap();
+
+        assert_eq!(config.subscriptions.len(), 1);
+        assert_eq!(config.subscriptions[0].id, "legacy");
+        assert_eq!(config.subscriptions[0].file_path, "legacy.json");
+        assert_eq!(config.mixed_port, 2080);
+        assert_eq!(config.api_port, 9090);
+        assert_eq!(config.routing_mode, RoutingMode::Global);
+        assert_eq!(config.language, Language::Zh);
+        assert_eq!(config.theme, AppTheme::Auto);
+        assert_eq!(config.dns_server_local, "223.5.5.5");
+        assert_eq!(config.dns_server_remote, "8.8.8.8");
+        assert_eq!(
+            config.latency_test_url,
+            "http://cp.cloudflare.com/generate_204"
+        );
+        assert_eq!(config.latency_test_timeout_ms, 2000);
+        assert!(config.close_core_on_exit);
+        assert!(config.disable_proxy_on_core_stop);
+        assert!(config.custom_bypass_domains.is_empty());
+        assert!(config.custom_proxy_ips.is_empty());
+
+        let null_subs: GuiConfig = serde_json::from_value(serde_json::json!({
+            "subscriptions": null,
+            "routing_mode": null,
+            "theme": null
+        }))
+        .unwrap();
+        assert!(null_subs.subscriptions.is_empty());
+        assert_eq!(null_subs.routing_mode, RoutingMode::Rule);
+        assert_eq!(null_subs.theme, AppTheme::Auto);
     }
 }

@@ -85,13 +85,18 @@ impl Runner {
                     (Tab::Dashboard, "empty"),
                     (Tab::Proxies, "empty"),
                     (Tab::Profiles, "empty"),
+                    (Tab::Rules, "empty"),
                     (Tab::Connections, "empty"),
                     (Tab::Logs, "empty"),
                     (Tab::Profiles, "delete"),
                     (Tab::Profiles, "edit"),
+                    (Tab::Profiles, "updating"),
+                    (Tab::Profiles, "more"),
+                    (Tab::Rules, "invalid"),
                     (Tab::Settings, "invalid"),
                     (Tab::Logs, "no-matches"),
                     (Tab::Proxies, "no-matches"),
+                    (Tab::Connections, "no-matches"),
                     (Tab::Settings, "bottom"),
                     (Tab::Settings, "preview"),
                     (Tab::Profiles, "bottom"),
@@ -99,14 +104,18 @@ impl Runner {
                     (Tab::Rules, "bottom"),
                     (Tab::Dashboard, "toasts"),
                     (Tab::Dashboard, "starting"),
+                    (Tab::Dashboard, "stopping"),
+                    (Tab::Dashboard, "mode-switching"),
                     (Tab::Dashboard, "installing"),
+                    (Tab::Dashboard, "core-error"),
                     (Tab::Settings, "pending"),
                     (Tab::Settings, "update"),
+                    (Tab::Settings, "update-downloading"),
                     (Tab::Proxies, "testing"),
                     (Tab::Profiles, "error"),
                 ] {
                     // The update row sits below the fold at the compact size.
-                    let (width, height) = if variant == "update" {
+                    let (width, height) = if matches!(variant, "update" | "update-downloading") {
                         (1080, 750)
                     } else {
                         (640, 480)
@@ -188,6 +197,7 @@ fn test_tray(app: &mut App) -> Task<Message> {
     match runner.tray_stage {
         TrayStage::Online if available && runner.window_opened => {
             app.url_input = "unsaved import survives closing the window".into();
+            app.settings_draft.mixed_port = "7891".into();
             runner.tray_stage = TrayStage::Hidden;
             close = true;
         }
@@ -196,8 +206,10 @@ fn test_tray(app: &mut App) -> Task<Message> {
             command = Some("activate");
         }
         TrayStage::Restored if runner.window_opened && app.window_id != runner.previous_window => {
-            if app.url_input != "unsaved import survives closing the window" {
-                return fail("window recreation lost the unsaved form");
+            if app.url_input != "unsaved import survives closing the window"
+                || app.settings_draft.mixed_port != "7891"
+            {
+                return fail("window recreation lost the unsaved form or settings draft");
             }
             runner.tray_stage = TrayStage::HiddenForLoss;
             close = true;
@@ -215,6 +227,7 @@ fn test_tray(app: &mut App) -> Task<Message> {
         TrayStage::OnlineAgain if available => {
             runner.tray_stage = TrayStage::Done;
             app.url_input.clear();
+            app.settings_draft = RuntimeSettingsDraft::from_config(&app.gui_config);
             println!("UI_TRAY_OK: activation, state preservation, watcher loss and recovery");
             return Task::done(Message::Smoke(Action::Next));
         }
@@ -225,14 +238,20 @@ fn test_tray(app: &mut App) -> Task<Message> {
         let Some(control) = &runner.control else {
             return fail("missing tray control directory");
         };
-        if let Err(error) = std::fs::write(control.join("command"), command) {
+        let temp_path = control.join("command.tmp");
+        let target_path = control.join("command");
+        if let Err(error) = std::fs::write(&temp_path, command)
+            .and_then(|()| std::fs::rename(&temp_path, &target_path))
+        {
             return fail(error);
         }
     }
     if close {
         runner.window_opened = false;
         runner.previous_window = app.window_id;
-        let id = app.window_id.expect("open test window");
+        let Some(id) = app.window_id else {
+            return fail("missing open test window");
+        };
         return app
             .handle_update(Message::WindowCloseRequested(id))
             .chain(after(150, Action::TrayStep));
@@ -284,12 +303,14 @@ pub fn update(app: &mut App, action: Action) -> Task<Message> {
             use iced::widget::operation::{self, AbsoluteOffset};
             let runner = app.smoke.as_ref().expect("smoke runner");
             let case = &runner.cases[runner.index];
-            let scroll = match case.variant {
-                "bottom" | "preview" => operation::snap_to_end("page-body"),
-                "edit" | "delete" => {
+            let scroll = match (case.tab, case.variant) {
+                (_, "bottom" | "preview") => operation::snap_to_end("page-body"),
+                (Tab::Profiles, "edit" | "delete" | "updating" | "more") => {
                     operation::scroll_to("page-body", AbsoluteOffset { x: 0.0, y: 288.0 })
                 }
-                "invalid" => operation::scroll_to("page-body", AbsoluteOffset { x: 0.0, y: 900.0 }),
+                (Tab::Settings, "invalid") => {
+                    operation::scroll_to("page-body", AbsoluteOffset { x: 0.0, y: 900.0 })
+                }
                 _ => operation::scroll_to("page-body", AbsoluteOffset { x: 0.0, y: 0.0 }),
             };
             scroll.chain(after(250, Action::Capture))
@@ -438,6 +459,22 @@ fn seed(app: &mut App, case: &Case) {
     app.show_all_proxies = false;
     app.config_preview_expanded = false;
     app.config_preview = None;
+    app.pending_restart_after_save = false;
+    app.pending_proxy_reapply_after_save = false;
+    app.pending_settings_save_feedback = false;
+    app.pending_proxy_disable_context = None;
+    app.pending_proxy_enable_after_recovery = false;
+    app.deleting_profile_ids.clear();
+    app.pending_auto_updates.clear();
+    app.auto_update_failures.clear();
+    app.pending_core_restart = false;
+    app.force_stop_after_start = false;
+    app.autostart_busy = false;
+    app.settings_validation_in_flight = false;
+    app.detached_core_running = false;
+    app.pending_exit = false;
+    app.pending_update = None;
+    app.clear_url_input_after_download = false;
     if case.variant == "empty" {
         return;
     }
@@ -450,17 +487,26 @@ fn seed(app: &mut App, case: &Case) {
     .into_iter()
     .enumerate()
     {
+        let is_local = i == 2;
         app.gui_config.subscriptions.push(Profile {
             id: format!("fixture-{i}"),
             name: name.into(),
-            url: "https://example.com/subscription?token=example-redacted-token".into(),
-            file_path: String::new(),
-            is_subscription: i != 2,
-            updated_at: "2026-09-06 14:30".into(),
-            traffic_upload: Some(4_500_000_000),
-            traffic_download: Some(37_800_000_000),
-            traffic_total: Some(200_000_000_000),
-            expire_at: Some(1_810_944_000),
+            url: if is_local {
+                "/home/user/profiles/local-nodes.yaml".into()
+            } else {
+                "https://example.com/subscription?token=example-redacted-token".into()
+            },
+            file_path: if is_local {
+                "/home/user/profiles/local-nodes.yaml".into()
+            } else {
+                String::new()
+            },
+            is_subscription: !is_local,
+            updated_at: "2026-09-06 14:30:00".into(),
+            traffic_upload: (!is_local).then_some(4_500_000_000),
+            traffic_download: (!is_local).then_some(37_800_000_000),
+            traffic_total: (!is_local).then_some(200_000_000_000),
+            expire_at: (!is_local).then_some(2_051_222_400),
         });
     }
     app.gui_config.active_profile_id = Some("fixture-0".into());
@@ -497,7 +543,16 @@ fn seed(app: &mut App, case: &Case) {
             node_type: node_type.into(),
             server,
             port,
-            latency: Some([42, 68, 108, 230, 9999, 18, 0, 580][i]),
+            latency: [
+                Some(42),
+                Some(68),
+                Some(108),
+                Some(230),
+                Some(9999),
+                Some(18),
+                Some(0),
+                None,
+            ][i],
             selectable: true,
         });
     }
@@ -560,6 +615,9 @@ fn seed(app: &mut App, case: &Case) {
             app.editing_profile_name = app.gui_config.subscriptions[0].name.clone();
             app.editing_profile_url = app.gui_config.subscriptions[0].url.clone();
         }
+        "invalid" if case.tab == Tab::Rules => {
+            app.direct_rule_input = "https://bad rule".into();
+        }
         "invalid" => {
             app.settings_draft.mixed_port = "9090".into();
             app.settings_draft.tun_mode = true;
@@ -580,6 +638,7 @@ fn seed(app: &mut App, case: &Case) {
         "no-matches" => {
             app.node_search = "no-matching-node".into();
             app.log_search = "no-matching-log".into();
+            app.connections_search = "no-matching-connection".into();
         }
         "toasts" => {
             app.toasts.push(Toast::success(crate::ui::i18n::tr(
@@ -599,12 +658,38 @@ fn seed(app: &mut App, case: &Case) {
             app.core_starting = true;
             app.sys_proxy_enabled = false;
         }
+        "stopping" => {
+            app.core_running = false;
+            app.core_stopping = true;
+            app.sys_proxy_enabled = false;
+        }
+        "mode-switching" => {
+            app.pending_routing_mode = Some(RoutingMode::Global);
+        }
         "installing" => {
             app.core_running = false;
             app.core_installed = false;
             app.core_version = None;
             app.sys_proxy_enabled = false;
             app.core_install_state = CoreInstallState::Downloading;
+        }
+        "core-error" => {
+            app.core_running = false;
+            app.sys_proxy_enabled = false;
+            app.toasts.push(Toast::error(app.tr_detail(
+                "core_unexpected_exit",
+                crate::ui::i18n::localize_error(
+                    case.language,
+                    "bind 127.0.0.1:2080: address already in use",
+                ),
+            )));
+        }
+        "updating" => {
+            app.downloading = true;
+            app.updating_profile_id = Some("fixture-0".into());
+        }
+        "more" => {
+            app.profile_more_id = Some("fixture-0".into());
         }
         "pending" => app.settings_draft.mixed_port = "7890".into(),
         "update" => {
@@ -614,6 +699,11 @@ fn seed(app: &mut App, case: &Case) {
                 sha256: Some("0".repeat(64)),
                 size: Some(9_437_184),
             }
+        }
+        "update-downloading" => {
+            app.update_status = UpdateStatus::Downloading {
+                tag: "v2026.12.1".into(),
+            };
         }
         "testing" => {
             app.latency_testing = true;
@@ -676,6 +766,10 @@ mod tests {
         app.proxy_sort = ProxySort::Name;
         app.core_stopping = true;
         app.system_proxy_busy = true;
+        app.pending_restart_after_save = true;
+        app.pending_proxy_reapply_after_save = true;
+        app.pending_exit = true;
+        app.deleting_profile_ids.insert("stale".into());
 
         let empty_case = cases
             .iter()
@@ -692,6 +786,21 @@ mod tests {
         assert_eq!(app.proxy_sort, ProxySort::Latency);
         assert!(!app.core_stopping);
         assert!(!app.system_proxy_busy);
+        assert!(!app.pending_restart_after_save);
+        assert!(!app.pending_proxy_reapply_after_save);
+        assert!(!app.pending_exit);
+        assert!(app.deleting_profile_ids.is_empty());
+
+        let filled_case = cases
+            .iter()
+            .find(|c| c.variant == "filled")
+            .expect("filled case");
+        seed(&mut app, filled_case);
+        let local = &app.gui_config.subscriptions[2];
+        assert!(!local.is_subscription);
+        assert!(local.traffic_total.is_none());
+        assert!(local.expire_at.is_none());
+        assert!(app.active_profile_nodes.iter().any(|n| n.latency.is_none()));
 
         for case in &cases {
             seed(&mut app, case);
