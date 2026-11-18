@@ -1972,8 +1972,16 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
     Ok(())
 }
 
+fn acquire_stop_lifecycle_lock(
+    stop_guard: StopInFlightGuard,
+) -> std::sync::MutexGuard<'static, ()> {
+    let lifecycle_guard = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    drop(stop_guard);
+    lifecycle_guard
+}
+
 pub fn stop_core() {
-    let _stop_guard = StopInFlightGuard::new();
+    let stop_guard = StopInFlightGuard::new();
     INTENTIONAL_STOP.store(true, Ordering::SeqCst);
     CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
 
@@ -1990,8 +1998,10 @@ pub fn stop_core() {
         let _ = proc_ctl::terminate_pid(handle.pid, Some(&handle.core_name), pg, 0);
     }
 
-    // Wait for any in-flight `start_core` to finish reaping and release `LIFECYCLE_LOCK`.
-    let _lifecycle_guard = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Wait for any in-flight `start_core` to finish reaping and release `LIFECYCLE_LOCK`,
+    // then clear `STOP_IN_FLIGHT` before releasing `LIFECYCLE_LOCK` so a queued
+    // `start_core` never observes a stale pending-stop count.
+    let _lifecycle_guard = acquire_stop_lifecycle_lock(stop_guard);
     CONSECUTIVE_TRY_WAIT_ERRORS.store(0, Ordering::SeqCst);
 
     let mut had_child = false;
@@ -2892,9 +2902,35 @@ mod tests {
         assert!(!summary.contains("line-1\n"), "should cap to recent lines");
         assert!(summary.contains("line-35"), "summary={summary}");
 
-        let _guard = StopInFlightGuard::new();
+        let guard = StopInFlightGuard::new();
         let (tx, _rx) = tokio::sync::mpsc::channel(4);
         let err = start_core(&GuiConfig::default(), tx).expect_err("pending stop cancels start");
         assert_eq!(err, "Core startup cancelled");
+        drop(guard);
+        assert_eq!(STOP_IN_FLIGHT.load(Ordering::SeqCst), 0);
+
+        // Verify `STOP_IN_FLIGHT` stays non-zero while waiting on `LIFECYCLE_LOCK`
+        // and is cleared *before* `LIFECYCLE_LOCK` is released.
+        let held_lifecycle = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (waiting_tx, waiting_rx) = std::sync::mpsc::channel();
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let stop_thread = thread::spawn(move || {
+            let stop_guard = StopInFlightGuard::new();
+            waiting_tx.send(()).unwrap();
+            let lifecycle_guard = acquire_stop_lifecycle_lock(stop_guard);
+            // Must already be zero while `lifecycle_guard` is still held.
+            assert_eq!(STOP_IN_FLIGHT.load(Ordering::SeqCst), 0);
+            acquired_tx.send(()).unwrap();
+            drop(lifecycle_guard);
+        });
+
+        waiting_rx.recv().unwrap();
+        assert_eq!(STOP_IN_FLIGHT.load(Ordering::SeqCst), 1);
+        drop(held_lifecycle);
+        acquired_rx.recv().unwrap();
+        stop_thread.join().unwrap();
+
+        let _next = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(STOP_IN_FLIGHT.load(Ordering::SeqCst), 0);
     }
 }

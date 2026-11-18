@@ -60,11 +60,7 @@ fn parse_pre_release(suffix: &str) -> (PreReleaseKind, Vec<u64>, String) {
 }
 
 fn is_valid_pre_release_suffix(suffix: &str) -> bool {
-    !suffix.is_empty()
-        && !suffix.starts_with(['-', '.'])
-        && !suffix.ends_with(['-', '.'])
-        && !suffix.contains("--")
-        && !suffix.contains("..")
+    !suffix.is_empty() && suffix.split(['-', '.']).all(|part| !part.is_empty())
 }
 
 fn parse_version(tag: &str) -> Option<ParsedVersion> {
@@ -363,6 +359,8 @@ mod tests {
             "1.0.0-.1",
             "1.0.0-rc..1",
             "1.0.0-1--rc",
+            "1.0.0-a.-1",
+            "1.0.0-a-.1",
         ] {
             assert_eq!(normalize_version_tag(bad), Vec::<u64>::new(), "bad={bad}");
             assert!(!is_remote_version_newer("1.0.0", bad), "bad={bad}");
