@@ -10,6 +10,9 @@ const API_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const STREAM_IDLE_CHUNK_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_API_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_DELAY_RESPONSE_BYTES: usize = 64 * 1024;
+const STREAM_MAX_BACKOFF_SECS: u64 = 16;
 
 fn build_no_proxy_client(
     connect_timeout: Duration,
@@ -101,36 +104,94 @@ fn build_close_connection_url(api_port: u16, id: &str) -> String {
     )
 }
 
-fn with_optional_secret(builder: reqwest::RequestBuilder, secret: &str) -> reqwest::RequestBuilder {
+fn format_bearer_header_value(
+    secret: &str,
+) -> Result<Option<reqwest::header::HeaderValue>, String> {
     if secret.is_empty() {
-        return builder;
+        return Ok(None);
     }
-    builder.bearer_auth(secret)
+    if secret.chars().any(char::is_control) {
+        return Err("Clash API secret contains invalid control characters".to_string());
+    }
+    let raw = format!("Bearer {secret}");
+    reqwest::header::HeaderValue::from_bytes(raw.as_bytes())
+        .map(Some)
+        .map_err(|_| "Clash API secret contains invalid HTTP header characters".to_string())
+}
+
+fn with_optional_secret(
+    builder: reqwest::RequestBuilder,
+    secret: &str,
+) -> Result<reqwest::RequestBuilder, String> {
+    match format_bearer_header_value(secret)? {
+        Some(header_value) => Ok(builder.header(reqwest::header::AUTHORIZATION, header_value)),
+        None => Ok(builder),
+    }
 }
 
 /// Look up `experimental.clash_api.secret` from the on-disk run configuration
 /// and attach `Authorization: Bearer <secret>` to the request when present.
 /// Native sing-box profiles often run with a non-empty secret; the generated
 /// Clash profile keeps it empty so requests succeed either way.
-fn with_secret(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+fn with_secret(builder: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder, String> {
     let secret = crate::config::get_clash_api_secret();
     with_optional_secret(builder, &secret)
 }
 
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+async fn read_json_bounded<T: serde::de::DeserializeOwned>(
+    mut res: reqwest::Response,
+    max_bytes: usize,
+    err_prefix: &str,
+) -> Result<T, String> {
+    if let Some(len) = res.content_length()
+        && len > max_bytes as u64
+    {
+        return Err(format!(
+            "{err_prefix}: response size {len} exceeds {max_bytes} byte limit"
+        ));
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = res
+        .chunk()
+        .await
+        .map_err(|e| format!("{err_prefix}: {e}"))?
+    {
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(format!(
+                "{err_prefix}: response exceeded {max_bytes} byte limit"
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice::<T>(&body).map_err(|e| format!("{err_prefix}: {e}"))
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TrafficInfo {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub up: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub down: u64,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ProxyInfo {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub name: String,
-    #[serde(default, rename = "type")]
+    #[serde(
+        default,
+        rename = "type",
+        deserialize_with = "deserialize_null_default"
+    )]
     pub proxy_type: String,
     #[serde(default)]
     pub udp: Option<bool>,
@@ -144,7 +205,7 @@ pub struct ProxyInfo {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProxiesResponse {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub proxies: HashMap<String, ProxyInfo>,
 }
 
@@ -155,23 +216,43 @@ pub struct DelayResponse {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Default)]
 pub struct ConnectionMetadata {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub network: String,
-    #[serde(default, rename = "type")]
+    #[serde(
+        default,
+        rename = "type",
+        deserialize_with = "deserialize_null_default"
+    )]
     #[allow(dead_code)]
     pub conn_type: String,
-    #[serde(default, rename = "sourceIP")]
+    #[serde(
+        default,
+        rename = "sourceIP",
+        deserialize_with = "deserialize_null_default"
+    )]
     #[allow(dead_code)]
     pub source_ip: String,
-    #[serde(default, rename = "destinationIP")]
+    #[serde(
+        default,
+        rename = "destinationIP",
+        deserialize_with = "deserialize_null_default"
+    )]
     pub destination_ip: String,
-    #[serde(default, rename = "sourcePort")]
+    #[serde(
+        default,
+        rename = "sourcePort",
+        deserialize_with = "deserialize_null_default"
+    )]
     #[allow(dead_code)]
     pub source_port: String,
-    #[serde(default, rename = "destinationPort")]
+    #[serde(
+        default,
+        rename = "destinationPort",
+        deserialize_with = "deserialize_null_default"
+    )]
     #[allow(dead_code)]
     pub destination_port: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub host: String,
     /// Process path when provided by clash_api (optional).
     #[serde(default, rename = "processPath")]
@@ -219,19 +300,19 @@ mod traffic_tests {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct Connection {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub metadata: ConnectionMetadata,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub upload: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub download: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub start: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub chains: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub rule: String,
 }
 
@@ -240,9 +321,17 @@ pub struct Connection {
 pub struct ConnectionsResponse {
     #[serde(default)]
     pub connections: Option<Vec<Connection>>,
-    #[serde(default, rename = "downloadTotal")]
+    #[serde(
+        default,
+        rename = "downloadTotal",
+        deserialize_with = "deserialize_null_default"
+    )]
     pub download_total: u64,
-    #[serde(default, rename = "uploadTotal")]
+    #[serde(
+        default,
+        rename = "uploadTotal",
+        deserialize_with = "deserialize_null_default"
+    )]
     pub upload_total: u64,
 }
 
@@ -250,19 +339,19 @@ pub async fn fetch_proxies(api_port: u16) -> Result<ProxiesResponse, String> {
     validate_api_port(api_port)?;
     let url = format!("http://127.0.0.1:{}/proxies", api_port);
     let client = get_client();
-    let res = with_secret(client.get(&url))
+    let res = with_secret(client.get(&url))?
         .send()
         .await
         .map_err(|e| format!("Failed to fetch proxies: {}", e))?
         .error_for_status()
         .map_err(|e| format!("Proxy API returned an error: {e}"))?;
 
-    let body = res
-        .json::<ProxiesResponse>()
-        .await
-        .map_err(|e| format!("Failed to parse proxies response: {}", e))?;
-
-    Ok(body)
+    read_json_bounded::<ProxiesResponse>(
+        res,
+        MAX_API_RESPONSE_BYTES,
+        "Failed to parse proxies response",
+    )
+    .await
 }
 
 pub async fn select_proxy(api_port: u16, selector: &str, node_tag: &str) -> Result<(), String> {
@@ -276,7 +365,7 @@ pub async fn select_proxy(api_port: u16, selector: &str, node_tag: &str) -> Resu
         "name": node_tag
     });
 
-    let res = with_secret(client.put(&url))
+    let res = with_secret(client.put(&url))?
         .json(&body)
         .send()
         .await
@@ -303,16 +392,18 @@ pub async fn test_node_latency(
         client
             .get(&url)
             .timeout(Duration::from_millis(timeout_ms as u64 + 1000)),
-    )
+    )?
     .send()
     .await
     .map_err(|e| format!("Latency test request failed: {}", e))?;
 
     if res.status().is_success() {
-        let delay_res = res
-            .json::<DelayResponse>()
-            .await
-            .map_err(|e| format!("Failed to parse delay response: {}", e))?;
+        let delay_res = read_json_bounded::<DelayResponse>(
+            res,
+            MAX_DELAY_RESPONSE_BYTES,
+            "Failed to parse delay response",
+        )
+        .await?;
         Ok(delay_res.delay)
     } else {
         Err(format!("Server returned status code: {}", res.status()))
@@ -323,19 +414,19 @@ pub async fn fetch_connections(api_port: u16) -> Result<ConnectionsResponse, Str
     validate_api_port(api_port)?;
     let url = format!("http://127.0.0.1:{}/connections", api_port);
     let client = get_client();
-    let res = with_secret(client.get(&url))
+    let res = with_secret(client.get(&url))?
         .send()
         .await
         .map_err(|e| format!("Failed to fetch connections: {}", e))?
         .error_for_status()
         .map_err(|e| format!("Connections API returned an error: {e}"))?;
 
-    let body = res
-        .json::<ConnectionsResponse>()
-        .await
-        .map_err(|e| format!("Failed to parse connections response: {}", e))?;
-
-    Ok(body)
+    read_json_bounded::<ConnectionsResponse>(
+        res,
+        MAX_API_RESPONSE_BYTES,
+        "Failed to parse connections response",
+    )
+    .await
 }
 
 pub async fn close_connection(api_port: u16, id: &str) -> Result<(), String> {
@@ -343,7 +434,7 @@ pub async fn close_connection(api_port: u16, id: &str) -> Result<(), String> {
     validate_non_empty_param(id, "Connection ID")?;
     let url = build_close_connection_url(api_port, id);
     let client = get_client();
-    let res = with_secret(client.delete(&url))
+    let res = with_secret(client.delete(&url))?
         .send()
         .await
         .map_err(|e| format!("Failed to close connection: {}", e))?;
@@ -362,7 +453,7 @@ pub async fn set_mode(api_port: u16, mode: &str) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{}/configs", api_port);
     let client = get_client();
     let body = serde_json::json!({ "mode": mode });
-    let res = with_secret(client.patch(&url))
+    let res = with_secret(client.patch(&url))?
         .json(&body)
         .send()
         .await
@@ -380,13 +471,18 @@ pub async fn close_all_connections(api_port: u16) -> Result<(), String> {
     validate_api_port(api_port)?;
     let url = format!("http://127.0.0.1:{}/connections", api_port);
     let client = get_client();
-    let res = with_secret(client.delete(&url))
+    let res = with_secret(client.delete(&url))?
         .send()
         .await
         .map_err(|e| format!("Failed to close all connections: {}", e))?;
 
     if res.status().is_success() {
         Ok(())
+    } else if matches!(
+        res.status(),
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ) {
+        Err(format!("Server returned status code: {}", res.status()))
     } else {
         // Fallback: close remaining connections concurrently with bounded fan-out.
         match fetch_connections(api_port).await {
@@ -488,6 +584,17 @@ fn process_traffic_bytes(
     parsed
 }
 
+fn next_backoff_secs(current_secs: u64, received_any: bool) -> u64 {
+    if received_any {
+        1
+    } else {
+        current_secs
+            .max(1)
+            .saturating_mul(2)
+            .min(STREAM_MAX_BACKOFF_SECS)
+    }
+}
+
 pub fn spawn_traffic_monitor(
     api_port: u16,
     sender: Sender<TrafficInfo>,
@@ -499,64 +606,70 @@ pub fn spawn_traffic_monitor(
     tokio::spawn(async move {
         let url = format!("http://127.0.0.1:{}/traffic", api_port);
         let client = get_streaming_client();
+        let mut backoff_secs = 1u64;
 
         loop {
             if sender.is_closed() {
                 break;
             }
+            let Ok(request) = with_secret(client.get(&url)) else {
+                break;
+            };
+            let mut received_any = false;
             tokio::select! {
                 _ = &mut cancel_rx => {
                     break;
                 }
                 send_res = tokio::time::timeout(
                     STREAM_CONNECT_TIMEOUT,
-                    with_secret(client.get(&url)).send(),
+                    request.send(),
                 ) => {
-                    let mut backoff = Duration::from_secs(1);
-                    if let Ok(Ok(mut res)) = send_res {
-                        if !res.status().is_success() {
-                            backoff = Duration::from_secs(2);
-                        } else {
-                            let mut byte_buffer = Vec::new();
-                            let mut discarding_long_line = false;
-                            loop {
-                                if sender.is_closed() {
+                    if let Ok(Ok(mut res)) = send_res
+                        && res.status().is_success()
+                    {
+                        let mut byte_buffer = Vec::new();
+                        let mut discarding_long_line = false;
+                        loop {
+                            if sender.is_closed() {
+                                return;
+                            }
+                            tokio::select! {
+                                _ = &mut cancel_rx => {
                                     return;
                                 }
-                                tokio::select! {
-                                    _ = &mut cancel_rx => {
-                                        return;
-                                    }
-                                    chunk_res = tokio::time::timeout(
-                                        STREAM_IDLE_CHUNK_TIMEOUT,
-                                        res.chunk(),
-                                    ) => {
-                                        match chunk_res {
-                                            Ok(Ok(Some(chunk))) => {
-                                                for info in process_traffic_bytes(
-                                                    &mut byte_buffer,
-                                                    &mut discarding_long_line,
-                                                    &chunk,
-                                                ) {
-                                                    if sender.try_send(info).is_err()
-                                                        && sender.is_closed()
-                                                    {
-                                                        return;
-                                                    }
+                                chunk_res = tokio::time::timeout(
+                                    STREAM_IDLE_CHUNK_TIMEOUT,
+                                    res.chunk(),
+                                ) => {
+                                    match chunk_res {
+                                        Ok(Ok(Some(chunk))) => {
+                                            for info in process_traffic_bytes(
+                                                &mut byte_buffer,
+                                                &mut discarding_long_line,
+                                                &chunk,
+                                            ) {
+                                                received_any = true;
+                                                backoff_secs = 1;
+                                                if sender.try_send(info).is_err()
+                                                    && sender.is_closed()
+                                                {
+                                                    return;
                                                 }
                                             }
-                                            _ => break,
                                         }
+                                        _ => break,
                                     }
                                 }
                             }
                         }
                     }
+                    let sleep_for = Duration::from_secs(if received_any { 1 } else { backoff_secs });
+                    backoff_secs = next_backoff_secs(backoff_secs, received_any);
                     tokio::select! {
                         _ = &mut cancel_rx => {
                             break;
                         }
-                        _ = tokio::time::sleep(backoff) => {}
+                        _ = tokio::time::sleep(sleep_for) => {}
                     }
                 }
             }
@@ -704,6 +817,7 @@ mod tests {
         let client = get_client();
         let url = format!("http://127.0.0.1:{port}/proxies/Node/delay");
         let resp = with_optional_secret(client.get(&url), "top-secret")
+            .expect("valid secret")
             .send()
             .await
             .expect("send with secret");
@@ -718,6 +832,14 @@ mod tests {
             "http://127.0.0.1:9090/proxies/%F0%9F%9A%80%20%E8%8A%82%E7%82%B9%20%2F%20Hong%20Kong%20%231%3F"
         );
         assert_eq!(
+            build_select_proxy_url(9090, "100% + Node=A&B"),
+            "http://127.0.0.1:9090/proxies/100%25%20%2B%20Node%3DA%26B"
+        );
+        assert_eq!(
+            build_close_connection_url(9090, "."),
+            "http://127.0.0.1:9090/connections/%2E"
+        );
+        assert_eq!(
             build_close_connection_url(9090, ".."),
             "http://127.0.0.1:9090/connections/%2E%2E"
         );
@@ -728,6 +850,75 @@ mod tests {
         ));
         assert!(delay_url.contains("timeout=30000"));
         assert!(delay_url.contains("url=http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204"));
+    }
+
+    #[test]
+    fn secret_header_rejects_control_chars_without_leaking_secret() {
+        assert!(format_bearer_header_value("").unwrap().is_none());
+        let ok_ascii = format_bearer_header_value("my-secret_123")
+            .unwrap()
+            .expect("header");
+        assert_eq!(ok_ascii.as_bytes(), b"Bearer my-secret_123");
+
+        let ok_utf8 = format_bearer_header_value("密钥")
+            .unwrap()
+            .expect("utf8 header");
+        assert_eq!(ok_utf8.as_bytes(), "Bearer 密钥".as_bytes());
+
+        for bad in [
+            "secret\r\nX-Injected: 1",
+            "secret\n",
+            "secret\r",
+            "sec\0ret",
+            "sec\tret",
+            "sec\x7fret",
+            "sec\u{0085}ret",
+        ] {
+            let err = format_bearer_header_value(bad).expect_err("control char must fail");
+            assert!(err.contains("control characters"), "err={err}");
+            assert!(!err.contains("secret") || err.starts_with("Clash API secret"));
+            assert!(!err.contains("X-Injected"));
+        }
+    }
+
+    #[test]
+    fn clash_json_deserializers_handle_null_fields_from_go() {
+        let conns: ConnectionsResponse = serde_json::from_str(
+            r#"{
+                "connections": [
+                    {
+                        "id": null,
+                        "metadata": null,
+                        "upload": null,
+                        "download": null,
+                        "start": null,
+                        "chains": null,
+                        "rule": null
+                    }
+                ],
+                "downloadTotal": null,
+                "uploadTotal": null
+            }"#,
+        )
+        .expect("connections null fields should deserialize");
+        let list = conns.connections.expect("vec");
+        assert_eq!(list.len(), 1);
+        assert!(list[0].chains.is_empty());
+        assert_eq!(conns.download_total, 0);
+
+        let proxies: ProxiesResponse =
+            serde_json::from_str(r#"{"proxies":null}"#).expect("proxies null should deserialize");
+        assert!(proxies.proxies.is_empty());
+    }
+
+    #[test]
+    fn traffic_reconnect_backoff_doubles_and_resets_on_data() {
+        assert_eq!(next_backoff_secs(1, false), 2);
+        assert_eq!(next_backoff_secs(2, false), 4);
+        assert_eq!(next_backoff_secs(4, false), 8);
+        assert_eq!(next_backoff_secs(8, false), 16);
+        assert_eq!(next_backoff_secs(16, false), 16);
+        assert_eq!(next_backoff_secs(16, true), 1);
     }
 
     #[test]
@@ -780,6 +971,126 @@ mod tests {
         let res = close_all_connections(port).await;
         assert!(res.is_ok(), "unexpected error: {res:?}");
         assert_eq!(closed.load(Ordering::SeqCst), 3);
+        srv.abort();
+    }
+
+    #[tokio::test]
+    async fn close_all_connections_does_not_fallback_on_unauthorized() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let gets = Arc::new(AtomicUsize::new(0));
+        let gets_srv = Arc::clone(&gets);
+
+        let srv = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let gets_req = Arc::clone(&gets_srv);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    if req.starts_with("GET ") {
+                        gets_req.fetch_add(1, Ordering::SeqCst);
+                    }
+                    let resp = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+
+        let err = close_all_connections(port)
+            .await
+            .expect_err("401 should fail directly");
+        assert!(err.contains("401"), "err={err}");
+        assert_eq!(gets.load(Ordering::SeqCst), 0);
+        srv.abort();
+    }
+
+    #[tokio::test]
+    async fn reject_oversized_api_response_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+
+        let srv = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                    MAX_DELAY_RESPONSE_BYTES + 1
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        let err = test_node_latency(port, "Node", "", 1000)
+            .await
+            .expect_err("oversized delay body must fail");
+        assert!(err.contains("parse delay response"), "err={err}");
+        assert!(err.contains("limit"), "err={err}");
+        srv.abort();
+    }
+
+    #[tokio::test]
+    async fn spawn_traffic_monitor_streams_chunks_reconnects_and_cancels() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+
+        let srv = tokio::spawn(async move {
+            // First connection sends one split line and closes.
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                    .await;
+                let part1 = br#"{"up":10"#;
+                let part2 = b",\"down\":20}\n";
+                let _ = socket
+                    .write_all(format!("{:x}\r\n", part1.len()).as_bytes())
+                    .await;
+                let _ = socket.write_all(part1).await;
+                let _ = socket.write_all(b"\r\n").await;
+                let _ = socket
+                    .write_all(format!("{:x}\r\n", part2.len()).as_bytes())
+                    .await;
+                let _ = socket.write_all(part2).await;
+                let _ = socket.write_all(b"\r\n0\r\n\r\n").await;
+            }
+            // Second connection sends another sample after reconnect.
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let body = "{\"up\":30,\"down\":40}\n";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        spawn_traffic_monitor(port, tx, cancel_rx);
+
+        let first = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("first sample timeout")
+            .expect("first sample");
+        assert_eq!((first.up, first.down), (10, 20));
+
+        let second = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("reconnect sample timeout")
+            .expect("reconnect sample");
+        assert_eq!((second.up, second.down), (30, 40));
+
+        let _ = cancel_tx.send(());
         srv.abort();
     }
 }

@@ -59,12 +59,19 @@ fn parse_pre_release(suffix: &str) -> (PreReleaseKind, Vec<u64>, String) {
     (kind, nums, normalize_pre_label(&lower))
 }
 
+fn is_valid_pre_release_suffix(suffix: &str) -> bool {
+    !suffix.is_empty() && suffix.split(['-', '.']).all(|part| !part.is_empty())
+}
+
 fn parse_version(tag: &str) -> Option<ParsedVersion> {
     let trimmed = tag.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
+        return None;
+    }
     let normalized = trimmed.strip_prefix(['v', 'V']).unwrap_or(trimmed);
     let without_build = match normalized.split_once('+') {
         Some((prefix, build)) => {
-            if build.trim().is_empty() {
+            if build.is_empty() {
                 return None;
             }
             prefix
@@ -73,12 +80,12 @@ fn parse_version(tag: &str) -> Option<ParsedVersion> {
     };
     let (core_str, revision, pre_str) = match without_build.split_once('-') {
         Some((core, suffix)) => {
-            if suffix.trim().is_empty() {
+            if !is_valid_pre_release_suffix(suffix) {
                 return None;
             }
             if let Some((rev_part, rest)) = suffix.split_once('-') {
                 if !rev_part.is_empty() && rev_part.chars().all(|c| c.is_ascii_digit()) {
-                    if rest.trim().is_empty() {
+                    if !is_valid_pre_release_suffix(rest) {
                         return None;
                     }
                     (core, rev_part.parse::<u64>().ok()?, Some(rest))
@@ -341,5 +348,28 @@ mod tests {
             "1.0.0-dev.1",
             "1.0.0-dev.99999999999999999999999"
         ));
+
+        // Internal whitespace and dangling/repeated pre-release separators fail closed.
+        for bad in [
+            "1.0.0- -",
+            "1.0.0- 1",
+            "1.0.0+ bad",
+            "1.0.0--1",
+            "1.0.0-rc-",
+            "1.0.0-.1",
+            "1.0.0-rc..1",
+            "1.0.0-1--rc",
+            "1.0.0-a.-1",
+            "1.0.0-a-.1",
+        ] {
+            assert_eq!(normalize_version_tag(bad), Vec::<u64>::new(), "bad={bad}");
+            assert!(!is_remote_version_newer("1.0.0", bad), "bad={bad}");
+            assert!(!is_remote_version_newer(bad, "2.0.0"), "bad={bad}");
+        }
+
+        // Core zero-padding and build metadata differences do not trigger false upgrades.
+        assert!(!is_remote_version_newer("1.0", "1.0.0"));
+        assert!(!is_remote_version_newer("1.0.0", "1.0"));
+        assert!(!is_remote_version_newer("1.0.0+build1", "1.0.0+build2"));
     }
 }
