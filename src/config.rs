@@ -3497,9 +3497,8 @@ fn split_dns_host_port(authority: &str) -> (String, Option<u16>) {
     if let Some((host, port_str)) = authority.rsplit_once(':')
         && !host.contains(':')
         && let Ok(port) = port_str.parse::<u16>()
-        && port > 0
     {
-        return (host.to_string(), Some(port));
+        return (host.to_string(), (port > 0).then_some(port));
     }
     (authority.to_string(), None)
 }
@@ -8921,10 +8920,6 @@ rules:
         }
 
         let clash_dns_bad_port = r#"
-dns:
-  enable: true
-  fallback:
-    - "1.1.1.1:0"
 proxies:
   - name: P1
     type: socks5
@@ -8932,6 +8927,8 @@ proxies:
     port: 1080
 "#;
         let dns_gui = GuiConfig {
+            dns_server_local: "1.1.1.1:0".to_string(),
+            dns_server_remote: "udp://8.8.8.8:0".to_string(),
             custom_bypass_ips: vec!["10.20.30.40".to_string(), "2001:db8::1".to_string()],
             custom_proxy_domains: vec![".Example.ORG".to_string()],
             ..GuiConfig::default()
@@ -8948,9 +8945,27 @@ proxies:
                 .iter()
                 .any(|r| r.get("domain_suffix") == Some(&json!(["example.org"])))
         );
-        for srv in dns_cfg["dns"]["servers"].as_array().unwrap() {
-            assert_ne!(srv.get("server_port"), Some(&json!(0)));
-        }
+        let dns_servers = dns_cfg["dns"]["servers"].as_array().unwrap();
+        let dns_local = dns_servers
+            .iter()
+            .find(|s| s["tag"] == "dns_local")
+            .unwrap();
+        assert_eq!(dns_local["server"], "1.1.1.1");
+        assert!(dns_local.get("server_port").is_none());
+        assert!(dns_local.get("domain_resolver").is_none());
+
+        let dns_remote = dns_servers
+            .iter()
+            .find(|s| s["tag"] == "dns_remote")
+            .unwrap();
+        assert_eq!(dns_remote["server"], "8.8.8.8");
+        assert!(dns_remote.get("server_port").is_none());
+        assert!(dns_remote.get("domain_resolver").is_none());
+
+        assert_eq!(
+            split_dns_host_port("[2001:4860:4860::8888]:0"),
+            ("2001:4860:4860::8888".to_string(), None)
+        );
     }
 
     #[test]
