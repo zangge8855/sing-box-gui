@@ -20,7 +20,7 @@ use std::os::windows::process::CommandExt;
 
 static CURRENT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 /// Active startup PID (while `start_core` is inside `STARTUP_GRACE_MS`), allowing
-/// `stop_core()` to abort a startup without blocking on `LIFECYCLE_LOCK`.
+/// `stop_core()` to abort a startup without waiting for the full grace window.
 #[derive(Debug, Clone)]
 struct StartupHandle {
     pid: u32,
@@ -31,6 +31,9 @@ struct StartupHandle {
 static STARTUP_HANDLE: Mutex<Option<StartupHandle>> = Mutex::new(None);
 /// Set when the user (or app shutdown) intentionally stops the core.
 static INTENTIONAL_STOP: AtomicBool = AtomicBool::new(false);
+/// Number of `stop_core` calls waiting to serialize with `LIFECYCLE_LOCK`.
+/// Prevents a queued `start_core` from clearing `INTENTIONAL_STOP` ahead of a pending stop.
+static STOP_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 /// Message captured when the core dies without an intentional stop.
 static LAST_UNEXPECTED_EXIT: Mutex<Option<String>> = Mutex::new(None);
 /// Single source of truth for the sing-box core version this GUI downloads.
@@ -105,7 +108,8 @@ pub fn format_core_early_exit_error(exit_code: Option<i32>, lines: &[String]) ->
         })
         .collect();
     let body = if !interesting.is_empty() {
-        interesting.join("\n")
+        let start = interesting.len().saturating_sub(20);
+        interesting[start..].join("\n")
     } else if !lines.is_empty() {
         let start = lines.len().saturating_sub(8);
         lines[start..].join("\n")
@@ -173,12 +177,45 @@ fn decode_log_line(bytes: &[u8]) -> String {
 }
 
 fn trim_incomplete_utf8_tail(buf: &mut Vec<u8>) {
-    if let Err(err) = std::str::from_utf8(buf)
-        && err.error_len().is_none()
-        && err.valid_up_to() > 0
-        && buf.len().saturating_sub(err.valid_up_to()) <= 3
-    {
-        buf.truncate(err.valid_up_to());
+    match std::str::from_utf8(buf) {
+        Ok(_) => return,
+        Err(err)
+            if err.error_len().is_none()
+                && err.valid_up_to() > 0
+                && buf.len().saturating_sub(err.valid_up_to()) <= 3 =>
+        {
+            buf.truncate(err.valid_up_to());
+            return;
+        }
+        Err(_) => {}
+    }
+
+    // Earlier invalid bytes can mask an incomplete UTF-8 character at the 64 KiB
+    // truncation boundary; avoid chopping valid Windows GBK trailing bytes.
+    #[cfg(target_os = "windows")]
+    if !encoding_rs::GBK.decode(buf).2 {
+        return;
+    }
+
+    for back in 1..=3.min(buf.len()) {
+        let idx = buf.len() - back;
+        let b = buf[idx];
+        if b < 0x80 {
+            break;
+        }
+        if (0xC2..=0xF4).contains(&b) {
+            let expected_len = if b < 0xE0 {
+                2
+            } else if b < 0xF0 {
+                3
+            } else {
+                4
+            };
+            if back < expected_len && buf[idx + 1..].iter().all(|&c| (0x80..=0xBF).contains(&c)) {
+                buf.truncate(idx);
+            }
+            break;
+        }
     }
 }
 
@@ -211,9 +248,9 @@ fn spawn_log_forwarder_with_flag<R: Read + Send + 'static>(
             if truncated {
                 line_str.push_str(" … [truncated]");
             }
-            if capture_early.load(Ordering::Relaxed) {
+            if capture_early.load(Ordering::Acquire) {
                 let mut buf_guard = early_buf.lock().unwrap_or_else(|e| e.into_inner());
-                if capture_early.load(Ordering::Relaxed) {
+                if capture_early.load(Ordering::Acquire) {
                     // Ring buffer capped at 500 lines. Once full we drop the
                     // oldest entries so the final lines on a FATAL early-exit
                     // (whichever are closer to the actual error) stay visible
@@ -397,6 +434,7 @@ mod proc_ctl {
     const PROCESS_SYNCHRONIZE: u32 = 0x0010_0000;
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
     const STILL_ACTIVE: u32 = 259;
+    const WAIT_TIMEOUT: u32 = 258;
 
     unsafe extern "system" {
         fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut c_void;
@@ -427,13 +465,21 @@ mod proc_ctl {
         if pid == 0 {
             return None;
         }
-        let handle = unsafe { OpenProcess(access | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        let handle = unsafe {
+            OpenProcess(
+                access | PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid,
+            )
+        };
         if handle.is_null() {
             return None;
         }
         let owned = OwnedHandle(handle);
         let mut exit_code: u32 = 0;
-        if unsafe { GetExitCodeProcess(owned.0, &mut exit_code) } == 0 || exit_code != STILL_ACTIVE
+        if unsafe { GetExitCodeProcess(owned.0, &mut exit_code) } == 0
+            || exit_code != STILL_ACTIVE
+            || unsafe { WaitForSingleObject(owned.0, 0) } != WAIT_TIMEOUT
         {
             return None;
         }
@@ -555,14 +601,12 @@ mod proc_ctl {
             }
             let text = String::from_utf8_lossy(&out.stdout);
             let trimmed = text.trim();
-            let mut parts = trimmed.split_whitespace();
-            let Some(state) = parts.next() else {
+            let Some((state, comm)) = trimmed.split_once(char::is_whitespace) else {
                 return false;
             };
             if state.starts_with('Z') {
                 return false;
             }
-            let comm = parts.collect::<Vec<_>>().join(" ");
             Path::new(comm.trim()).file_name().and_then(|n| n.to_str()) == Some(expected_name)
         }
     }
@@ -620,22 +664,25 @@ mod proc_ctl {
         }
 
         if timeout_ms > 0 {
+            let check_alive = || match expected_name {
+                Some(name) => is_pid_alive(pid, name),
+                None => {
+                    let rc = unsafe { libc::kill(pid_t, 0) };
+                    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+                }
+            };
             let deadline = Instant::now() + Duration::from_millis(u64::from(timeout_ms));
             while Instant::now() < deadline {
-                let alive = match expected_name {
-                    Some(name) => is_pid_alive(pid, name),
-                    None => {
-                        let rc = unsafe { libc::kill(pid_t, 0) };
-                        rc == 0
-                            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-                    }
-                };
-                if !alive {
+                if !check_alive() {
                     return Ok(true);
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
             let _ = send_signal(pid_t, process_group, libc::SIGKILL);
+            let kill_deadline = Instant::now() + Duration::from_millis(250);
+            while Instant::now() < kill_deadline && check_alive() {
+                std::thread::sleep(Duration::from_millis(25));
+            }
         }
         Ok(true)
     }
@@ -777,11 +824,13 @@ pub fn get_core_path(gui_config: &GuiConfig) -> PathBuf {
 }
 
 pub fn is_core_installed(gui_config: &GuiConfig) -> bool {
-    get_core_path(gui_config).exists()
+    get_core_path(gui_config).is_file()
 }
 
 const MAX_CORE_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_CORE_BINARY_BYTES: u64 = 128 * 1024 * 1024;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_TAR_STREAM_BYTES: u64 = 512 * 1024 * 1024;
 
 fn unique_sibling_path(dest_path: &Path, label: &str) -> PathBuf {
     static SIBLING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -845,7 +894,14 @@ fn is_official_core_asset_url(url: &str, version: &str, asset_name: &str) -> boo
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
     };
-    if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") {
+    if parsed.scheme() != "https"
+        || parsed.host_str() != Some("github.com")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.port().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
         return false;
     }
     let mut segments = match parsed.path_segments() {
@@ -876,9 +932,15 @@ fn is_safe_core_entry(path: &Path, expected_basename: &str) -> bool {
 pub(crate) fn validate_binary_magic(path: &Path) -> Result<(), String> {
     let mut file = File::open(path).map_err(|e| format!("Failed to inspect binary: {e}"))?;
     let mut magic = [0u8; 4];
-    let read = file
-        .read(&mut magic)
-        .map_err(|e| format!("Failed to read binary header: {e}"))?;
+    let mut read = 0usize;
+    while read < magic.len() {
+        match file.read(&mut magic[read..]) {
+            Ok(0) => break,
+            Ok(n) => read += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(format!("Failed to read binary header: {e}")),
+        }
+    }
 
     #[cfg(target_os = "windows")]
     let valid = if read >= 2 && &magic[..2] == b"MZ" {
@@ -987,108 +1049,140 @@ fn extract_core_from_zip(archive_path: &Path, output_path: &Path) -> Result<(), 
         zip::ZipArchive::new(zip_file).map_err(|e| format!("Invalid zip archive: {e}"))?;
 
     let mut matches = 0usize;
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|e| format!("Failed to read zip entry: {e}"))?;
-        let Some(path) = entry.enclosed_name() else {
-            continue;
-        };
-        let is_symlink = entry
-            .unix_mode()
-            .is_some_and(|mode| mode & 0o170000 == 0o120000);
-        if !entry.is_file() || is_symlink || !is_safe_core_entry(&path, get_core_filename()) {
-            continue;
+    let mut created_output = false;
+    let res: Result<(), String> = (|| {
+        for index in 0..archive.len() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|e| format!("Failed to read zip entry: {e}"))?;
+            let Some(path) = entry.enclosed_name() else {
+                continue;
+            };
+            let is_non_regular = entry.unix_mode().is_some_and(|mode| {
+                let kind = mode & 0o170000;
+                kind != 0 && kind != 0o100000
+            });
+            if !entry.is_file()
+                || entry.is_symlink()
+                || is_non_regular
+                || !is_safe_core_entry(&path, get_core_filename())
+            {
+                continue;
+            }
+            matches += 1;
+            if matches > 1 {
+                return Err("Core archive contains ambiguous duplicate binaries".to_string());
+            }
+            let declared_size = entry.size();
+            if declared_size == 0 || declared_size > MAX_CORE_BINARY_BYTES {
+                return Err("Downloaded core binary has an invalid size".to_string());
+            }
+            let mut output = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output_path)
+                .map_err(|e| format!("Failed to create staged core: {e}"))?;
+            created_output = true;
+            let copied = io::copy(
+                &mut Read::by_ref(&mut entry).take(MAX_CORE_BINARY_BYTES + 1),
+                &mut output,
+            )
+            .map_err(|e| format!("Failed to extract core: {e}"))?;
+            if copied == 0 || copied > MAX_CORE_BINARY_BYTES || copied != declared_size {
+                return Err("Downloaded core binary size does not match archive entry".to_string());
+            }
+            output
+                .sync_all()
+                .map_err(|e| format!("Failed to flush staged core: {e}"))?;
         }
-        matches += 1;
-        if matches > 1 {
-            return Err("Core archive contains ambiguous duplicate binaries".to_string());
-        }
-        let declared_size = entry.size();
-        if declared_size == 0 || declared_size > MAX_CORE_BINARY_BYTES {
-            return Err("Downloaded core binary has an invalid size".to_string());
-        }
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(output_path)
-            .map_err(|e| format!("Failed to create staged core: {e}"))?;
-        let copied = io::copy(
-            &mut Read::by_ref(&mut entry).take(MAX_CORE_BINARY_BYTES + 1),
-            &mut output,
-        )
-        .map_err(|e| format!("Failed to extract core: {e}"))?;
-        if copied == 0 || copied > MAX_CORE_BINARY_BYTES || copied != declared_size {
-            return Err("Downloaded core binary size does not match archive entry".to_string());
-        }
-        output
-            .sync_all()
-            .map_err(|e| format!("Failed to flush staged core: {e}"))?;
+        (matches == 1).then_some(()).ok_or_else(|| {
+            format!(
+                "Could not find {} inside downloaded zip package",
+                get_core_filename()
+            )
+        })
+    })();
+    if res.is_err() && created_output {
+        let _ = fs::remove_file(output_path);
     }
-    (matches == 1).then_some(()).ok_or_else(|| {
-        format!(
-            "Could not find {} inside downloaded zip package",
-            get_core_filename()
-        )
-    })
+    res
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn extract_core_from_tar_gz(archive_path: &Path, output_path: &Path) -> Result<(), String> {
     let tar_gz =
         File::open(archive_path).map_err(|e| format!("Failed to open temp archive: {e}"))?;
-    let gz = flate2::read::GzDecoder::new(tar_gz);
+    let gz = flate2::read::GzDecoder::new(tar_gz).take(MAX_TAR_STREAM_BYTES);
     let mut archive = tar::Archive::new(gz);
 
     let mut matches = 0usize;
-    for entry in archive
-        .entries()
-        .map_err(|e| format!("Failed to inspect tar.gz: {e}"))?
-    {
-        let mut entry = entry.map_err(|e| format!("Failed to read tar entry: {e}"))?;
-        let path = entry
-            .path()
-            .map_err(|e| format!("Invalid tar entry path: {e}"))?;
-        let is_core =
-            entry.header().entry_type().is_file() && is_safe_core_entry(&path, "sing-box");
-        if !is_core {
-            continue;
-        }
-        matches += 1;
-        if matches > 1 {
-            return Err("Core archive contains ambiguous duplicate binaries".to_string());
-        }
-        let size = entry.header().size().unwrap_or(0);
-        if size == 0 || size > MAX_CORE_BINARY_BYTES {
-            return Err("Downloaded core binary has an invalid size".to_string());
-        }
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(output_path)
-            .map_err(|e| format!("Failed to create staged core: {e}"))?;
-        let copied = std::io::copy(
-            &mut Read::by_ref(&mut entry).take(MAX_CORE_BINARY_BYTES + 1),
-            &mut output,
-        )
-        .map_err(|e| format!("Failed to extract core: {e}"))?;
-        if copied == 0 || copied > MAX_CORE_BINARY_BYTES || copied != size {
-            return Err("Downloaded core binary size does not match archive entry".to_string());
-        }
-        output
-            .sync_all()
-            .map_err(|e| format!("Failed to flush staged core: {e}"))?;
-
-        #[cfg(unix)]
+    let mut created_output = false;
+    let res: Result<(), String> = (|| {
+        for entry in archive
+            .entries()
+            .map_err(|e| format!("Failed to inspect tar.gz: {e}"))?
         {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(output_path, fs::Permissions::from_mode(0o755))
-                .map_err(|e| format!("Failed to mark staged core executable: {e}"))?;
+            let mut entry = entry.map_err(|e| format!("Failed to read tar entry: {e}"))?;
+            let path = entry
+                .path()
+                .map_err(|e| format!("Invalid tar entry path: {e}"))?;
+            let is_core =
+                entry.header().entry_type().is_file() && is_safe_core_entry(&path, "sing-box");
+            if !is_core {
+                continue;
+            }
+            matches += 1;
+            if matches > 1 {
+                return Err("Core archive contains ambiguous duplicate binaries".to_string());
+            }
+            let size = entry.header().size().unwrap_or(0);
+            if size == 0 || size > MAX_CORE_BINARY_BYTES {
+                return Err("Downloaded core binary has an invalid size".to_string());
+            }
+            let mut output = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output_path)
+                .map_err(|e| format!("Failed to create staged core: {e}"))?;
+            created_output = true;
+            let copied = std::io::copy(
+                &mut Read::by_ref(&mut entry).take(MAX_CORE_BINARY_BYTES + 1),
+                &mut output,
+            )
+            .map_err(|e| format!("Failed to extract core: {e}"))?;
+            if copied == 0 || copied > MAX_CORE_BINARY_BYTES || copied != size {
+                return Err("Downloaded core binary size does not match archive entry".to_string());
+            }
+            output
+                .sync_all()
+                .map_err(|e| format!("Failed to flush staged core: {e}"))?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(output_path, fs::Permissions::from_mode(0o755))
+                    .map_err(|e| format!("Failed to mark staged core executable: {e}"))?;
+            }
         }
+        (matches == 1)
+            .then_some(())
+            .ok_or_else(|| "Could not find sing-box inside downloaded tar package".to_string())
+    })();
+    if res.is_err() && created_output {
+        let _ = fs::remove_file(output_path);
     }
-    (matches == 1)
-        .then_some(())
-        .ok_or_else(|| "Could not find sing-box inside downloaded tar package".to_string())
+    res
+}
+
+fn is_core_lifecycle_busy() -> bool {
+    STARTUP_HANDLE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some()
+        || matches!(
+            LIFECYCLE_LOCK.try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        )
 }
 
 /// Download official sing-box with structured [`CoreDownloadStage`] callbacks
@@ -1108,7 +1202,7 @@ where
     let _guard = download_lock
         .try_lock()
         .map_err(|_| "A core download is already in progress".to_string())?;
-    if is_core_running() || get_tracked_core_pid().is_some() {
+    if is_core_running() || get_tracked_core_pid().is_some() || is_core_lifecycle_busy() {
         let msg = "Stop the core before reinstalling or replacing it".to_string();
         emit_download_stage(CoreDownloadStage::Failed(msg.clone()), &mut on_progress);
         return Err(msg);
@@ -1130,7 +1224,13 @@ where
         return Err(msg);
     }
 
-    if dest_path.exists() && !force {
+    if dest_path.is_dir() {
+        let msg = "Core destination path is a directory".to_string();
+        emit_download_stage(CoreDownloadStage::Failed(msg.clone()), &mut on_progress);
+        return Err(msg);
+    }
+
+    if dest_path.is_file() && !force {
         emit_download_stage(CoreDownloadStage::Completed, &mut on_progress);
         return Ok(());
     }
@@ -1288,6 +1388,9 @@ where
         file.flush()
             .await
             .map_err(|e| format!("Failed to flush core archive: {e}"))?;
+        file.sync_all()
+            .await
+            .map_err(|e| format!("Failed to flush core archive: {e}"))?;
         drop(file);
 
         emit_download_stage(CoreDownloadStage::Verifying, &mut on_progress);
@@ -1384,18 +1487,19 @@ pub fn prepare_run_config(gui_config: &GuiConfig) -> Result<PathBuf, String> {
         .ok_or_else(|| "No active profile selected".to_string())?;
 
     let config_path = get_profile_path(active_id);
-    if !config_path.exists() {
+    if !config_path.is_file() {
         return Err("Active profile config file not found!".to_string());
     }
 
     let profile_content = fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read profile file: {}", e))?;
 
-    let trimmed = profile_content.trim();
+    let normalized_content = profile_content.trim_start_matches('\u{feff}');
+    let trimmed = normalized_content.trim();
     let mut final_config = if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        crate::config::merge_native_json_profile(&profile_content, gui_config)?
+        crate::config::merge_native_json_profile(normalized_content, gui_config)?
     } else {
-        crate::config::convert_clash_to_singbox(&profile_content, gui_config)?
+        crate::config::convert_clash_to_singbox(normalized_content, gui_config)?
     };
 
     // Fix known startup footguns (broken rule-set proxies, relative cache path).
@@ -1484,23 +1588,112 @@ fn spawn_unix_core(mut cmd: Command, _close_on_exit: bool) -> std::io::Result<Ch
     cmd.spawn()
 }
 
-fn run_config_check(core_path: &Path, run_config_path: &Path) -> Result<(), String> {
-    let mut cmd = Command::new(core_path);
-    cmd.arg("check").arg("-c").arg(run_config_path.as_os_str());
-    apply_singbox_compat_env(&mut cmd);
+struct BoundedCommandOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn read_pipe_bounded<R: Read + Send + 'static>(
+    mut pipe: R,
+    max_bytes: usize,
+) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut collected = Vec::new();
+        let mut buf = [0u8; 8192];
+        loop {
+            match pipe.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let room = max_bytes.saturating_sub(collected.len());
+                    if room > 0 {
+                        collected.extend_from_slice(&buf[..n.min(room)]);
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+        collected
+    })
+}
+
+fn run_command_with_timeout(
+    mut cmd: Command,
+    timeout: Duration,
+    max_output_bytes: usize,
+    spawn_err_prefix: &str,
+) -> Result<BoundedCommandOutput, String> {
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000);
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Failed to run sing-box check: {e}"))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("{spawn_err_prefix}: {e}"))?;
+    let stdout_handle = child
+        .stdout
+        .take()
+        .map(|pipe| read_pipe_bounded(pipe, max_output_bytes));
+    let stderr_handle = child
+        .stderr
+        .take()
+        .map(|pipe| read_pipe_bounded(pipe, max_output_bytes));
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "{spawn_err_prefix}: timed out after {}s",
+                        timeout.as_secs()
+                    ));
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{spawn_err_prefix}: {e}"));
+            }
+        }
+    };
+
+    let stdout = stdout_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    Ok(BoundedCommandOutput {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn run_config_check(core_path: &Path, run_config_path: &Path) -> Result<(), String> {
+    let mut cmd = Command::new(core_path);
+    cmd.arg("check").arg("-c").arg(run_config_path.as_os_str());
+    cmd.current_dir(get_app_dir());
+    apply_singbox_compat_env(&mut cmd);
+
+    let output = run_command_with_timeout(
+        cmd,
+        Duration::from_secs(15),
+        256 * 1024,
+        "Failed to run sing-box check",
+    )?;
     if output.status.success() {
         Ok(())
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = decode_log_line(&output.stderr);
+        let stdout = decode_log_line(&output.stdout);
         let msg = if !stderr.trim().is_empty() {
             stderr.trim().to_string()
         } else if !stdout.trim().is_empty() {
@@ -1525,12 +1718,70 @@ fn kill_and_reap_child(child: &mut Child) {
     let _ = child.wait();
 }
 
+fn stop_child_gracefully(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        if let Ok(pid) = libc::pid_t::try_from(child.id())
+            && pid > 0
+        {
+            unsafe {
+                let pg_rc = libc::kill(-pid, libc::SIGTERM);
+                let result = if pg_rc != 0
+                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                {
+                    libc::kill(pid, libc::SIGTERM)
+                } else {
+                    pg_rc
+                };
+                if result != 0 {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() != Some(libc::ESRCH) {
+                        let mut g = get_last_unexpected_exit_lock();
+                        *g = Some(format!("Failed to terminate core: {error}"));
+                    }
+                }
+            }
+            let start = Instant::now();
+            let mut exited = false;
+            while start.elapsed() < Duration::from_millis(GRACEFUL_STOP_TIMEOUT_MS) {
+                match child.try_wait() {
+                    Ok(Some(_)) => {
+                        exited = true;
+                        break;
+                    }
+                    Ok(None) => {
+                        thread::sleep(Duration::from_millis(50));
+                    }
+                    Err(error) => {
+                        let mut g = get_last_unexpected_exit_lock();
+                        *g = Some(format!("Failed while waiting for core: {error}"));
+                        break;
+                    }
+                }
+            }
+            if !exited {
+                unsafe {
+                    let _ = libc::kill(-pid, libc::SIGKILL);
+                }
+                let _ = child.kill();
+            }
+        } else {
+            let _ = child.kill();
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
 /// Run `sing-box check -c run_config.json` after generating config.
 /// Also used internally by `start_core`; public for Settings “validate” hooks.
 #[allow(dead_code)]
 pub fn check_core_config(gui_config: &GuiConfig) -> Result<(), String> {
     let core_path = get_core_path(gui_config);
-    if !core_path.exists() {
+    if !core_path.is_file() {
         return Err(
             "sing-box core not found! Please download it or specify correct path in Settings."
                 .to_string(),
@@ -1542,11 +1793,30 @@ pub fn check_core_config(gui_config: &GuiConfig) -> Result<(), String> {
 
 static LIFECYCLE_LOCK: Mutex<()> = Mutex::new(());
 
+struct StopInFlightGuard;
+
+impl StopInFlightGuard {
+    fn new() -> Self {
+        STOP_IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for StopInFlightGuard {
+    fn drop(&mut self) {
+        STOP_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<(), String> {
     let _lifecycle_guard = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if STOP_IN_FLIGHT.load(Ordering::SeqCst) > 0 {
+        return Err("Core startup cancelled".to_string());
+    }
     // Reset the intentional-stop flag up front so a failed restart does not
     // leave a stale flag lingering when no child is being tracked.
     INTENTIONAL_STOP.store(false, Ordering::SeqCst);
+    CONSECUTIVE_TRY_WAIT_ERRORS.store(0, Ordering::SeqCst);
     {
         let mut lock = get_process_lock();
         if lock.is_some() {
@@ -1558,7 +1828,7 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
     }
 
     let core_path = get_core_path(gui_config);
-    if !core_path.exists() {
+    if !core_path.is_file() {
         return Err(
             "sing-box core not found! Please download it or specify correct path in Settings."
                 .to_string(),
@@ -1573,7 +1843,7 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
 
     // Stop any orphaned detached instance left from a prior close_core_on_exit == false
     // run only after the new config has passed validation.
-    let _ = stop_detached_core_internal();
+    stop_detached_core_internal()?;
 
     if INTENTIONAL_STOP.load(Ordering::SeqCst) {
         return Err("Core startup cancelled".to_string());
@@ -1672,7 +1942,11 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
 
     if let Err(e) = grace_res {
         *STARTUP_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        kill_and_reap_child(&mut child);
+        if INTENTIONAL_STOP.load(Ordering::SeqCst) {
+            stop_child_gracefully(&mut child);
+        } else {
+            kill_and_reap_child(&mut child);
+        }
         #[cfg(target_os = "windows")]
         close_current_job_object();
         return Err(e);
@@ -1681,7 +1955,7 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
     let mut lock = get_process_lock();
     *STARTUP_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     if INTENTIONAL_STOP.load(Ordering::SeqCst) {
-        kill_and_reap_child(&mut child);
+        stop_child_gracefully(&mut child);
         #[cfg(target_os = "windows")]
         close_current_job_object();
         CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
@@ -1699,10 +1973,11 @@ pub fn start_core(gui_config: &GuiConfig, log_sender: Sender<String>) -> Result<
 }
 
 pub fn stop_core() {
+    let _stop_guard = StopInFlightGuard::new();
     INTENTIONAL_STOP.store(true, Ordering::SeqCst);
     CORE_RUNNING_CACHED.store(false, Ordering::SeqCst);
 
-    // Abort an in-flight startup grace period without waiting for LIFECYCLE_LOCK.
+    // Signal any in-flight startup immediately so `start_core` exits its grace loop promptly.
     let startup = STARTUP_HANDLE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -1715,6 +1990,10 @@ pub fn stop_core() {
         let _ = proc_ctl::terminate_pid(handle.pid, Some(&handle.core_name), pg, 0);
     }
 
+    // Wait for any in-flight `start_core` to finish reaping and release `LIFECYCLE_LOCK`.
+    let _lifecycle_guard = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    CONSECUTIVE_TRY_WAIT_ERRORS.store(0, Ordering::SeqCst);
+
     let mut had_child = false;
     {
         let mut lock = get_process_lock();
@@ -1725,64 +2004,7 @@ pub fn stop_core() {
                     lock.take();
                 }
                 Ok(None) => {
-                    #[cfg(unix)]
-                    {
-                        if let Ok(pid) = libc::pid_t::try_from(child.id())
-                            && pid > 0
-                        {
-                            unsafe {
-                                let pg_rc = libc::kill(-pid, libc::SIGTERM);
-                                let result = if pg_rc != 0
-                                    && std::io::Error::last_os_error().raw_os_error()
-                                        == Some(libc::ESRCH)
-                                {
-                                    libc::kill(pid, libc::SIGTERM)
-                                } else {
-                                    pg_rc
-                                };
-                                if result != 0 {
-                                    let error = std::io::Error::last_os_error();
-                                    if error.raw_os_error() != Some(libc::ESRCH) {
-                                        let mut g = get_last_unexpected_exit_lock();
-                                        *g = Some(format!("Failed to terminate core: {error}"));
-                                    }
-                                }
-                            }
-                            let start = Instant::now();
-                            let mut exited = false;
-                            while start.elapsed() < Duration::from_millis(GRACEFUL_STOP_TIMEOUT_MS)
-                            {
-                                match child.try_wait() {
-                                    Ok(Some(_)) => {
-                                        exited = true;
-                                        break;
-                                    }
-                                    Ok(None) => {
-                                        thread::sleep(Duration::from_millis(50));
-                                    }
-                                    Err(error) => {
-                                        let mut g = get_last_unexpected_exit_lock();
-                                        *g =
-                                            Some(format!("Failed while waiting for core: {error}"));
-                                        break;
-                                    }
-                                }
-                            }
-                            if !exited {
-                                unsafe {
-                                    let _ = libc::kill(-pid, libc::SIGKILL);
-                                }
-                                let _ = child.kill();
-                            }
-                        } else {
-                            let _ = child.kill();
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = child.kill();
-                    }
-                    let _ = child.wait();
+                    stop_child_gracefully(child);
                     lock.take();
                 }
                 Err(error) => {
@@ -1867,9 +2089,8 @@ pub fn is_core_running() -> bool {
 
 /// Lock-free fast path for UI Tick / background pollers.
 /// Returns the cached liveness from the last authoritative check; refresh it by
-/// calling [`is_core_running`] (which acquires the process lock, blocking up to
-/// `STARTUP_GRACE_MS` while `start_core` is in flight). Use this in per-second
-/// subscriptions to avoid stalling the GUI thread.
+/// calling [`is_core_running`]. Use this in per-second subscriptions to avoid
+/// contending on the process lock on the GUI thread.
 pub fn is_core_running_fast() -> bool {
     CORE_RUNNING_CACHED.load(Ordering::SeqCst)
 }
@@ -1877,20 +2098,19 @@ pub fn is_core_running_fast() -> bool {
 /// Run `sing-box version` and return the first line of stdout.
 pub fn get_core_version(gui_config: &GuiConfig) -> Result<String, String> {
     let path = get_core_path(gui_config);
-    if !path.exists() {
+    if !path.is_file() {
         return Err("Core not installed".to_string());
     }
     let mut cmd = Command::new(&path);
     cmd.arg("version");
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000);
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Failed to run core version: {}", e))?;
+    let output = run_command_with_timeout(
+        cmd,
+        Duration::from_secs(10),
+        64 * 1024,
+        "Failed to run core version",
+    )?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_log_line(&output.stderr);
         let detail = stderr.trim();
         return Err(if detail.is_empty() {
             format!("Core version check failed (status {})", output.status)
@@ -1898,7 +2118,7 @@ pub fn get_core_version(gui_config: &GuiConfig) -> Result<String, String> {
             format!("Core version check failed: {detail}")
         });
     }
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = decode_log_line(&output.stdout);
     let first = text.lines().next().unwrap_or("").trim().to_string();
     if first.is_empty() {
         Err("Empty version output".to_string())
@@ -2462,5 +2682,219 @@ mod tests {
         }
         let err = extract_core_from_zip(&zip_path, &staged_path).expect_err("duplicate fails");
         assert!(err.contains("duplicate"), "err={err}");
+        assert!(
+            !staged_path.exists(),
+            "failed zip extraction must clean up staged file"
+        );
+
+        // Symlink entry with matching name must be ignored, not extracted.
+        let sym_zip = dir.path().join("sym.zip");
+        {
+            let file = File::create(&sym_zip).unwrap();
+            let mut writer = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            writer
+                .add_symlink("pkg/sing-box.exe", "/etc/passwd", opts)
+                .unwrap();
+            writer.finish().unwrap();
+        }
+        let err = extract_core_from_zip(&sym_zip, &staged_path).expect_err("symlink ignored");
+        assert!(err.contains("Could not find"), "err={err}");
+        assert!(!staged_path.exists());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn tar_gz_extraction_rejects_symlinks_traversal_and_duplicates() {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let staged_path = dir.path().join("staged-sing-box");
+
+        // Valid tar.gz with symlink + real binary extracts only the regular binary with 0o755.
+        let valid_tgz = dir.path().join("valid.tar.gz");
+        {
+            let file = File::create(&valid_tgz).unwrap();
+            let gz = GzEncoder::new(file, Compression::default());
+            let mut builder = tar::Builder::new(gz);
+
+            let mut sym = tar::Header::new_gnu();
+            sym.set_entry_type(tar::EntryType::Symlink);
+            sym.set_size(0);
+            sym.set_mode(0o777);
+            builder
+                .append_link(&mut sym, "pkg/sing-box", "/bin/sh")
+                .unwrap();
+
+            let payload = b"\x7fELFdemo-sing-box";
+            let mut hdr = tar::Header::new_gnu();
+            hdr.set_size(payload.len() as u64);
+            hdr.set_mode(0o644);
+            hdr.set_cksum();
+            builder
+                .append_data(&mut hdr, "sing-box-1.0/sing-box", &payload[..])
+                .unwrap();
+            builder.into_inner().unwrap().finish().unwrap();
+        }
+        extract_core_from_tar_gz(&valid_tgz, &staged_path).expect("valid tar extraction");
+        assert_eq!(fs::read(&staged_path).unwrap(), b"\x7fELFdemo-sing-box");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&staged_path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o755);
+        }
+        let _ = fs::remove_file(&staged_path);
+
+        // Duplicate matching regular files fail closed and clean up staged_path.
+        let dup_tgz = dir.path().join("dup.tar.gz");
+        {
+            let file = File::create(&dup_tgz).unwrap();
+            let gz = GzEncoder::new(file, Compression::default());
+            let mut builder = tar::Builder::new(gz);
+            for path in ["a/sing-box", "b/sing-box"] {
+                let payload = b"ELF";
+                let mut hdr = tar::Header::new_gnu();
+                hdr.set_size(payload.len() as u64);
+                hdr.set_mode(0o755);
+                hdr.set_cksum();
+                builder.append_data(&mut hdr, path, &payload[..]).unwrap();
+            }
+            builder.into_inner().unwrap().finish().unwrap();
+        }
+        let err = extract_core_from_tar_gz(&dup_tgz, &staged_path).expect_err("duplicate fails");
+        assert!(err.contains("duplicate"), "err={err}");
+        assert!(!staged_path.exists());
+    }
+
+    #[test]
+    fn log_forwarder_trims_trailing_incomplete_utf8_even_after_earlier_invalid_byte() {
+        let mut buf = vec![b'a', 0xff, b'b'];
+        buf.extend_from_slice(&"中".as_bytes()[..2]);
+        trim_incomplete_utf8_tail(&mut buf);
+        assert_eq!(buf, vec![b'a', 0xff, b'b']);
+
+        #[cfg(target_os = "windows")]
+        {
+            // Valid GBK multi-byte tail must not be chopped by UTF-8 fallback.
+            let mut gbk = b"hello \xb9\xfa".to_vec();
+            trim_incomplete_utf8_tail(&mut gbk);
+            assert_eq!(decode_log_line(&gbk), "hello 国");
+        }
+    }
+
+    #[test]
+    fn is_core_installed_rejects_directories_and_url_check_rejects_extras() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let subdir = dir.path().join("bin-dir");
+        fs::create_dir(&subdir).unwrap();
+        let cfg_dir = GuiConfig {
+            core_path: Some(subdir.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        assert!(!is_core_installed(&cfg_dir));
+
+        let file_path = dir.path().join("sing-box");
+        fs::write(&file_path, b"bin").unwrap();
+        let cfg_file = GuiConfig {
+            core_path: Some(file_path.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        assert!(is_core_installed(&cfg_file));
+
+        let name = "sing-box-1.13.14-windows-amd64.zip";
+        assert!(!is_official_core_asset_url(
+            "https://evil@github.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-windows-amd64.zip",
+            "1.13.14",
+            name
+        ));
+        assert!(!is_official_core_asset_url(
+            "https://github.com:8443/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-windows-amd64.zip",
+            "1.13.14",
+            name
+        ));
+        assert!(!is_official_core_asset_url(
+            "https://github.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-windows-amd64.zip?raw=1",
+            "1.13.14",
+            name
+        ));
+        assert!(!is_official_core_asset_url(
+            "https://github.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-windows-amd64.zip#frag",
+            "1.13.14",
+            name
+        ));
+    }
+
+    #[test]
+    fn run_command_with_timeout_kills_hanging_process_and_strips_ansi_on_error() {
+        #[cfg(target_os = "windows")]
+        let hang_cmd = {
+            let mut c = Command::new("powershell.exe");
+            c.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 10"]);
+            c
+        };
+        #[cfg(not(target_os = "windows"))]
+        let hang_cmd = {
+            let mut c = Command::new("sh");
+            c.args(["-c", "exec sleep 10"]);
+            c
+        };
+
+        let started = Instant::now();
+        let err = run_command_with_timeout(
+            hang_cmd,
+            Duration::from_millis(150),
+            1024,
+            "Failed to run sing-box check",
+        )
+        .err()
+        .expect("hanging process must time out");
+        assert!(err.contains("timed out"), "err={err}");
+        assert!(started.elapsed() < Duration::from_secs(3));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        #[cfg(target_os = "windows")]
+        let script = {
+            let p = dir.path().join("fake-check.cmd");
+            fs::write(
+                &p,
+                b"@echo \x1b[31mFATAL\x1b[0m bad config 1>&2\r\n@exit /b 1\r\n",
+            )
+            .unwrap();
+            p
+        };
+        #[cfg(not(target_os = "windows"))]
+        let script = {
+            use std::os::unix::fs::PermissionsExt;
+            let p = dir.path().join("fake-check.sh");
+            fs::write(
+                &p,
+                "#!/bin/sh\nprintf '\\033[31mFATAL\\033[0m bad config\\n' >&2\nexit 1\n",
+            )
+            .unwrap();
+            fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
+        let cfg_path = dir.path().join("run.json");
+        fs::write(&cfg_path, "{}").unwrap();
+        let err = run_config_check(&script, &cfg_path).expect_err("non-zero check fails");
+        assert!(err.contains("FATAL bad config"), "err={err:?}");
+        assert!(!err.contains('\x1b'), "ANSI leaked into error: {err:?}");
+    }
+
+    #[test]
+    fn start_core_respects_pending_stop_and_early_exit_caps_lines() {
+        let many_errors: Vec<String> = (1..=35)
+            .map(|i| format!("ERROR[{i:04}] line-{i}"))
+            .collect();
+        let summary = format_core_early_exit_error(Some(1), &many_errors);
+        assert!(!summary.contains("line-1\n"), "should cap to recent lines");
+        assert!(summary.contains("line-35"), "summary={summary}");
+
+        let _guard = StopInFlightGuard::new();
+        let (tx, _rx) = tokio::sync::mpsc::channel(4);
+        let err = start_core(&GuiConfig::default(), tx).expect_err("pending stop cancels start");
+        assert_eq!(err, "Core startup cancelled");
     }
 }
