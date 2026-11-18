@@ -13,7 +13,6 @@ env:
 
 permissions:
   contents: read
-  checks: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -23,6 +22,9 @@ jobs:
   verify:
     name: Test, Format & Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux dependencies
@@ -45,7 +47,12 @@ jobs:
       - run: cargo clippy --all-targets --quiet --locked --features ui-smoke
       - run: cargo check --locked
       - name: Install Wayland test environment
-        run: sudo apt-get install -y weston dbus python3-gi fonts-dejavu-core mesa-vulkan-drivers
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get update && sudo apt-get install -y weston dbus python3-gi fonts-dejavu-core mesa-vulkan-drivers; then exit 0; fi
+            sleep 15
+          done
+          exit 1
       - run: cargo build --quiet --locked --features ui-smoke
       - name: Verify native Wayland UI and tray lifecycle
         timeout-minutes: 20
@@ -71,9 +78,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-targets --locked
-      - run: cargo test --quiet --locked
+      - run: cargo clippy --all-targets --quiet --locked --features ui-smoke
+      - run: cargo test --quiet --locked --features ui-smoke
 
   build-windows:
     name: Build Windows Binaries
@@ -91,7 +101,8 @@ jobs:
       - name: Prepare Windows artifacts and checksums
         shell: bash
         run: |
-          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          VERSION=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1 | tr -d '\r')
+          test -n "$VERSION"
           mkdir -p dist
           cp target/x86_64-pc-windows-msvc/release/sing-box-gui.exe "dist/sing-box-gui-v${VERSION}-windows-amd64.exe"
           cp target/aarch64-pc-windows-msvc/release/sing-box-gui.exe "dist/sing-box-gui-v${VERSION}-windows-arm64.exe"
@@ -116,7 +127,8 @@ jobs:
       - run: cargo build --release --locked --target aarch64-apple-darwin
       - name: Prepare macOS artifact and checksum
         run: |
-          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          VERSION=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1 | tr -d '\r')
+          test -n "$VERSION"
           mkdir -p dist
           lipo -create -output "dist/sing-box-gui-v${VERSION}-macos-universal" \
             target/x86_64-apple-darwin/release/sing-box-gui \
@@ -148,9 +160,11 @@ jobs:
       - run: cargo build --release --locked
       - name: Prepare Linux x64 artifact and checksum
         run: |
-          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          VERSION=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1 | tr -d '\r')
+          test -n "$VERSION"
           mkdir -p dist
           cp target/release/sing-box-gui "dist/sing-box-gui-v${VERSION}-linux-amd64"
+          chmod +x "dist/sing-box-gui-v${VERSION}-linux-amd64"
           (cd dist && sha256sum "sing-box-gui-v${VERSION}-linux-amd64" > linux-x64-SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
@@ -177,9 +191,11 @@ jobs:
       - run: cargo build --release --locked
       - name: Prepare Linux ARM64 artifact and checksum
         run: |
-          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          VERSION=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1 | tr -d '\r')
+          test -n "$VERSION"
           mkdir -p dist
           cp target/release/sing-box-gui "dist/sing-box-gui-v${VERSION}-linux-arm64"
+          chmod +x "dist/sing-box-gui-v${VERSION}-linux-arm64"
           (cd dist && sha256sum "sing-box-gui-v${VERSION}-linux-arm64" > linux-arm64-SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
@@ -198,7 +214,8 @@ jobs:
       - name: Verify tag matches Cargo version
         shell: bash
         run: |
-          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          VERSION=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1 | tr -d '\r')
+          test -n "$VERSION"
           TAG="${GITHUB_REF_NAME#v}"
           test "$TAG" = "$VERSION" || { echo "Tag $TAG does not match Cargo.toml $VERSION"; exit 1; }
       - uses: actions/download-artifact@v4
@@ -209,8 +226,12 @@ jobs:
       - name: Build release checksum manifest
         run: |
           cd dist
-          find . -maxdepth 1 -type f \( -name '*.exe' -o -name 'sing-box-gui-v*-macos-universal' -o -name 'sing-box-gui-v*-linux-*' \) -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          find . -maxdepth 1 -type f \( -name '*.exe' -o -name 'sing-box-gui-v*-macos-universal' -o -name 'sing-box-gui-v*-linux-*' \) -print0 \
+            | LC_ALL=C sort -z \
+            | xargs -0 sha256sum \
+            | sed 's|  \./|  |' > SHA256SUMS.txt
           test "$(grep -c '^' SHA256SUMS.txt)" -eq 5
+          sha256sum -c SHA256SUMS.txt
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
