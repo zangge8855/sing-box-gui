@@ -5,7 +5,9 @@ use crate::ui::util::{
     SEMIBOLD_WIDTH, fit_mono, fit_width, format_size, labelled_size, traffic_usage_ratio,
 };
 use crate::ui::{PAGE_COMPACT_W, page_header};
-use iced::widget::{Column, Space, button, column, container, responsive, row, text, text_input};
+use iced::widget::{
+    Column, Space, button, column, container, responsive, row, text, text_input, tooltip,
+};
 use iced::{Alignment, Element, Length};
 
 #[allow(clippy::too_many_arguments)]
@@ -37,10 +39,11 @@ pub fn render<'a>(
         let is_compact = size.width < PAGE_COMPACT_W;
         // Room for a card's name and URL: the card's inner width, less the
         // action buttons that share the row on wide layouts.
-        let card_inner = crate::ui::page_content_width(size.width, is_compact)
+        let card_inner = (crate::ui::page_content_width(size.width, is_compact)
             - crate::ui::SCROLL_GUTTER
             - 4.0
-            - theme::CARD_PAD * 2.0;
+            - theme::CARD_PAD * 2.0)
+            .max(60.0);
         let text_primary = theme::text_primary(theme);
         let text_muted = theme::text_muted(theme);
 
@@ -89,10 +92,13 @@ pub fn render<'a>(
         .on_press(Message::OpenProfilesFolder);
 
         let source_btn = |key: &'static str, msg: Message| {
-            button(text(tr(lang, key)).size(theme::TYPE_BTN_SM))
+            let mut b = button(text(tr(lang, key)).size(theme::TYPE_BTN_SM))
                 .padding(theme::BTN_PAD_SM)
-                .style(theme::button_secondary)
-                .on_press(msg)
+                .style(theme::button_secondary);
+            if !downloading {
+                b = b.on_press(msg);
+            }
+            b
         };
 
         // A wrapping row would push the Fill spacer, and with it both
@@ -269,9 +275,10 @@ pub fn render<'a>(
                 let info_w = if is_compact {
                     card_inner
                 } else {
-                    card_inner - if is_active { 200.0 } else { 260.0 }
+                    (card_inner - if is_active { 200.0 } else { 260.0 }).max(60.0)
                 };
                 let display_url = fit_mono(&masked_url, info_w, theme::TYPE_CAPTION);
+                let url_truncated = display_url != masked_url;
 
                 let is_editing = editing_id.as_deref() == Some(profile.id.as_str());
 
@@ -430,20 +437,37 @@ pub fn render<'a>(
 
                     // Status reads as a small pill beside the name, not as a
                     // control-sized block that looks like a disabled button.
-                    let mut name_row = row![
-                        text(fit_width(
-                            &profile.name,
-                            (info_w - if is_active { 100.0 } else { 0.0 }).max(40.0),
-                            theme::TYPE_HEADING * SEMIBOLD_WIDTH,
-                        ))
+                    let short_name = fit_width(
+                        &profile.name,
+                        (info_w - if is_active { 100.0 } else { 0.0 }).max(40.0),
+                        theme::TYPE_HEADING * SEMIBOLD_WIDTH,
+                    );
+                    let name_truncated = short_name != profile.name;
+                    let name_label = text(short_name)
                         .shaping(text::Shaping::Advanced)
                         .wrapping(text::Wrapping::None)
                         .color(text_primary)
                         .size(theme::TYPE_HEADING)
-                        .font(theme::ui_font(iced::font::Weight::Semibold))
-                    ]
-                    .spacing(crate::ui::SP_8)
-                    .align_y(Alignment::Center);
+                        .font(theme::ui_font(iced::font::Weight::Semibold));
+                    let name_el: Element<'a, Message> = if name_truncated {
+                        tooltip(
+                            name_label,
+                            container(
+                                text(&profile.name)
+                                    .size(theme::TYPE_BTN_SM)
+                                    .color(text_primary),
+                            )
+                            .padding(theme::BTN_PAD_SM)
+                            .style(theme::popover_bg),
+                            tooltip::Position::Top,
+                        )
+                        .into()
+                    } else {
+                        name_label.into()
+                    };
+                    let mut name_row = row![name_el]
+                        .spacing(crate::ui::SP_8)
+                        .align_y(Alignment::Center);
                     if is_active {
                         name_row = name_row.push(
                             container(
@@ -462,16 +486,32 @@ pub fn render<'a>(
                         );
                     }
 
-                    let info_col = column![
-                        name_row,
-                        text(display_url)
-                            .color(theme::text_tertiary(theme))
-                            .size(theme::TYPE_CAPTION)
-                            .font(theme::mono_font()),
-                        meta_line,
-                    ]
-                    .spacing(6)
-                    .width(Length::Fill);
+                    let url_label = text(display_url)
+                        .color(theme::text_tertiary(theme))
+                        .size(theme::TYPE_CAPTION)
+                        .font(theme::mono_font());
+                    let url_el: Element<'a, Message> = if url_truncated {
+                        tooltip(
+                            url_label,
+                            container(
+                                text(masked_url)
+                                    .size(theme::TYPE_CAPTION)
+                                    .font(theme::mono_font())
+                                    .color(text_primary),
+                            )
+                            .padding(theme::BTN_PAD_SM)
+                            .max_width(480)
+                            .style(theme::popover_bg),
+                            tooltip::Position::Bottom,
+                        )
+                        .into()
+                    } else {
+                        url_label.into()
+                    };
+
+                    let info_col = column![name_row, url_el, meta_line,]
+                        .spacing(6)
+                        .width(Length::Fill);
 
                     // Wide: actions sit beside the identity block. Compact: they
                     // follow the usage bar so the name keeps the full width.
@@ -577,6 +617,8 @@ pub fn mask_sensitive_url(url: &str) -> String {
             || key.contains("password")
             || key.contains("secret")
             || key.contains("auth")
+            || key == "pass"
+            || key == "psk"
     };
     let has_password = parsed.password().is_some();
     if has_password {
@@ -595,9 +637,18 @@ pub fn mask_sensitive_url(url: &str) -> String {
             | "hysteria"
             | "hysteria2"
             | "tuic"
+            | "anytls"
+            | "naive+https"
+            | "naive+quic"
+            | "ssh"
+            | "shadowtls"
+            | "wg"
+            | "wireguard"
             | "socks"
-            | "socks5"
             | "socks4"
+            | "socks4a"
+            | "socks5"
+            | "socks5h"
     );
     let masked_username = is_proxy_share_scheme && !parsed.username().is_empty() && !has_password;
     if masked_username {
@@ -672,6 +723,60 @@ mod tests {
         let trojan = mask_sensitive_url("trojan://super-secret-pass@node.example:443#JP");
         assert!(!trojan.contains("super-secret-pass"), "trojan={trojan}");
         assert!(trojan.contains("******@node.example:443"));
+
+        let anytls = mask_sensitive_url("anytls://secret-pass@edge.example:443?sni=edge#SG");
+        assert!(!anytls.contains("secret-pass"), "anytls={anytls}");
+        assert!(anytls.contains("******@edge.example:443"));
+
+        let wg = mask_sensitive_url("wg://privkey-token@wg.example:51820?psk=secret123#WG");
+        assert!(!wg.contains("privkey-token"), "wg={wg}");
+        assert!(!wg.contains("secret123"), "wg={wg}");
+        assert!(wg.contains("psk=******"), "wg={wg}");
+    }
+
+    #[test]
+    fn profiles_render_handles_empty_editing_deleting_and_long_urls() {
+        let mut cfg = GuiConfig::default();
+        let _ = render(
+            &cfg,
+            "",
+            false,
+            None,
+            None,
+            None,
+            "",
+            "",
+            None,
+            None,
+            &iced::Theme::Light,
+        );
+        cfg.language = crate::state::Language::Zh;
+        cfg.active_profile_id = Some("p1".into());
+        cfg.subscriptions.push(crate::state::Profile {
+            id: "p1".into(),
+            name: "Very Long Profile Name For Truncation Tooltip Verification 测试长名称".into(),
+            url: "https://example.com/very/long/subscription/path/with/many/segments?token=secret123456".into(),
+            file_path: String::new(),
+            is_subscription: true,
+            updated_at: "2026-11-18 10:00".into(),
+            traffic_upload: Some(1000),
+            traffic_download: Some(2000),
+            traffic_total: Some(10000),
+            expire_at: Some(1_893_456_000),
+        });
+        let _ = render(
+            &cfg,
+            "https://example.com",
+            true,
+            Some("Error"),
+            Some("p1"),
+            None,
+            "",
+            "",
+            Some("p1"),
+            Some("p1"),
+            &iced::Theme::Dark,
+        );
     }
 
     /// Structural: shipped profiles UI source must not use bare numeric text sizes

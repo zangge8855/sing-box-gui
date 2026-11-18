@@ -781,27 +781,39 @@ pub fn render<'a>(
 
         let core_path_error = errors.get("core_path").copied();
         let has_custom_path = !draft.core_path.trim().is_empty();
-        let core_path_control = row![
-            field(
-                tr(lang, "placeholder_core_path"),
-                &draft.core_path,
-                Message::CorePathChanged,
-                core_path_error.is_some(),
-            )
-            .width(Length::Fill),
-            small_icon_btn(
-                crate::ui::icons::ICON_FOLDER_OPEN,
-                "btn_browse",
-                Some(Message::BrowseCorePath),
-            ),
-            small_btn(
-                "btn_clear_core_path",
-                has_custom_path.then_some(Message::ClearCorePath),
-                false,
-            ),
-        ]
-        .spacing(crate::ui::SP_8)
-        .align_y(Alignment::Center);
+        let core_path_input = field(
+            tr(lang, "placeholder_core_path"),
+            &draft.core_path,
+            Message::CorePathChanged,
+            core_path_error.is_some(),
+        )
+        .width(Length::Fill);
+        let browse_btn = small_icon_btn(
+            crate::ui::icons::ICON_FOLDER_OPEN,
+            "btn_browse",
+            Some(Message::BrowseCorePath),
+        );
+        let clear_path_btn = small_btn(
+            "btn_clear_core_path",
+            has_custom_path.then_some(Message::ClearCorePath),
+            false,
+        );
+        let core_path_control: Element<'a, Message> =
+            if size.width >= crate::ui::SETTINGS_2COL_W && size.width < 865.0 {
+                column![
+                    core_path_input,
+                    row![Space::new().width(Length::Fill), browse_btn, clear_path_btn,]
+                        .spacing(crate::ui::SP_8)
+                        .align_y(Alignment::Center),
+                ]
+                .spacing(crate::ui::SP_8)
+                .into()
+            } else {
+                row![core_path_input, browse_btn, clear_path_btn]
+                    .spacing(crate::ui::SP_8)
+                    .align_y(Alignment::Center)
+                    .into()
+            };
 
         let core = section(
             "settings_core",
@@ -811,7 +823,7 @@ pub fn render<'a>(
                     "core_path_label",
                     Some("help_core_path"),
                     core_path_error,
-                    core_path_control.into(),
+                    core_path_control,
                 ),
                 inline(
                     "data_dir_label",
@@ -1016,6 +1028,55 @@ mod tests {
             }
             .to_string(),
             "Every 6 hours"
+        );
+    }
+
+    #[test]
+    fn settings_render_handles_pending_errors_updates_and_preview() {
+        let mut cfg = GuiConfig::default();
+        let mut draft = RuntimeSettingsDraft::from_config(&cfg);
+        draft.mixed_port = "9090".into();
+        draft.tun_mode = true;
+        draft.core_path = "/missing/sing-box".into();
+        let mut errors = std::collections::BTreeMap::new();
+        errors.insert("core_path", "invalid_core_path");
+        errors.insert("autostart", "autostart_apply_failed");
+        let update = UpdateStatus::NewVersion {
+            tag: "v2026.12.1".into(),
+            download_url: None,
+            sha256: None,
+            size: None,
+        };
+        let _ = render(
+            &cfg,
+            &draft,
+            &errors,
+            true,
+            true,
+            &CoreInstallState::Idle,
+            Some("1.13.14"),
+            &update,
+            true,
+            Some("{\"log\":{}}"),
+            2,
+            &iced::Theme::Dark,
+        );
+        cfg.language = Language::Zh;
+        let _ = render(
+            &cfg,
+            &draft,
+            &errors,
+            false,
+            false,
+            &CoreInstallState::Error("Download failed with status: 404".into()),
+            None,
+            &UpdateStatus::Downloading {
+                tag: "v2026.12.1".into(),
+            },
+            false,
+            None,
+            1,
+            &iced::Theme::Light,
         );
     }
 }

@@ -56,6 +56,7 @@ fn render_toast<'a>(
             text(&toast.message)
                 .size(theme::TYPE_BTN_SM)
                 .color(theme::text_primary(theme))
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
                 .width(Length::Fill),
         )
         .height(Length::Shrink)
@@ -85,4 +86,21 @@ fn render_toast<'a>(
         .max_width(440.0)
         .style(theme::popover_bg)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toast_stack_renders_empty_and_long_unbroken_messages() {
+        let _ = render_stack(&[], &iced::Theme::Light);
+        let toasts = vec![
+            Toast::success("Done"),
+            Toast::error(format!("https://example.com/{}", "a".repeat(200))),
+            Toast::info("中文提示信息".repeat(30)),
+        ];
+        let _ = render_stack(&toasts, &iced::Theme::Dark);
+        let _ = render_stack(&toasts, &iced::Theme::Light);
+    }
 }

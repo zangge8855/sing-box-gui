@@ -44,7 +44,11 @@ fn level_token(line: &str) -> Option<(Range<usize>, u8)> {
 
 /// Lines without a level tag (GUI notices, panics) fall back to keywords.
 fn keyword_severity(uppercase: &str) -> u8 {
-    if uppercase.contains("ERROR") || uppercase.contains("FATAL") || uppercase.contains("FAILED") {
+    if uppercase.contains("ERROR")
+        || uppercase.contains("FATAL")
+        || uppercase.contains("PANIC")
+        || uppercase.contains("FAILED")
+    {
         3
     } else if uppercase.contains("WARN") {
         2
@@ -143,7 +147,7 @@ pub fn render<'a>(
             .width(if stacked {
                 Length::Fill
             } else {
-                Length::Fixed(168.0)
+                Length::Fixed(148.0)
             })
             .size(theme::TYPE_BODY)
             .style(theme::input_field);
@@ -200,12 +204,12 @@ pub fn render<'a>(
                 (total_lines > 0).then_some(Message::ExportLogs),
             ),
         ]
-        .spacing(theme::SP_8)
+        .spacing(6)
         .align_y(Alignment::Center);
 
         let actions: Element<'_, Message> = if !stacked {
             row![search_input, filters, actions_group]
-                .spacing(theme::SP_12)
+                .spacing(10)
                 .align_y(Alignment::Center)
                 .into()
         } else if size.width >= LOGS_TOOLBAR_SPREAD_W {
@@ -406,8 +410,47 @@ mod tests {
         assert_eq!(&spaced[range], "ERROR");
         assert_eq!(severity, 3);
         assert_eq!(keyword_severity("FAILED TO CONNECT"), 3);
+        assert_eq!(keyword_severity("PANIC: WORKER CRASHED"), 3);
         assert_eq!(keyword_severity("WARNING: SLOW"), 2);
         assert_eq!(keyword_severity("INFO: OK"), 1);
         assert_eq!(keyword_severity("TRACE"), 0);
+    }
+
+    #[test]
+    fn logs_render_handles_empty_no_matches_and_bounded_buffer() {
+        let cfg = crate::state::GuiConfig::default();
+        let empty = std::collections::VecDeque::new();
+        let _ = render(
+            &cfg,
+            &empty,
+            LogFilter::All,
+            "",
+            true,
+            false,
+            &iced::Theme::Light,
+        );
+
+        let mut many = std::collections::VecDeque::new();
+        for i in 0..600 {
+            many.push_back(format!("14:30:00 INFO [tcp] line {i}"));
+        }
+        let _ = render(
+            &cfg,
+            &many,
+            LogFilter::All,
+            "",
+            false,
+            true,
+            &iced::Theme::Dark,
+        );
+        let _ = render(
+            &cfg,
+            &many,
+            LogFilter::Error,
+            "missing",
+            true,
+            true,
+            &iced::Theme::Light,
+        );
     }
 }
