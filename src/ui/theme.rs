@@ -159,46 +159,46 @@ pub const INPUT_BG_DARK: Color = Color::from_rgb8(0x23, 0x24, 0x27);
 pub const CONSOLE_BG_DARK: Color = Color::from_rgb8(0x17, 0x18, 0x1A);
 
 #[cfg(target_os = "macos")]
-pub const BG_DARK: Color = Color::from_rgb8(0x1C, 0x1C, 0x1E);
+pub const BG_DARK: Color = Color::from_rgb8(0x1E, 0x1E, 0x20);
 #[cfg(target_os = "macos")]
-pub const SIDEBAR_BG: Color = Color::from_rgb8(0x23, 0x23, 0x25);
+pub const SIDEBAR_BG: Color = Color::from_rgb8(0x17, 0x17, 0x19);
 #[cfg(target_os = "macos")]
-pub const CARD_DARK: Color = Color::from_rgb8(0x28, 0x28, 0x2B);
+pub const CARD_DARK: Color = Color::from_rgb8(0x27, 0x27, 0x2A);
 #[cfg(target_os = "macos")]
-pub const CARD_ELEVATED_DARK: Color = Color::from_rgb8(0x31, 0x31, 0x35);
+pub const CARD_ELEVATED_DARK: Color = Color::from_rgb8(0x30, 0x30, 0x34);
 #[cfg(target_os = "macos")]
 pub const CARD_HOVER: Color = Color::from_rgb8(0x38, 0x38, 0x3D);
 #[cfg(target_os = "macos")]
 pub const TEXT_PRIMARY_DARK: Color = Color::from_rgb8(0xF2, 0xF2, 0xF7);
 #[cfg(target_os = "macos")]
-pub const TEXT_MUTED_DARK: Color = Color::from_rgb8(0xAE, 0xAE, 0xB2);
+pub const TEXT_MUTED_DARK: Color = Color::from_rgb8(0xB4, 0xB4, 0xB9);
 #[cfg(target_os = "macos")]
-pub const TEXT_TERTIARY_DARK: Color = Color::from_rgb8(0x9B, 0x9B, 0xA1);
+pub const TEXT_TERTIARY_DARK: Color = Color::from_rgb8(0x9E, 0x9E, 0xA4);
 #[cfg(target_os = "macos")]
 pub const INPUT_BG_DARK: Color = Color::from_rgb8(0x21, 0x21, 0x24);
 #[cfg(target_os = "macos")]
-pub const CONSOLE_BG_DARK: Color = Color::from_rgb8(0x17, 0x17, 0x19);
+pub const CONSOLE_BG_DARK: Color = Color::from_rgb8(0x15, 0x15, 0x17);
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const BG_DARK: Color = Color::from_rgb8(0x1E, 0x1E, 0x1E);
+pub const BG_DARK: Color = Color::from_rgb8(0x1F, 0x1F, 0x1F);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const SIDEBAR_BG: Color = Color::from_rgb8(0x26, 0x26, 0x26);
+pub const SIDEBAR_BG: Color = Color::from_rgb8(0x18, 0x18, 0x18);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const CARD_DARK: Color = Color::from_rgb8(0x2C, 0x2C, 0x2C);
+pub const CARD_DARK: Color = Color::from_rgb8(0x2A, 0x2A, 0x2A);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const CARD_ELEVATED_DARK: Color = Color::from_rgb8(0x34, 0x34, 0x34);
+pub const CARD_ELEVATED_DARK: Color = Color::from_rgb8(0x33, 0x33, 0x33);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const CARD_HOVER: Color = Color::from_rgb8(0x3B, 0x3B, 0x3B);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const TEXT_PRIMARY_DARK: Color = Color::from_rgb8(0xF5, 0xF5, 0xF5);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const TEXT_MUTED_DARK: Color = Color::from_rgb8(0xB0, 0xB0, 0xB0);
+pub const TEXT_MUTED_DARK: Color = Color::from_rgb8(0xB8, 0xB8, 0xB8);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const TEXT_TERTIARY_DARK: Color = Color::from_rgb8(0x9A, 0x9A, 0x9A);
+pub const TEXT_TERTIARY_DARK: Color = Color::from_rgb8(0xA0, 0xA0, 0xA0);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const INPUT_BG_DARK: Color = Color::from_rgb8(0x24, 0x24, 0x24);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const CONSOLE_BG_DARK: Color = Color::from_rgb8(0x18, 0x18, 0x18);
+pub const CONSOLE_BG_DARK: Color = Color::from_rgb8(0x16, 0x16, 0x16);
 
 pub const BORDER_DARK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.08);
 pub const BORDER_STRONG_DARK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.14);
@@ -780,8 +780,11 @@ fn surface_shadow(theme: &iced::Theme) -> Shadow {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = theme;
-        Shadow::default()
+        Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.03),
+            offset: iced::Vector::new(0.0, 1.0),
+            blur_radius: 3.0,
+        }
     }
 }
 
