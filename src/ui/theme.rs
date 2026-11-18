@@ -27,12 +27,41 @@ pub fn ui_font(weight: iced::font::Weight) -> iced::Font {
     }
 }
 
-// ── Radius language ──────────────────────────────────────────────────────────
-// One rhythm on every OS: soft 12px surfaces, 8px controls, 6px chips.
-pub const RADIUS_LG: f32 = 12.0;
-pub const RADIUS_MD: f32 = 8.0;
-pub const RADIUS_SM: f32 = 6.0;
+// ── Radius language (adapted per platform HIG) ───────────────────────────────
+// Windows (WinUI 3 / Fluent): crisp 8px surfaces, 6px controls, 5px chips.
+#[cfg(target_os = "windows")]
+pub const RADIUS_LG: f32 = 8.0;
+#[cfg(target_os = "windows")]
+pub const RADIUS_MD: f32 = 6.0;
+#[cfg(target_os = "windows")]
+pub const RADIUS_SM: f32 = 5.0;
+#[cfg(target_os = "windows")]
 pub const RADIUS_XS: f32 = 4.0;
+#[cfg(target_os = "windows")]
+pub const RADIUS_MICRO: f32 = 3.0;
+
+// macOS (Aqua / Sequoia HIG): generous 14px surfaces, 10px controls, 7px chips.
+#[cfg(target_os = "macos")]
+pub const RADIUS_LG: f32 = 14.0;
+#[cfg(target_os = "macos")]
+pub const RADIUS_MD: f32 = 10.0;
+#[cfg(target_os = "macos")]
+pub const RADIUS_SM: f32 = 7.0;
+#[cfg(target_os = "macos")]
+pub const RADIUS_XS: f32 = 5.0;
+#[cfg(target_os = "macos")]
+pub const RADIUS_MICRO: f32 = 3.0;
+
+// Linux (GNOME / Libadwaita): 12px cards, 8px controls, 6px chips.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const RADIUS_LG: f32 = 12.0;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const RADIUS_MD: f32 = 8.0;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const RADIUS_SM: f32 = 6.0;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const RADIUS_XS: f32 = 4.0;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const RADIUS_MICRO: f32 = 3.0;
 
 /// Font for numeric metrics (latency, speeds).
@@ -107,33 +136,139 @@ pub const SP_12: f32 = 12.0;
 
 pub const SP_40: f32 = 40.0;
 
-// ── Dark mode (ink: green-black with a celadon undertone) ────────────────────
-pub const BG_DARK: Color = Color::from_rgb8(0x0F, 0x15, 0x13);
-pub const SIDEBAR_BG: Color = Color::from_rgb8(0x0B, 0x10, 0x0F);
-pub const CARD_DARK: Color = Color::from_rgb8(0x15, 0x1C, 0x1A);
-pub const CARD_ELEVATED_DARK: Color = Color::from_rgb8(0x1B, 0x24, 0x21);
-pub const CARD_HOVER: Color = Color::from_rgb8(0x1F, 0x29, 0x26);
+// ── Dark mode (platform-native neutral surfaces) ─────────────────────────────
+#[cfg(target_os = "windows")]
+pub const BG_DARK: Color = Color::from_rgb8(0x1F, 0x20, 0x22);
+#[cfg(target_os = "windows")]
+pub const SIDEBAR_BG: Color = Color::from_rgb8(0x19, 0x1A, 0x1C);
+#[cfg(target_os = "windows")]
+pub const CARD_DARK: Color = Color::from_rgb8(0x29, 0x2A, 0x2D);
+#[cfg(target_os = "windows")]
+pub const CARD_ELEVATED_DARK: Color = Color::from_rgb8(0x31, 0x32, 0x36);
+#[cfg(target_os = "windows")]
+pub const CARD_HOVER: Color = Color::from_rgb8(0x37, 0x38, 0x3C);
+#[cfg(target_os = "windows")]
+pub const TEXT_PRIMARY_DARK: Color = Color::from_rgb8(0xF3, 0xF3, 0xF3);
+#[cfg(target_os = "windows")]
+pub const TEXT_MUTED_DARK: Color = Color::from_rgb8(0xB3, 0xB6, 0xBA);
+#[cfg(target_os = "windows")]
+pub const TEXT_TERTIARY_DARK: Color = Color::from_rgb8(0x9D, 0xA1, 0xA7);
+#[cfg(target_os = "windows")]
+pub const INPUT_BG_DARK: Color = Color::from_rgb8(0x23, 0x24, 0x27);
+#[cfg(target_os = "windows")]
+pub const CONSOLE_BG_DARK: Color = Color::from_rgb8(0x17, 0x18, 0x1A);
+
+#[cfg(target_os = "macos")]
+pub const BG_DARK: Color = Color::from_rgb8(0x1C, 0x1C, 0x1E);
+#[cfg(target_os = "macos")]
+pub const SIDEBAR_BG: Color = Color::from_rgb8(0x23, 0x23, 0x25);
+#[cfg(target_os = "macos")]
+pub const CARD_DARK: Color = Color::from_rgb8(0x28, 0x28, 0x2B);
+#[cfg(target_os = "macos")]
+pub const CARD_ELEVATED_DARK: Color = Color::from_rgb8(0x31, 0x31, 0x35);
+#[cfg(target_os = "macos")]
+pub const CARD_HOVER: Color = Color::from_rgb8(0x38, 0x38, 0x3D);
+#[cfg(target_os = "macos")]
+pub const TEXT_PRIMARY_DARK: Color = Color::from_rgb8(0xF2, 0xF2, 0xF7);
+#[cfg(target_os = "macos")]
+pub const TEXT_MUTED_DARK: Color = Color::from_rgb8(0xAE, 0xAE, 0xB2);
+#[cfg(target_os = "macos")]
+pub const TEXT_TERTIARY_DARK: Color = Color::from_rgb8(0x9B, 0x9B, 0xA1);
+#[cfg(target_os = "macos")]
+pub const INPUT_BG_DARK: Color = Color::from_rgb8(0x21, 0x21, 0x24);
+#[cfg(target_os = "macos")]
+pub const CONSOLE_BG_DARK: Color = Color::from_rgb8(0x17, 0x17, 0x19);
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const BG_DARK: Color = Color::from_rgb8(0x1E, 0x1E, 0x1E);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const SIDEBAR_BG: Color = Color::from_rgb8(0x26, 0x26, 0x26);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const CARD_DARK: Color = Color::from_rgb8(0x2C, 0x2C, 0x2C);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const CARD_ELEVATED_DARK: Color = Color::from_rgb8(0x34, 0x34, 0x34);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const CARD_HOVER: Color = Color::from_rgb8(0x3B, 0x3B, 0x3B);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const TEXT_PRIMARY_DARK: Color = Color::from_rgb8(0xF5, 0xF5, 0xF5);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const TEXT_MUTED_DARK: Color = Color::from_rgb8(0xB0, 0xB0, 0xB0);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const TEXT_TERTIARY_DARK: Color = Color::from_rgb8(0x9A, 0x9A, 0x9A);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const INPUT_BG_DARK: Color = Color::from_rgb8(0x24, 0x24, 0x24);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const CONSOLE_BG_DARK: Color = Color::from_rgb8(0x18, 0x18, 0x18);
+
 pub const BORDER_DARK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.08);
 pub const BORDER_STRONG_DARK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.14);
-pub const TEXT_PRIMARY_DARK: Color = Color::from_rgb8(0xE7, 0xEE, 0xEB);
-pub const TEXT_MUTED_DARK: Color = Color::from_rgb8(0x9D, 0xAD, 0xA8);
-pub const TEXT_TERTIARY_DARK: Color = Color::from_rgb8(0x89, 0x98, 0x93);
-pub const INPUT_BG_DARK: Color = Color::from_rgb8(0x10, 0x17, 0x15);
-pub const CONSOLE_BG_DARK: Color = Color::from_rgb8(0x0B, 0x10, 0x0F);
 
-// ── Light mode (paper: cool off-white with a faint green cast) ───────────────
-pub const BG_LIGHT: Color = Color::from_rgb8(0xF3, 0xF5, 0xF4);
-pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb8(0xEA, 0xEF, 0xED);
+// ── Light mode (platform-native neutral surfaces) ────────────────────────────
+#[cfg(target_os = "windows")]
+pub const BG_LIGHT: Color = Color::from_rgb8(0xF3, 0xF3, 0xF3);
+#[cfg(target_os = "windows")]
+pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb8(0xEA, 0xEA, 0xEA);
+#[cfg(target_os = "windows")]
 pub const CARD_LIGHT_BG: Color = Color::from_rgb8(0xFF, 0xFF, 0xFF);
-pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb8(0xEC, 0xF5, 0xF1);
-pub const CARD_HOVER_LIGHT: Color = Color::from_rgb8(0xF7, 0xFA, 0xF9);
-pub const BORDER_LIGHT: Color = Color::from_rgba(0.082, 0.125, 0.114, 0.10);
-pub const BORDER_STRONG_LIGHT: Color = Color::from_rgba(0.082, 0.125, 0.114, 0.17);
-pub const TEXT_PRIMARY_LIGHT: Color = Color::from_rgb8(0x15, 0x20, 0x1D);
-pub const TEXT_MUTED_LIGHT: Color = Color::from_rgb8(0x4A, 0x58, 0x54);
-pub const TEXT_TERTIARY_LIGHT: Color = Color::from_rgb8(0x5E, 0x6C, 0x68);
-pub const INPUT_BG_LIGHT: Color = Color::from_rgb8(0xF6, 0xF8, 0xF7);
-pub const CONSOLE_BG_LIGHT: Color = Color::from_rgb8(0xF7, 0xF9, 0xF8);
+#[cfg(target_os = "windows")]
+pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb8(0xEE, 0xF6, 0xF3);
+#[cfg(target_os = "windows")]
+pub const CARD_HOVER_LIGHT: Color = Color::from_rgb8(0xF9, 0xF9, 0xF9);
+#[cfg(target_os = "windows")]
+pub const TEXT_PRIMARY_LIGHT: Color = Color::from_rgb8(0x1A, 0x1A, 0x1A);
+#[cfg(target_os = "windows")]
+pub const TEXT_MUTED_LIGHT: Color = Color::from_rgb8(0x4E, 0x4E, 0x4E);
+#[cfg(target_os = "windows")]
+pub const TEXT_TERTIARY_LIGHT: Color = Color::from_rgb8(0x5E, 0x5E, 0x5E);
+#[cfg(target_os = "windows")]
+pub const INPUT_BG_LIGHT: Color = Color::from_rgb8(0xFB, 0xFB, 0xFB);
+#[cfg(target_os = "windows")]
+pub const CONSOLE_BG_LIGHT: Color = Color::from_rgb8(0xF6, 0xF6, 0xF6);
+
+#[cfg(target_os = "macos")]
+pub const BG_LIGHT: Color = Color::from_rgb8(0xF5, 0xF5, 0xF7);
+#[cfg(target_os = "macos")]
+pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb8(0xEC, 0xEC, 0xEE);
+#[cfg(target_os = "macos")]
+pub const CARD_LIGHT_BG: Color = Color::from_rgb8(0xFF, 0xFF, 0xFF);
+#[cfg(target_os = "macos")]
+pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb8(0xEC, 0xF5, 0xF2);
+#[cfg(target_os = "macos")]
+pub const CARD_HOVER_LIGHT: Color = Color::from_rgb8(0xF8, 0xF8, 0xFA);
+#[cfg(target_os = "macos")]
+pub const TEXT_PRIMARY_LIGHT: Color = Color::from_rgb8(0x1D, 0x1D, 0x1F);
+#[cfg(target_os = "macos")]
+pub const TEXT_MUTED_LIGHT: Color = Color::from_rgb8(0x4C, 0x4C, 0x50);
+#[cfg(target_os = "macos")]
+pub const TEXT_TERTIARY_LIGHT: Color = Color::from_rgb8(0x5C, 0x5C, 0x61);
+#[cfg(target_os = "macos")]
+pub const INPUT_BG_LIGHT: Color = Color::from_rgb8(0xF9, 0xF9, 0xFB);
+#[cfg(target_os = "macos")]
+pub const CONSOLE_BG_LIGHT: Color = Color::from_rgb8(0xF6, 0xF6, 0xF8);
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const BG_LIGHT: Color = Color::from_rgb8(0xFA, 0xFA, 0xFA);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb8(0xEB, 0xEB, 0xEB);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const CARD_LIGHT_BG: Color = Color::from_rgb8(0xFF, 0xFF, 0xFF);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb8(0xEC, 0xF5, 0xF2);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const CARD_HOVER_LIGHT: Color = Color::from_rgb8(0xF5, 0xF5, 0xF5);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const TEXT_PRIMARY_LIGHT: Color = Color::from_rgb8(0x1C, 0x1C, 0x1C);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const TEXT_MUTED_LIGHT: Color = Color::from_rgb8(0x4C, 0x4C, 0x4C);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const TEXT_TERTIARY_LIGHT: Color = Color::from_rgb8(0x5B, 0x5B, 0x5B);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const INPUT_BG_LIGHT: Color = Color::from_rgb8(0xF4, 0xF4, 0xF4);
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const CONSOLE_BG_LIGHT: Color = Color::from_rgb8(0xF6, 0xF6, 0xF6);
+
+pub const BORDER_LIGHT: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.085);
+pub const BORDER_STRONG_LIGHT: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.145);
 
 // ── Accent + semantic ────────────────────────────────────────────────────────
 /// Celadon jade — the one brand color. Carries white text on light surfaces.
@@ -619,16 +754,34 @@ pub fn hover_wash(theme: &iced::Theme, pressed: bool) -> Color {
     }
 }
 
-/// Paper-like lift for light surfaces; dark mode separates with borders only.
+/// Platform-native elevation shadow:
+/// - Windows (Fluent): subtle crisp lift in light mode; border-only in dark mode.
+/// - macOS (Aqua): soft ambient depth in light mode; border-only in dark mode.
+/// - Linux (Adwaita): flat elevation relying on 1px borders and tonal steps.
 fn surface_shadow(theme: &iced::Theme) -> Shadow {
     if is_dark(theme) {
-        Shadow::default()
-    } else {
+        return Shadow::default();
+    }
+    #[cfg(target_os = "windows")]
+    {
         Shadow {
-            color: Color::from_rgba(0.06, 0.14, 0.11, 0.06),
-            offset: iced::Vector::new(0.0, 1.0),
-            blur_radius: 6.0,
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.045),
+            offset: iced::Vector::new(0.0, 1.5),
+            blur_radius: 4.0,
         }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.06),
+            offset: iced::Vector::new(0.0, 2.0),
+            blur_radius: 10.0,
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = theme;
+        Shadow::default()
     }
 }
 
@@ -736,16 +889,11 @@ pub fn card_selected(theme: &iced::Theme) -> container::Style {
     }
 }
 
-/// Recessed, borderless panel used for empty states and quiet groupings.
+/// Recessed panel used for empty states and quiet groupings.
 pub fn status_card(theme: &iced::Theme) -> container::Style {
-    let dark = is_dark(theme);
-    let bg = if dark {
-        Color::from_rgb8(0x12, 0x19, 0x17)
-    } else {
-        Color::from_rgb8(0xEE, 0xF2, 0xF0)
-    };
+    let fill = mix(bg(theme), card_surface(theme), 0.45);
     container::Style {
-        background: Some(Background::Color(bg)),
+        background: Some(Background::Color(fill)),
         border: Border {
             color: border_color(theme),
             width: 1.0,
@@ -1055,13 +1203,13 @@ pub fn button_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> b
 
 /// Track that hosts `button_tab` segments.
 pub fn segmented_track(theme: &iced::Theme) -> container::Style {
-    let dark = is_dark(theme);
+    let fill = if is_dark(theme) {
+        mix(bg(theme), sidebar_surface(theme), 0.4)
+    } else {
+        mix(bg(theme), sidebar_surface(theme), 0.55)
+    };
     container::Style {
-        background: Some(Background::Color(if dark {
-            Color::from_rgb8(0x10, 0x16, 0x14)
-        } else {
-            Color::from_rgb8(0xEC, 0xF0, 0xEE)
-        })),
+        background: Some(Background::Color(fill)),
         border: Border {
             color: border_color(theme),
             width: 1.0,
@@ -1071,29 +1219,59 @@ pub fn segmented_track(theme: &iced::Theme) -> container::Style {
     }
 }
 
-/// Sidebar navigation item. Active: soft jade wash + jade label.
+/// Sidebar navigation item:
+/// - Windows (WinUI 3 NavigationView): subtle neutral active pill; accent comes
+///   from the leading 3px indicator bar.
+/// - macOS / Linux: soft celadon wash + celadon label.
 pub fn nav_item(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
     move |theme: &iced::Theme, status: button::Status| {
         let dark = is_dark(theme);
-        let bg = if is_active {
-            Some(Background::Color(with_alpha(
-                accent(theme),
-                if dark { 0.12 } else { 0.10 },
-            )))
-        } else {
-            match status {
-                button::Status::Hovered => Some(Background::Color(hover_wash(theme, false))),
-                button::Status::Pressed => Some(Background::Color(hover_wash(theme, true))),
-                _ => None,
-            }
+        #[cfg(target_os = "windows")]
+        let (bg, fg) = {
+            let bg = if is_active {
+                Some(Background::Color(match status {
+                    button::Status::Hovered => hover_wash(theme, true),
+                    _ => hover_wash(theme, false),
+                }))
+            } else {
+                match status {
+                    button::Status::Hovered => Some(Background::Color(hover_wash(theme, false))),
+                    button::Status::Pressed => Some(Background::Color(hover_wash(theme, true))),
+                    _ => None,
+                }
+            };
+            let fg = if is_active {
+                text_primary(theme)
+            } else {
+                text_muted(theme)
+            };
+            (bg, fg)
         };
-        button::Style {
-            background: bg,
-            text_color: if is_active {
+        #[cfg(not(target_os = "windows"))]
+        let (bg, fg) = {
+            let bg = if is_active {
+                Some(Background::Color(with_alpha(
+                    accent(theme),
+                    if dark { 0.14 } else { 0.11 },
+                )))
+            } else {
+                match status {
+                    button::Status::Hovered => Some(Background::Color(hover_wash(theme, false))),
+                    button::Status::Pressed => Some(Background::Color(hover_wash(theme, true))),
+                    _ => None,
+                }
+            };
+            let fg = if is_active {
                 accent_text(theme)
             } else {
                 text_muted(theme)
-            },
+            };
+            (bg, fg)
+        };
+        let _ = dark;
+        button::Style {
+            background: bg,
+            text_color: fg,
             border: Border {
                 radius: RADIUS_MD.into(),
                 width: 0.0,
@@ -1255,12 +1433,7 @@ pub fn list_item_zebra(
 ) -> container::Style {
     let mut style = list_item_style(theme, is_selected, is_hovered);
     if !is_selected && !is_hovered && is_zebra {
-        let dark = is_dark(theme);
-        let bg = if dark {
-            Color::from_rgb8(0x18, 0x20, 0x1D)
-        } else {
-            Color::from_rgb8(0xF8, 0xFA, 0xF9)
-        };
+        let bg = mix(card_surface(theme), elevated_surface(theme), 0.45);
         style.background = Some(Background::Color(bg));
     }
     style.border.width = 0.0;
@@ -1460,33 +1633,45 @@ pub fn toggler_style(
         }
     } else if dark {
         if hovered {
-            Color::from_rgb8(0x34, 0x40, 0x3C)
+            Color::from_rgb8(0x45, 0x47, 0x4C)
         } else {
-            Color::from_rgb8(0x2A, 0x35, 0x31)
+            Color::from_rgb8(0x38, 0x3A, 0x3F)
         }
     } else if hovered {
-        Color::from_rgb8(0xC4, 0xCE, 0xCA)
+        Color::from_rgb8(0xC2, 0xC6, 0xCA)
     } else {
-        Color::from_rgb8(0xD3, 0xDB, 0xD8)
+        Color::from_rgb8(0xD2, 0xD5, 0xD9)
     };
     let knob = if is_toggled && dark {
         ACCENT_INK
     } else {
         Color::WHITE
     };
+    let track_border = if !is_toggled {
+        border_strong(theme)
+    } else {
+        Color::TRANSPARENT
+    };
     iced::widget::toggler::Style {
         background: Background::Color(track),
-        background_border_color: Color::TRANSPARENT,
-        background_border_width: 0.0,
+        background_border_color: track_border,
+        background_border_width: if !is_toggled && cfg!(target_os = "windows") {
+            1.0
+        } else {
+            0.0
+        },
         foreground: Background::Color(knob),
         foreground_border_color: Color::TRANSPARENT,
         foreground_border_width: 0.0,
         text_color: Some(text_primary(theme)),
         // `None` = fully rounded track and knob.
         border_radius: None,
-        // Fraction of the track height left around the knob. Values ≥ 0.5
-        // collapse the knob to nothing (it was 1.0, rendering knob-less pills).
-        padding_ratio: 0.12,
+        // Fraction of the track height left around the knob.
+        padding_ratio: if cfg!(target_os = "windows") {
+            0.16
+        } else {
+            0.12
+        },
     }
 }
 

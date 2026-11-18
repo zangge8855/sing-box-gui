@@ -4488,26 +4488,63 @@ impl App {
                         icon_box.into()
                     }
                 } else {
-                    let mut label_row = row![
-                        text(icon_char.to_string())
-                            .font(Font::with_name("Material Icons"))
-                            .size(ui::ICON_SIZE_LG)
-                            .color(icon_color),
-                        text(ui::i18n::tr(lang, key))
-                            .size(ui::theme::TYPE_BODY)
-                            .font(ui::theme::ui_font(if active {
-                                iced::font::Weight::Semibold
-                            } else {
-                                iced::font::Weight::Normal
-                            }))
-                            .color(if active {
-                                ui::theme::accent_text(theme)
-                            } else {
-                                ui::theme::text_muted(theme)
-                            })
-                    ]
-                    .spacing(ui::SP_12)
-                    .align_y(Alignment::Center);
+                    let active_fg = if cfg!(target_os = "windows") {
+                        ui::theme::text_primary(theme)
+                    } else {
+                        ui::theme::accent_text(theme)
+                    };
+                    let mut label_row = row![];
+                    if cfg!(target_os = "windows") {
+                        let pill_color = if active {
+                            ui::theme::accent(theme)
+                        } else {
+                            iced::Color::TRANSPARENT
+                        };
+                        label_row = label_row.push(
+                            container(iced::widget::Space::new())
+                                .width(3)
+                                .height(16)
+                                .style(move |_t| container::Style {
+                                    background: Some(iced::Background::Color(pill_color)),
+                                    border: iced::Border {
+                                        radius: 1.5.into(),
+                                        ..Default::default()
+                                    },
+                                    ..Default::default()
+                                }),
+                        );
+                    }
+                    label_row = label_row
+                        .push(
+                            text(icon_char.to_string())
+                                .font(Font::with_name("Material Icons"))
+                                .size(ui::ICON_SIZE_LG)
+                                .color(if active && cfg!(target_os = "windows") {
+                                    ui::theme::accent(theme)
+                                } else {
+                                    icon_color
+                                }),
+                        )
+                        .push(
+                            text(ui::i18n::tr(lang, key))
+                                .size(ui::theme::TYPE_BODY)
+                                .font(ui::theme::ui_font(if active {
+                                    iced::font::Weight::Semibold
+                                } else {
+                                    iced::font::Weight::Normal
+                                }))
+                                .color(if active {
+                                    active_fg
+                                } else {
+                                    ui::theme::text_muted(theme)
+                                }),
+                        )
+                        .spacing(if cfg!(target_os = "windows") {
+                            10
+                        } else {
+                            ui::SP_12 as u32
+                        })
+                        .align_y(Alignment::Center);
                     if show_dot {
                         label_row = label_row
                             .push(iced::widget::Space::new().width(Length::Fill))
@@ -4517,7 +4554,13 @@ impl App {
                 };
 
                 let btn = button(btn_content)
-                    .padding(if is_compact { [10, 0] } else { [9, 12] })
+                    .padding(if is_compact {
+                        [10, 0]
+                    } else if cfg!(target_os = "windows") {
+                        [9, 8]
+                    } else {
+                        [9, 12]
+                    })
                     .width(Length::Fill)
                     .style(ui::theme::nav_item(active))
                     .on_press(Message::TabChanged(tab));
@@ -4547,6 +4590,18 @@ impl App {
                 ui::theme::text_tertiary(theme)
             };
 
+            let nav_divider = if is_compact {
+                container(iced::widget::Space::new())
+                    .height(1)
+                    .width(24)
+                    .style(ui::theme::hairline)
+            } else {
+                container(iced::widget::Space::new())
+                    .height(1)
+                    .width(Length::Fill)
+                    .style(ui::theme::hairline)
+            };
+
             let nav = column![
                 make_tab_btn(
                     Tab::Dashboard,
@@ -4561,6 +4616,10 @@ impl App {
                     "tab_profiles",
                     false
                 ),
+                container(nav_divider)
+                    .padding(if is_compact { [6, 0] } else { [6, 8] })
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
                 make_tab_btn(Tab::Rules, ui::icons::ICON_RULES, "tab_rules", false),
                 make_tab_btn(
                     Tab::Connections,
@@ -4576,12 +4635,26 @@ impl App {
                     settings_dirty
                 ),
             ]
-            .spacing(2)
+            .spacing(3)
             .width(Length::Fill);
 
+            let app_icon_handle = iced::widget::image::Handle::from_bytes(
+                include_bytes!("../assets/app-icon.png").as_slice(),
+            );
             let sidebar = if is_compact {
+                let brand_compact =
+                    container(iced::widget::image(app_icon_handle).width(24).height(24))
+                        .padding(iced::Padding {
+                            top: 0.0,
+                            right: 0.0,
+                            bottom: 14.0,
+                            left: 0.0,
+                        })
+                        .center_x(Length::Fill);
+
                 container(
                     column![
+                        brand_compact,
                         nav,
                         iced::widget::Space::new().height(Length::Fill),
                         container({
@@ -4650,9 +4723,27 @@ impl App {
                 ]
                 .width(Length::Fill);
 
-                // No brand block: the native title bar already carries the
-                // app icon and name, so navigation starts at the top.
+                let brand_header = container(
+                    row![
+                        iced::widget::image(app_icon_handle).width(22).height(22),
+                        text("sing-box")
+                            .size(ui::theme::TYPE_HEADING)
+                            .font(ui::theme::ui_font(iced::font::Weight::Semibold))
+                            .color(ui::theme::text_primary(theme)),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                )
+                .padding(iced::Padding {
+                    top: 0.0,
+                    right: 8.0,
+                    bottom: 16.0,
+                    left: 10.0,
+                })
+                .width(Length::Fill);
+
                 container(column![
+                    brand_header,
                     nav,
                     iced::widget::Space::new().height(Length::Fill),
                     footer,
@@ -4660,7 +4751,7 @@ impl App {
                 .width(Length::Fixed(ui::SIDEBAR_W))
                 .height(Length::Fill)
                 .padding(iced::Padding {
-                    top: 22.0,
+                    top: 20.0,
                     right: 12.0,
                     bottom: 8.0,
                     left: 12.0,
