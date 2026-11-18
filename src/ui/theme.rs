@@ -173,6 +173,25 @@ pub fn protocol_color(node_type: &str) -> Color {
     }
 }
 
+fn contains_keyword(haystack_lower: &str, keyword: &str) -> bool {
+    if !keyword.is_ascii() {
+        return haystack_lower.contains(keyword);
+    }
+    let bytes = haystack_lower.as_bytes();
+    let mut offset = 0;
+    while let Some(rel) = haystack_lower[offset..].find(keyword) {
+        let start = offset + rel;
+        let end = start + keyword.len();
+        let left_ok = start == 0 || !bytes[start - 1].is_ascii_alphabetic();
+        let right_ok = end == bytes.len() || !bytes[end].is_ascii_alphabetic();
+        if left_ok && right_ok {
+            return true;
+        }
+        offset = start + 1;
+    }
+    false
+}
+
 /// Region badges use letters on every OS: Windows does not render flag
 /// emoji reliably. Short country codes must be tokens, not substrings ("us"
 /// in "business", "de" in "node", or "in" in "direct" are not locations).
@@ -344,21 +363,45 @@ pub fn detect_region_code(name: &str) -> Option<&'static str> {
     }
 
     for &(code, _, keywords) in REGIONS {
-        if keywords.iter().any(|keyword| lower.contains(keyword)) {
+        if keywords
+            .iter()
+            .any(|keyword| contains_keyword(&lower, keyword))
+        {
             return Some(code);
         }
         // Avoid false positives: "ID" is too ambiguous in English ("ID"), "in"
-        // is an English preposition unless uppercase "IN", and "100GB" is a
-        // data cap rather than Great Britain.
+        // is an English preposition unless uppercase "IN", "100GB" / "100 GB"
+        // is a data cap rather than Great Britain, and lowercase "us" in
+        // English prose ("Contact us") is not United States.
         if code == "ID" {
             continue;
         }
+        let bytes = name.as_bytes();
         let token_hit = tokens.iter().any(|&(start, token)| {
             if code == "IN" {
                 return token == "IN";
             }
-            if code == "GB" && start > 0 && name.as_bytes()[start - 1].is_ascii_digit() {
+            if code == "GB"
+                && bytes[..start]
+                    .iter()
+                    .rev()
+                    .find(|&&b| b != b' ')
+                    .is_some_and(|b| b.is_ascii_digit())
+            {
                 return false;
+            }
+            if code == "US" && token.eq_ignore_ascii_case("us") {
+                if token == "US" {
+                    return true;
+                }
+                let end = start + token.len();
+                let delim = |b: u8| {
+                    matches!(b, b'-' | b'_' | b'/' | b'.' | b'[' | b']' | b'(' | b')')
+                        || b.is_ascii_digit()
+                };
+                return start == 0
+                    || (start > 0 && delim(bytes[start - 1]))
+                    || (end < bytes.len() && delim(bytes[end]));
             }
             token.eq_ignore_ascii_case(code) || (code == "GB" && token.eq_ignore_ascii_case("uk"))
         });
@@ -377,6 +420,7 @@ pub fn is_dark(theme: &iced::Theme) -> bool {
         iced::Theme::Light
             | iced::Theme::SolarizedLight
             | iced::Theme::GruvboxLight
+            | iced::Theme::CatppuccinLatte
             | iced::Theme::TokyoNightLight
             | iced::Theme::KanagawaLotus
     )
@@ -474,7 +518,7 @@ pub fn success_text(theme: &iced::Theme) -> Color {
     if is_dark(theme) {
         Color::from_rgb8(0x62, 0xC9, 0x91)
     } else {
-        Color::from_rgb8(0x1E, 0x7A, 0x4C)
+        Color::from_rgb8(0x1A, 0x6E, 0x44)
     }
 }
 
@@ -760,7 +804,7 @@ pub fn badge_text(color: Color, theme: &iced::Theme) -> Color {
     if is_dark(theme) {
         mix(color, Color::WHITE, 0.38)
     } else {
-        mix(color, Color::BLACK, 0.32)
+        mix(color, Color::BLACK, 0.36)
     }
 }
 
@@ -951,7 +995,7 @@ pub fn button_dismiss(theme: &iced::Theme, status: button::Status) -> button::St
         button::Status::Active => (None, text_tertiary(theme)),
         button::Status::Hovered => (Some(with_alpha(DANGER, 0.12)), danger_text(theme)),
         button::Status::Pressed => (Some(with_alpha(DANGER, 0.20)), danger_text(theme)),
-        button::Status::Disabled => (None, with_alpha(text_tertiary(theme), 0.5)),
+        button::Status::Disabled => (None, text_tertiary(theme)),
     };
     button::Style {
         background: bg.map(Background::Color),
@@ -1629,13 +1673,21 @@ mod tests {
             "reliable",
             "Node in Europe",
             "Traffic 100GB",
+            "Traffic 100 GB",
             "Relay 50gb Plan",
+            "剩余流量 50 GB",
             "User ID Check",
+            "Indianapolis Relay",
+            "Comparison Node",
+            "Traffic Usage Stats",
+            "Contact us on Telegram",
         ] {
             assert_eq!(detect_region_code(name), None, "{name}");
         }
         assert_eq!(detect_region_code("HK-01"), Some("HK"));
         assert_eq!(detect_region_code("US 02 / Premium"), Some("US"));
+        assert_eq!(detect_region_code("us-west-01"), Some("US"));
+        assert_eq!(detect_region_code("node-us"), Some("US"));
         assert_eq!(detect_region_code("🇯🇵 東京 JP"), Some("JP"));
         assert_eq!(detect_region_code("東京 01"), Some("JP"));
         assert_eq!(detect_region_code("台灣 臺北 01"), Some("TW"));
@@ -1645,6 +1697,115 @@ mod tests {
         assert_eq!(detect_region_code("印度尼西亚 01"), Some("ID"));
         assert_eq!(detect_region_code("Indonesia Jakarta"), Some("ID"));
         assert_eq!(detect_region_code("🇺🇸 Relay via HK"), Some("US"));
+        assert_eq!(detect_region_code("Paris-01"), Some("FR"));
+    }
+
+    #[test]
+    fn all_buttons_badges_and_banners_meet_wcag_aa_contrast() {
+        for theme in [iced::Theme::Light, iced::Theme::Dark] {
+            let card = card_surface(&theme);
+            let canvas = bg(&theme);
+            let track = segmented_track(&theme)
+                .background
+                .and_then(|b| match b {
+                    Background::Color(c) => Some(c),
+                    _ => None,
+                })
+                .unwrap();
+
+            for status in [
+                button::Status::Active,
+                button::Status::Hovered,
+                button::Status::Pressed,
+                button::Status::Disabled,
+            ] {
+                for (name, style, under) in [
+                    ("danger_soft", button_danger_soft(&theme, status), card),
+                    ("danger_soft_bg", button_danger_soft(&theme, status), canvas),
+                    ("dismiss", button_dismiss(&theme, status), card),
+                    ("ghost", button_ghost(&theme, status), card),
+                    (
+                        "header",
+                        button_header(&theme, status),
+                        elevated_surface(&theme),
+                    ),
+                    ("tab_active", button_tab(true)(&theme, status), track),
+                    ("tab_inactive", button_tab(false)(&theme, status), track),
+                    (
+                        "nav_active",
+                        nav_item(true)(&theme, status),
+                        sidebar_surface(&theme),
+                    ),
+                    (
+                        "nav_inactive",
+                        nav_item(false)(&theme, status),
+                        sidebar_surface(&theme),
+                    ),
+                ] {
+                    let effective_bg = match style.background {
+                        Some(Background::Color(overlay)) => composite_over(under, overlay),
+                        _ => under,
+                    };
+                    let effective_fg = composite_over(effective_bg, style.text_color);
+                    assert!(
+                        contrast_ratio(effective_fg, effective_bg) >= 4.5,
+                        "{name} ({theme:?}, {status:?}) failed AA contrast: fg={effective_fg:?} bg={effective_bg:?}"
+                    );
+                }
+            }
+
+            // Neutral badge & semantic badges/banners across card and canvas surfaces.
+            for under in [card, canvas] {
+                if let Some(Background::Color(bg_overlay)) = badge_bg(&theme).background {
+                    let eff_bg = composite_over(under, bg_overlay);
+                    assert!(
+                        contrast_ratio(text_muted(&theme), eff_bg) >= 4.5,
+                        "badge_bg unreadable on {theme:?}"
+                    );
+                }
+                for (hue, fg) in [
+                    (SUCCESS, success_text(&theme)),
+                    (WARNING, warning_text(&theme)),
+                    (DANGER, danger_text(&theme)),
+                    (INFO, info_text(&theme)),
+                ] {
+                    if let Some(Background::Color(bg_overlay)) =
+                        badge_colored(hue, &theme).background
+                    {
+                        let eff_bg = composite_over(under, bg_overlay);
+                        assert!(
+                            contrast_ratio(fg, eff_bg) >= 4.5,
+                            "badge_colored semantic text unreadable on {theme:?}"
+                        );
+                        assert!(
+                            contrast_ratio(badge_text(hue, &theme), eff_bg) >= 4.5,
+                            "badge_text unreadable on {theme:?}"
+                        );
+                    }
+                    if let Some(Background::Color(bg_overlay)) =
+                        tinted_banner(&theme, hue).background
+                    {
+                        let eff_bg = composite_over(under, bg_overlay);
+                        assert!(
+                            contrast_ratio(fg, eff_bg) >= 4.5,
+                            "tinted_banner unreadable on {theme:?}"
+                        );
+                    }
+                }
+            }
+
+            // Menu selected item contrast.
+            let menu = pick_list_menu(&theme);
+            if let (Background::Color(pop), Background::Color(sel_overlay)) =
+                (menu.background, menu.selected_background)
+            {
+                let eff_bg = composite_over(pop, sel_overlay);
+                assert!(
+                    contrast_ratio(menu.selected_text_color, eff_bg) >= 4.5,
+                    "pick_list_menu selected item unreadable on {theme:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use crate::state::Language;
 use crate::ui::i18n::tr;
 
-const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+const UNITS: [&str; 7] = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
 
 /// Binary-unit size with three significant digits, the way Explorer and
 /// Finder print sizes: "512 B", "6.41 MB", "12.3 GB", "376 KB". A value
@@ -149,6 +149,13 @@ fn is_zero_width_scalar(c: char) -> bool {
         || is_combining_or_extend(c)
 }
 
+fn is_emoji_zwj_participant(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x203C..=0x2BFF | 0x3030 | 0x303D | 0x3297 | 0x3299 | 0x1F000..=0x1FAFF
+    )
+}
+
 /// Split off the leading Unicode grapheme cluster from a non-empty UTF-8 slice.
 fn next_grapheme(s: &str) -> (&str, &str) {
     let mut iter = s.char_indices();
@@ -171,6 +178,7 @@ fn next_grapheme(s: &str) -> (&str, &str) {
         end += c1.len_utf8();
     }
 
+    let mut last_base = c0;
     loop {
         while let Some(c) = s[end..].chars().next() {
             if is_combining_or_extend(c) {
@@ -179,13 +187,17 @@ fn next_grapheme(s: &str) -> (&str, &str) {
                 break;
             }
         }
-        // Glue ZWJ (`\u{200D}`) plus the joined base glyph (and its extenders).
-        if let Some('\u{200D}') = s[end..].chars().next() {
-            end += '\u{200D}'.len_utf8();
-            if let Some(joined) = s[end..].chars().next()
-                && !matches!(joined, '\r' | '\n')
+        // Per UAX #29 GB11, ZWJ (`\u{200D}`) only joins emoji/pictographic
+        // participants; arbitrary text with ZWJ must not collapse into one glyph.
+        if is_emoji_zwj_participant(last_base)
+            && let Some('\u{200D}') = s[end..].chars().next()
+        {
+            let after_zwj = end + '\u{200D}'.len_utf8();
+            if let Some(joined) = s[after_zwj..].chars().next()
+                && is_emoji_zwj_participant(joined)
             {
-                end += joined.len_utf8();
+                end = after_zwj + joined.len_utf8();
+                last_base = joined;
                 continue;
             }
         }
@@ -221,6 +233,9 @@ fn cluster_em(cluster: &str, base_em: fn(char) -> f32) -> f32 {
         } else {
             1.0
         };
+    }
+    if cluster.contains('\u{20E3}') {
+        return 1.1;
     }
     if is_zero_width_scalar(c0) {
         return 0.0;
@@ -284,6 +299,11 @@ fn sans_em(c: char) -> f32 {
         '—' => 1.0,
         '–' => 0.56,
         '•' => 0.40,
+        '@' => 0.96,
+        '%' => 0.86,
+        '&' => 0.74,
+        '#' | '+' | '=' => 0.68,
+        '\t' => 2.0,
         _ => 0.62,
     }
 }
@@ -316,7 +336,22 @@ fn trim_dangling_suffix(s: &str) -> &str {
         c.is_whitespace()
             || matches!(
                 c,
-                '·' | '-' | '–' | '—' | '/' | '→' | ',' | '，' | '、' | '|' | '•'
+                '·' | '-'
+                    | '–'
+                    | '—'
+                    | '/'
+                    | '→'
+                    | ','
+                    | '，'
+                    | '、'
+                    | '|'
+                    | '•'
+                    | '\u{200B}'
+                    | '\u{200C}'
+                    | '\u{200D}'
+                    | '\u{2060}'
+                    | '\u{FEFF}'
+                    | '\u{00AD}'
             )
     })
 }
@@ -501,5 +536,51 @@ mod tests {
 
         // Zero-width markers add zero advance width.
         assert_eq!(text_width("a\u{200B}b", 14.0), text_width("ab", 14.0));
+    }
+
+    #[test]
+    fn format_size_scales_above_terabytes_without_overflow() {
+        assert_eq!(format_size(1_125_899_906_842_624), "1.00 PB");
+        assert_eq!(format_size(u64::MAX), "16.0 EB");
+        assert_eq!(format_speed(u64::MAX), "16.0 EB/s");
+    }
+
+    #[test]
+    fn fit_width_handles_non_emoji_zwj_keycaps_and_tiny_budgets() {
+        // Non-emoji letters separated by ZWJ must not collapse into 1.25 em.
+        let zwj_ascii = "a\u{200D}b\u{200D}c\u{200D}d\u{200D}e\u{200D}f\u{200D}g\u{200D}h";
+        assert!(text_width(zwj_ascii, 14.0) > 50.0);
+        let fitted = fit_width(zwj_ascii, 36.0, 14.0);
+        assert!(fitted.ends_with('…'), "{fitted:?}");
+        assert!(text_width(&fitted, 14.0) <= 36.0, "{fitted:?}");
+        assert!(!fitted.ends_with("\u{200D}…"), "{fitted:?}");
+
+        // Dangling trailing ZWJ after an emoji stays safe.
+        assert_eq!(fit_width("👨\u{200D}", 200.0, 14.0), "👨\u{200D}");
+
+        // Flag ZWJ, skin-tone ZWJ, and keycap emoji stay intact as single clusters.
+        let rainbow = "🏳️\u{200D}🌈 Pride";
+        let out_rainbow = fit_width(rainbow, 24.0, 14.0);
+        assert!(
+            out_rainbow.starts_with("🏳️\u{200D}🌈") || out_rainbow == "…",
+            "{out_rainbow:?}"
+        );
+        let tech = "👩\u{1F3FB}\u{200D}💻 Dev";
+        let out_tech = fit_width(tech, 32.0, 14.0);
+        assert!(
+            out_tech.starts_with("👩\u{1F3FB}\u{200D}💻") || out_tech == "…",
+            "{out_tech:?}"
+        );
+        let keycap = "1\u{FE0F}\u{20E3} Primary";
+        let out_keycap = fit_width(keycap, 28.0, 14.0);
+        assert!(
+            out_keycap.starts_with("1\u{FE0F}\u{20E3}") || out_keycap == "…",
+            "{out_keycap:?}"
+        );
+
+        // Tiny positive budgets strictly smaller than an ellipsis still emit "…".
+        assert_eq!(fit_width("Hong Kong", 1.0, 14.0), "…");
+        assert_eq!(fit_width("Hong Kong", f32::NEG_INFINITY, 14.0), "…");
+        assert!(fit_width("user@example.com", 90.0, 14.0).ends_with('…'));
     }
 }

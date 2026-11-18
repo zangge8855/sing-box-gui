@@ -431,7 +431,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_more" => "More",
             "btn_less" => "Less",
             "placeholder_profile_name" => "Profile Name",
-            "placeholder_profile_url" => "Subscription URL",
+            "placeholder_profile_url" => "Subscription URL or Path",
             "core_config_preview" => "Configuration Preview (Read-only)",
             "btn_show_preview" => "Show Config Preview",
             "btn_hide_preview" => "Hide Config Preview",
@@ -600,7 +600,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_tun_mode" => "通过虚拟网卡接管全部流量，需要管理员权限。",
             "help_autostart" => "登录桌面时自动启动本程序。",
             "help_close_core" => "退出图形界面时关闭 sing-box 进程。",
-            "help_auto_start_core" => "若已有激活订阅，启动客户端时自动运行内核。",
+            "help_auto_start_core" => "若已有激活配置，启动客户端时自动运行内核。",
             "help_auto_sys_proxy" => "内核就绪后，将系统代理指向本机代理端口。",
             "help_tcp_fast_open" => "在支持的出站上启用 TCP Fast Open。",
             "help_tcp_multipath" => "在系统支持时启用多径 TCP。",
@@ -691,8 +691,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "autostart_apply_failed" => "自启动设置失败",
             "system_proxy_apply_failed" => "系统代理设置失败",
             "update_apply_failed" => "更新应用失败",
-            "profile_delete_failed" => "订阅文件删除失败",
-            "profile_name_required" => "订阅名称不能为空。",
+            "profile_delete_failed" => "配置文件删除失败",
+            "profile_name_required" => "配置名称不能为空。",
             "profile_url_invalid" => "请输入本地文件路径或 HTTP(S) 网址。",
             "profile_url_update_required" => "网址已修改，请点击“更新”重新抓取。",
             "core_downloading" => "正在下载内核…",
@@ -724,17 +724,17 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "update_download_failed" => "更新下载失败：{}",
             "operation_in_progress" => "另一个内核、代理或更新操作正在进行中。",
             "status_installing_update" => "正在安装更新…",
-            "update_asset_missing" => "无法自动安装：未找到当前平台的官方资产。",
+            "update_asset_missing" => "无法自动安装：未找到适用于当前平台的官方安装包。",
             "update_digest_missing" => "无法自动安装：GitHub 未提供 SHA-256 摘要。",
-            "update_size_missing" => "无法自动安装：GitHub 未提供资产大小。",
+            "update_size_missing" => "无法自动安装：GitHub 未提供文件大小信息。",
             "logs_export_failed" => "日志导出失败",
-            "profile_download_failed" => "订阅下载或导入失败",
+            "profile_download_failed" => "配置下载或导入失败",
             "core_unexpected_exit" => "内核意外停止",
             "connection_close_failed" => "连接关闭失败",
             "node_select_failed" => "切换节点失败",
             "logs_follow" => "跟随",
             "proxy_applying" => "应用中…",
-            "connections_close_failed" => "全部连接未能完全关闭",
+            "connections_close_failed" => "未能关闭全部连接",
 
             // Profiles
             "btn_download" => "导入",
@@ -775,9 +775,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "autostart_label" => "开机自启",
             "btn_save_apply" => "保存并应用",
             "btn_discard_changes" => "放弃更改",
-            "fake_ip_label" => "Fake-IP 虚假 IP 模式",
-            "tcp_fast_open_label" => "TCP 快速打开 (TFO)",
-            "tcp_multipath_label" => "TCP 多径传输 (MPTCP)",
+            "fake_ip_label" => "Fake-IP DNS 模式",
+            "tcp_fast_open_label" => "TCP 快速打开（TFO）",
+            "tcp_multipath_label" => "TCP 多径传输（MPTCP）",
             "close_core_on_exit_label" => "退出时自动关闭内核",
             "auto_start_core_label" => "客户端启动时自动运行内核",
             "auto_sys_proxy_label" => "内核启动时自动启用系统代理",
@@ -800,8 +800,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_cancel" => "取消",
             "btn_more" => "更多",
             "btn_less" => "收起",
-            "placeholder_profile_name" => "配置文件名称",
-            "placeholder_profile_url" => "订阅链接网址",
+            "placeholder_profile_name" => "配置名称",
+            "placeholder_profile_url" => "订阅链接或文件路径",
             "core_config_preview" => "内核配置预览（只读）",
             "btn_show_preview" => "显示配置预览",
             "btn_hide_preview" => "隐藏配置预览",
@@ -912,7 +912,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "onboarding_step3_ready" => "一切就绪，点击开关按钮即可启动代理。",
             "onboarding_step3_waiting" => "完成以上两步后即可启动连接。",
             "fact_port" => "端口",
-            "showing_nodes_cap" => "当前显示前 {} / {} 个匹配节点",
+            "showing_nodes_cap" => "当前显示前 {} 个（共 {} 个匹配节点）",
             "showing_nodes_all" => "已显示全部 {} 个匹配节点",
             "btn_show_all" => "显示全部",
             "btn_show_less" => "仅看前 120",
@@ -1084,11 +1084,11 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
     ),
     (
         "Core release asset has an invalid size",
-        "内核发布资产大小无效",
+        "内核发布文件大小无效",
     ),
     (
         "Release asset contains an invalid SHA-256 digest",
-        "发布资产包含无效的 SHA-256 摘要",
+        "发布文件包含无效的 SHA-256 摘要",
     ),
     ("Failed to download core", "下载内核失败"),
     (
@@ -1193,7 +1193,7 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
         "Update asset is missing a valid SHA-256 digest",
         "更新文件缺少有效的 SHA-256 摘要",
     ),
-    ("Update asset has an invalid size", "更新资产大小无效"),
+    ("Update asset has an invalid size", "更新文件大小无效"),
     ("Invalid update URL", "更新地址无效"),
     (
         "Update asset size does not match release metadata",
@@ -1201,7 +1201,7 @@ const ERROR_CATALOG: &[(&str, &str)] = &[
     ),
     (
         "Update asset exceeds its declared size limit",
-        "更新资产超过声明的大小限制",
+        "更新文件超过声明的大小限制",
     ),
     (
         "Downloaded update size does not match release metadata",
@@ -1692,5 +1692,45 @@ mod tests {
             localize_error(Language::Zh, "Config check failed: sing-box check failed"),
             "配置检查未通过：sing-box 检查失败"
         );
+    }
+
+    #[test]
+    fn no_update_required_marker_or_unlocalized_zh_colons_in_ui_keys() {
+        let src = include_str!("i18n.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("i18n source");
+        let en_block = src
+            .split("Language::En => match key {")
+            .nth(1)
+            .and_then(|s| s.split("_ => key,").next())
+            .expect("En block");
+        let zh_block = src
+            .split("Language::Zh => match key {")
+            .nth(1)
+            .and_then(|s| s.split("_ => key,").next())
+            .expect("Zh block");
+
+        for line in en_block.lines().chain(zh_block.lines()) {
+            let trimmed = line.trim();
+            if trimmed.starts_with('"')
+                && let Some((raw_key, rest)) = trimmed[1..].split_once('"')
+                && rest.trim_start().starts_with("=>")
+            {
+                let key_static: &'static str = Box::leak(raw_key.to_string().into_boxed_str());
+                for lang in [Language::En, Language::Zh] {
+                    let val = tr(lang, key_static);
+                    assert!(
+                        !val.contains("UPDATE_REQUIRED"),
+                        "stale UPDATE_REQUIRED marker in {key_static} ({lang:?})"
+                    );
+                }
+                let zh_val = tr(Language::Zh, key_static);
+                assert!(
+                    !zh_val.contains(": "),
+                    "ASCII ': ' in Zh translation for {key_static}: {zh_val}"
+                );
+            }
+        }
     }
 }

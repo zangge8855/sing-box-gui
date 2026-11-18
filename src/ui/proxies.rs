@@ -290,11 +290,16 @@ pub fn render<'a>(
                 let mut groups_row = Row::new().spacing(8);
                 for g in &groups_moved {
                     let is_active = g.name == selected_group_moved;
-                    let active_node = g.now.as_deref().unwrap_or("-");
+                    let active_node = g.now.as_deref().unwrap_or("—");
+                    let short_group =
+                        fit_width(&g.name, 180.0, theme::TYPE_BTN_SM * SEMIBOLD_WIDTH);
+                    let short_node = fit_width(active_node, 132.0, theme::TYPE_CAPTION);
+                    let group_truncated = short_group != g.name || short_node != active_node;
 
                     let g_btn = button(
                         column![
-                            text(g.name.clone())
+                            text(short_group)
+                                .wrapping(text::Wrapping::None)
                                 .size(theme::TYPE_BTN_SM)
                                 .font(theme::ui_font(iced::font::Weight::Bold))
                                 .color(if is_active {
@@ -302,7 +307,8 @@ pub fn render<'a>(
                                 } else {
                                     text_primary
                                 }),
-                            text(fit_width(active_node, 132.0, theme::TYPE_CAPTION))
+                            text(short_node)
+                                .wrapping(text::Wrapping::None)
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active {
                                     theme::accent_text(theme)
@@ -316,7 +322,29 @@ pub fn render<'a>(
                     .style(theme::button_tab(is_active))
                     .on_press(Message::SelectGroup(g.name.clone()));
 
-                    groups_row = groups_row.push(g_btn);
+                    let g_el: Element<'_, Message> = if group_truncated {
+                        iced::widget::tooltip(
+                            g_btn,
+                            container(
+                                column![
+                                    text(&g.name).size(theme::TYPE_BTN_SM).color(text_primary),
+                                    text(active_node)
+                                        .size(theme::TYPE_CAPTION)
+                                        .color(theme::text_muted(theme)),
+                                ]
+                                .spacing(2),
+                            )
+                            .padding([6, 10])
+                            .style(theme::popover_bg),
+                            iced::widget::tooltip::Position::Bottom,
+                        )
+                        .gap(4)
+                        .into()
+                    } else {
+                        g_btn.into()
+                    };
+
+                    groups_row = groups_row.push(g_el);
                 }
 
                 container(
@@ -328,30 +356,30 @@ pub fn render<'a>(
             } else {
                 let mut groups_col = Column::new().spacing(10).padding(iced::Padding {
                     top: 0.0,
-                    right: 10.0,
+                    right: SCROLL_GUTTER,
                     bottom: 0.0,
                     left: 0.0,
                 });
                 for g in &groups_moved {
                     let is_active = g.name == selected_group_moved;
-                    let active_node = g.now.as_deref().unwrap_or("-");
+                    let active_node = g.now.as_deref().unwrap_or("—");
+                    let short_group =
+                        fit_width(&g.name, 132.0, theme::TYPE_SECTION * SEMIBOLD_WIDTH);
+                    let short_node = fit_width(active_node, 132.0, theme::TYPE_CAPTION);
+                    let group_truncated = short_group != g.name || short_node != active_node;
 
                     let g_btn = button(
                         column![
-                            text(fit_width(
-                                &g.name,
-                                136.0,
-                                theme::TYPE_SECTION * SEMIBOLD_WIDTH
-                            ))
-                            .wrapping(text::Wrapping::None)
-                            .size(theme::TYPE_SECTION)
-                            .font(theme::ui_font(iced::font::Weight::Bold))
-                            .color(if is_active {
-                                theme::accent_text(theme)
-                            } else {
-                                text_primary
-                            }),
-                            text(fit_width(active_node, 136.0, theme::TYPE_CAPTION))
+                            text(short_group)
+                                .wrapping(text::Wrapping::None)
+                                .size(theme::TYPE_SECTION)
+                                .font(theme::ui_font(iced::font::Weight::Bold))
+                                .color(if is_active {
+                                    theme::accent_text(theme)
+                                } else {
+                                    text_primary
+                                }),
+                            text(short_node)
                                 .wrapping(text::Wrapping::None)
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active {
@@ -367,11 +395,39 @@ pub fn render<'a>(
                     .style(theme::button_tab(is_active))
                     .on_press(Message::SelectGroup(g.name.clone()));
 
-                    groups_col = groups_col.push(g_btn);
+                    let g_el: Element<'_, Message> = if group_truncated {
+                        iced::widget::tooltip(
+                            g_btn,
+                            container(
+                                column![
+                                    text(&g.name).size(theme::TYPE_BTN_SM).color(text_primary),
+                                    text(active_node)
+                                        .size(theme::TYPE_CAPTION)
+                                        .color(theme::text_muted(theme)),
+                                ]
+                                .spacing(2),
+                            )
+                            .padding([6, 10])
+                            .style(theme::popover_bg),
+                            iced::widget::tooltip::Position::Right,
+                        )
+                        .gap(4)
+                        .into()
+                    } else {
+                        g_btn.into()
+                    };
+
+                    groups_col = groups_col.push(g_el);
                 }
 
                 container(
                     scrollable(groups_col)
+                        .direction(scrollable::Direction::Vertical(
+                            scrollable::Scrollbar::new()
+                                .width(6)
+                                .scroller_width(6)
+                                .margin(3),
+                        ))
                         .style(theme::scrollbar_style)
                         .height(Length::Fill),
                 )
@@ -746,7 +802,7 @@ fn render_proxy_summary<'a>(
     if group_count > 0 {
         summary = summary.push(figure(group_count, "groups_unit"));
     }
-    summary.into()
+    summary.wrap().vertical_spacing(4).into()
 }
 
 // --- Helper Functions for Deduplication ---
@@ -886,12 +942,10 @@ fn render_proxy_card<'a>(
     .align_y(Alignment::Center);
 
     let proto_color = theme::protocol_color(node_type);
-    let proto_label = fit_width(
-        &node_type.to_uppercase(),
-        96.0,
-        theme::TYPE_MICRO * SEMIBOLD_WIDTH,
-    );
-    let chip_w = 12.0 + text_width(&proto_label, theme::TYPE_MICRO) * SEMIBOLD_WIDTH;
+    let proto_upper = node_type.to_uppercase();
+    let proto_label = fit_width(&proto_upper, 96.0, theme::TYPE_MICRO * SEMIBOLD_WIDTH);
+    let proto_truncated = proto_label != proto_upper;
+    let chip_w = 14.0 + text_width(&proto_label, theme::TYPE_MICRO) * SEMIBOLD_WIDTH;
     let type_tag = container(
         text(proto_label)
             .size(theme::TYPE_MICRO)
@@ -910,10 +964,13 @@ fn render_proxy_card<'a>(
         (Some(s), _) if !s.is_empty() => Some(s.to_string()),
         _ => None,
     };
-    if let Some(addr) = server_label {
+    let mut server_truncated = false;
+    if let Some(ref addr) = server_label {
         let server_px = card_w - pad * 2.0 - chip_w - latency_w - crate::ui::SP_8 * 2.0 - 4.0;
+        let short_addr = fit_width(addr, server_px.max(20.0), theme::TYPE_CAPTION);
+        server_truncated = short_addr != *addr;
         meta_row = meta_row.push(
-            text(fit_width(&addr, server_px.max(20.0), theme::TYPE_CAPTION))
+            text(short_addr)
                 .color(theme::text_tertiary(theme))
                 .size(theme::TYPE_CAPTION)
                 .wrapping(text::Wrapping::None)
@@ -927,11 +984,12 @@ fn render_proxy_card<'a>(
     let flag_opt = theme::detect_region_code(node_name);
     let clean_name = clean_node_display_name(node_name, flag_opt);
 
-    // Budget the name to one line: card width minus padding, region chip and
-    // the selection mark (each with its 8px gap).
+    // Budget the name to one line: card width minus padding, border, region
+    // chip and the selection mark (each with its 8px gap).
     let name_px = card_w
         - pad * 2.0
-        - if flag_opt.is_some() { 36.0 } else { 0.0 }
+        - 3.0
+        - if flag_opt.is_some() { 38.0 } else { 0.0 }
         - if is_selected { 26.0 } else { 0.0 }
         - 2.0;
     let display_name = fit_width(
@@ -1054,22 +1112,31 @@ fn render_proxy_card<'a>(
         card_btn = card_btn.on_press(Message::SelectNode(node_clone));
     }
 
-    let card_wrapped: Element<'a, Message> = if name_truncated {
-        tooltip(
-            card_btn,
-            container(
+    let card_wrapped: Element<'a, Message> =
+        if name_truncated || server_truncated || proto_truncated {
+            let mut tip_col = column![
                 text(node_name.to_string())
                     .size(theme::TYPE_BTN_SM)
                     .color(theme::text_primary(theme)),
+            ]
+            .spacing(2);
+            if server_truncated && let Some(addr) = server_label {
+                tip_col = tip_col.push(
+                    text(addr)
+                        .size(theme::TYPE_CAPTION)
+                        .font(theme::mono_font())
+                        .color(theme::text_muted(theme)),
+                );
+            }
+            tooltip(
+                card_btn,
+                container(tip_col).padding([6, 10]).style(theme::popover_bg),
+                tooltip::Position::Top,
             )
-            .padding([6, 10])
-            .style(theme::popover_bg),
-            tooltip::Position::Top,
-        )
-        .into()
-    } else {
-        card_btn.into()
-    };
+            .into()
+        } else {
+            card_btn.into()
+        };
     container(card_wrapped)
         .width(Length::Fill)
         .height(Length::Fixed(PROXY_CARD_HEIGHT))
@@ -1338,5 +1405,39 @@ mod tests {
             !window.contains("\"no_matching_nodes\""),
             "empty-all branch must not use search framing no_matching_nodes; window={window}"
         );
+    }
+
+    #[test]
+    fn compare_nodes_is_strict_weak_order_across_mixed_latencies_and_unicode() {
+        let samples = [
+            ("节点B", None),
+            ("节点a", Some(100)),
+            ("Node-A", Some(100)),
+            ("node-a", Some(100)),
+            ("timeout-1", Some(9999)),
+            ("timeout-2", Some(10000)),
+            ("zero", Some(0)),
+            ("Alpha", None),
+        ];
+        for sort in [ProxySort::Latency, ProxySort::Name] {
+            for (i, a) in samples.iter().enumerate() {
+                assert_eq!(
+                    compare_nodes(sort, a.0, a.1, a.0, a.1),
+                    std::cmp::Ordering::Equal
+                );
+                for (j, b) in samples.iter().enumerate() {
+                    let ab = compare_nodes(sort, a.0, a.1, b.0, b.1);
+                    let ba = compare_nodes(sort, b.0, b.1, a.0, a.1);
+                    assert_eq!(ab, ba.reverse(), "antisymmetry violated at ({i}, {j})");
+                    for c in &samples {
+                        let bc = compare_nodes(sort, b.0, b.1, c.0, c.1);
+                        let ac = compare_nodes(sort, a.0, a.1, c.0, c.1);
+                        if ab == bc {
+                            assert_eq!(ac, ab, "transitivity violated");
+                        }
+                    }
+                }
+            }
+        }
     }
 }

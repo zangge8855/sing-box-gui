@@ -107,13 +107,13 @@ pub fn render<'a>(
         } else {
             theme::CARD_PAD + 4.0
         };
-        let hero_inner = content_w - hero_pad * 2.0;
+        let hero_inner = (content_w - hero_pad * 2.0).max(0.0);
         let power_size = if is_compact { 56.0 } else { 64.0 };
         let controls_w = (hero_inner * 0.44).clamp(296.0, 384.0);
         let identity_w = if is_compact {
-            hero_inner - power_size - crate::ui::SP_16
+            (hero_inner - power_size - crate::ui::SP_16).max(80.0)
         } else {
-            hero_inner - power_size - crate::ui::SP_20 * 3.0 - 1.0 - controls_w
+            (hero_inner - power_size - crate::ui::SP_20 * 3.0 - 1.0 - controls_w).max(80.0)
         };
 
         // ── Hero: power control, status, current node ─────────────────────
@@ -282,6 +282,15 @@ pub fn render<'a>(
             } else {
                 btn.into()
             }
+        } else if headline_truncated {
+            tooltip(
+                container(headline_text).padding([2, 8]),
+                container(text(headline).size(theme::TYPE_BTN_SM).color(text_primary))
+                    .padding([6, 10])
+                    .style(theme::popover_bg),
+                tooltip::Position::Bottom,
+            )
+            .into()
         } else {
             container(headline_text).padding([2, 8]).into()
         };
@@ -373,11 +382,12 @@ pub fn render<'a>(
                     } else {
                         iced::font::Weight::Normal
                     }))
+                    .wrapping(text::Wrapping::None)
                     .align_x(Alignment::Center)
                     .width(Length::Fill),
             )
             .width(Length::FillPortion(1))
-            .padding([6, 8])
+            .padding([6, 4])
             .style(theme::button_tab(active));
             if !active && pending_routing_mode.is_none() {
                 b = b.on_press(Message::RoutingModeChanged(mode));
@@ -859,23 +869,25 @@ fn onboarding_card<'a>(
             import_btn = import_btn.on_press(Message::DownloadSubscription);
         }
 
+        let mut clip_btn = button(text(tr(lang, "btn_import_clipboard")).size(theme::TYPE_BTN_SM))
+            .padding(theme::BTN_PAD_SM)
+            .style(theme::button_secondary);
+        let mut file_btn = button(text(tr(lang, "btn_import_file")).size(theme::TYPE_BTN_SM))
+            .padding(theme::BTN_PAD_SM)
+            .style(theme::button_secondary);
+        if !downloading {
+            clip_btn = clip_btn.on_press(Message::ImportFromClipboard);
+            file_btn = file_btn.on_press(Message::ImportLocalFile);
+        }
+
         let mut col = column![
             row![input, import_btn]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
-            row![
-                button(text(tr(lang, "btn_import_clipboard")).size(theme::TYPE_BTN_SM))
-                    .padding(theme::BTN_PAD_SM)
-                    .style(theme::button_secondary)
-                    .on_press(Message::ImportFromClipboard),
-                button(text(tr(lang, "btn_import_file")).size(theme::TYPE_BTN_SM))
-                    .padding(theme::BTN_PAD_SM)
-                    .style(theme::button_secondary)
-                    .on_press(Message::ImportLocalFile),
-            ]
-            .spacing(crate::ui::SP_8)
-            .wrap()
-            .vertical_spacing(crate::ui::SP_8),
+            row![clip_btn, file_btn]
+                .spacing(crate::ui::SP_8)
+                .wrap()
+                .vertical_spacing(crate::ui::SP_8),
         ]
         .spacing(crate::ui::SP_8);
         if let Some(err) = profile_error {
@@ -1025,6 +1037,36 @@ fn profile_strip<'a>(
         theme::TYPE_BODY * SEMIBOLD_WIDTH,
     );
 
+    let name_truncated = name != profile.name;
+    let name_btn = button(
+        text(name)
+            .size(theme::TYPE_BODY)
+            .font(theme::ui_font(iced::font::Weight::Semibold))
+            .shaping(text::Shaping::Advanced)
+            .wrapping(text::Wrapping::None)
+            .color(text_primary),
+    )
+    .padding([2, 6])
+    .style(theme::button_ghost)
+    .on_press(Message::TabChanged(Tab::Profiles));
+    let name_el: Element<'a, Message> = if name_truncated {
+        tooltip(
+            name_btn,
+            container(
+                text(&profile.name)
+                    .size(theme::TYPE_BTN_SM)
+                    .color(text_primary),
+            )
+            .padding([6, 10])
+            .style(theme::popover_bg),
+            tooltip::Position::Top,
+        )
+        .gap(4)
+        .into()
+    } else {
+        name_btn.into()
+    };
+
     let ident = column![
         container(
             text(tr(lang, "dash_current_profile"))
@@ -1032,17 +1074,7 @@ fn profile_strip<'a>(
                 .color(theme::text_tertiary(theme)),
         )
         .padding([0, 6]),
-        button(
-            text(name)
-                .size(theme::TYPE_BODY)
-                .font(theme::ui_font(iced::font::Weight::Semibold))
-                .shaping(text::Shaping::Advanced)
-                .wrapping(text::Wrapping::None)
-                .color(text_primary),
-        )
-        .padding([2, 6])
-        .style(theme::button_ghost)
-        .on_press(Message::TabChanged(Tab::Profiles)),
+        name_el,
     ]
     .spacing(2);
 
@@ -1068,40 +1100,72 @@ fn profile_strip<'a>(
         (Some(u), Some(d)) => traffic_usage_ratio(u, d, profile.traffic_total.unwrap_or(0)),
         _ => None,
     };
-    let mut labels = row![].spacing(crate::ui::SP_12).align_y(Alignment::Center);
+    let mut label_items: Vec<Element<'a, Message>> = Vec::new();
     match (profile.traffic_upload, profile.traffic_download) {
         (Some(u), Some(d)) => {
             let used = u.saturating_add(d);
             let total = profile.traffic_total.unwrap_or(0);
             if total > 0 {
-                labels = labels
-                    .push(
-                        text(format!("{} / {}", format_size(used), format_size(total)))
-                            .size(theme::TYPE_BTN_SM)
-                            .font(theme::metric_font())
-                            .color(text_primary),
-                    )
-                    .push(caption(labelled_size(
+                label_items.push(
+                    text(format!("{} / {}", format_size(used), format_size(total)))
+                        .size(theme::TYPE_BTN_SM)
+                        .font(theme::metric_font())
+                        .color(text_primary)
+                        .into(),
+                );
+                label_items.push(
+                    caption(labelled_size(
                         lang,
                         "traffic_left",
                         total.saturating_sub(used),
-                    )));
+                    ))
+                    .into(),
+                );
             } else {
-                labels = labels.push(caption(labelled_size(lang, "traffic_used", used)));
+                label_items.push(caption(labelled_size(lang, "traffic_used", used)).into());
             }
         }
         _ => {
-            labels = labels.push(caption(format!(
-                "{} {}",
-                tr(lang, "updated_at_label"),
-                profile.updated_at
-            )));
+            label_items.push(
+                caption(format!(
+                    "{} {}",
+                    tr(lang, "updated_at_label"),
+                    profile.updated_at
+                ))
+                .into(),
+            );
         }
     }
-    labels = labels.push(Space::new().width(Length::Fill));
-    if let Some(expiry) = expiry {
-        labels = labels.push(expiry);
-    }
+    let usage_w = if is_compact {
+        content_w - theme::CARD_PAD_DENSE * 2.0
+    } else {
+        content_w
+            - ident_w
+            - if profile.is_subscription { 104.0 } else { 0.0 }
+            - crate::ui::SP_20 * 2.0
+            - theme::CARD_PAD_DENSE * 2.0
+    };
+    let wrap_labels = !is_compact && expiry.is_some() && usage_w < 360.0;
+    let labels: Element<'a, Message> = if wrap_labels {
+        if let Some(expiry) = expiry {
+            label_items.push(expiry.into());
+        }
+        iced::widget::Row::with_children(label_items)
+            .spacing(crate::ui::SP_12)
+            .align_y(Alignment::Center)
+            .wrap()
+            .vertical_spacing(4)
+            .into()
+    } else {
+        label_items.push(Space::new().width(Length::Fill).into());
+        if let Some(expiry) = expiry {
+            label_items.push(expiry.into());
+        }
+        iced::widget::Row::with_children(label_items)
+            .spacing(crate::ui::SP_12)
+            .align_y(Alignment::Center)
+            .into()
+    };
     let mut usage = column![labels].spacing(8).width(Length::Fill);
     if let Some(ratio) = ratio {
         usage = usage.push(crate::ui::usage_bar(ratio, theme));
@@ -1170,11 +1234,11 @@ fn waveform_split(peak_down: u64, peak_up: u64, height: f32) -> (f32, f32, f32) 
     // 2px breath between each bar and the baseline.
     const BREATH: f32 = 2.0;
     let usable = (height - 1.0 - BREATH * 2.0).max(2.0);
-    let sum = peak_down + peak_up;
-    let share = if sum == 0 {
+    let sum = peak_down as f64 + peak_up as f64;
+    let share = if sum == 0.0 {
         0.5
     } else {
-        (peak_down as f32 / sum as f32).clamp(0.14, 0.86)
+        (peak_down as f64 / sum).clamp(0.14, 0.86) as f32
     };
     let down_reach = (usable * share).floor().max(1.0);
     let up_reach = (usable - down_reach).max(1.0);
@@ -1399,7 +1463,7 @@ fn traffic_waveform<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{fill_height_threshold, split_figure, waveform_split};
+    use super::{fill_height_threshold, render, split_figure, waveform_split};
 
     #[test]
     fn waveform_split_fills_height_on_one_scale() {
@@ -1420,6 +1484,9 @@ mod tests {
         // Tiny heights stay finite and non-negative.
         let (d_min, u_min, scale_min) = waveform_split(10_000, 10_000, 2.0);
         assert!(d_min > 0.0 && u_min > 0.0 && scale_min.is_finite());
+        // Huge u64 peaks never overflow u64 + u64.
+        let (d_max, u_max, scale_max) = waveform_split(u64::MAX, u64::MAX, 148.0);
+        assert!(d_max > 0.0 && u_max > 0.0 && scale_max.is_finite());
     }
 
     #[test]
@@ -1437,5 +1504,79 @@ mod tests {
         let base = fill_height_threshold(false, false, false);
         assert!(fill_height_threshold(true, false, false) > base);
         assert!(fill_height_threshold(false, true, false) > base);
+    }
+
+    #[test]
+    fn dashboard_render_handles_onboarding_and_long_profile_strip() {
+        use crate::state::{
+            Bandwidth, CoreInstallState, GuiConfig, Language, Profile, RoutingMode,
+        };
+        let mut cfg = GuiConfig::default();
+        let speed = Bandwidth {
+            up: 1024,
+            down: 4096,
+        };
+        let _ = render(
+            &cfg,
+            false,
+            false,
+            false,
+            false,
+            &CoreInstallState::Idle,
+            false,
+            false,
+            None,
+            &speed,
+            &[],
+            0,
+            0,
+            None,
+            0,
+            "",
+            false,
+            Some("Profile source is empty"),
+            None,
+            0,
+            &iced::Theme::Light,
+        );
+
+        cfg.language = Language::Zh;
+        cfg.tun_mode = true;
+        cfg.active_profile_id = Some("p1".into());
+        cfg.subscriptions.push(Profile {
+            id: "p1".into(),
+            name: "超长测试订阅名称 / Very Long Subscription Name For Tooltip Coverage".into(),
+            url: "https://example.com/sub?token=secret".into(),
+            file_path: String::new(),
+            is_subscription: true,
+            updated_at: "2026-11-18 10:00".into(),
+            traffic_upload: Some(1_000_000_000),
+            traffic_download: Some(2_000_000_000),
+            traffic_total: Some(10_000_000_000),
+            expire_at: Some(1_893_456_000),
+        });
+        let _ = render(
+            &cfg,
+            true,
+            false,
+            false,
+            true,
+            &CoreInstallState::Installed,
+            true,
+            false,
+            Some(RoutingMode::Global),
+            &speed,
+            &[(100, 200), (300, 400)],
+            100,
+            200,
+            Some("🇯🇵 東京非常长的节点名称 Tokyo Very Long Node Name 01"),
+            12,
+            "",
+            false,
+            None,
+            None,
+            3,
+            &iced::Theme::Dark,
+        );
     }
 }

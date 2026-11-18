@@ -107,8 +107,10 @@ pub fn render<'a>(
         })
         .collect();
 
-    prepared_connections
-        .sort_by(|a, b| compare_connections(a, b, connections_sort, connections_sort_desc));
+    if connections_sort != crate::state::ConnectionSort::None {
+        prepared_connections
+            .sort_by(|a, b| compare_connections(a, b, connections_sort, connections_sort_desc));
+    }
     const MAX_VISIBLE_CONNECTIONS: usize = 100;
     let hidden_connections = prepared_connections
         .len()
@@ -366,16 +368,44 @@ pub fn render<'a>(
                         );
                     }
                     if !conn.rule.trim().is_empty() {
-                        badges = badges.push(
-                            container(
-                                text(fit_width(&conn.rule, 180.0, theme::TYPE_MICRO))
-                                    .size(theme::TYPE_MICRO)
-                                    .color(text_muted),
-                            )
-                            .padding([2, 6])
-                            .style(theme::badge_bg),
-                        );
+                        let rule_short = fit_width(&conn.rule, 180.0, theme::TYPE_MICRO);
+                        let rule_trunc = rule_short != conn.rule;
+                        let rule_badge: Element<'_, Message> =
+                            container(text(rule_short).size(theme::TYPE_MICRO).color(text_muted))
+                                .padding([2, 6])
+                                .style(theme::badge_bg)
+                                .into();
+                        badges =
+                            badges.push(tip_wrap(rule_badge, &conn.rule, rule_trunc, text_primary));
                     }
+
+                    let process_full = labelled(lang, tr(lang, "col_process"), process_label);
+                    let process_short = fit_width(&process_full, card_text_w, theme::TYPE_CAPTION);
+                    let process_trunc = process_short != process_full;
+                    let process_el = tip_wrap(
+                        text(process_short)
+                            .color(text_muted)
+                            .size(theme::TYPE_CAPTION)
+                            .wrapping(Wrapping::None)
+                            .into(),
+                        &process_full,
+                        process_trunc,
+                        text_primary,
+                    );
+
+                    let chains_full = labelled(lang, tr(lang, "chains"), chains_text);
+                    let chains_short = fit_width(&chains_full, card_text_w, theme::TYPE_CAPTION);
+                    let chains_trunc = chains_short != chains_full;
+                    let chains_el = tip_wrap(
+                        text(chains_short)
+                            .color(text_muted)
+                            .size(theme::TYPE_CAPTION)
+                            .wrapping(Wrapping::None)
+                            .into(),
+                        &chains_full,
+                        chains_trunc,
+                        text_primary,
+                    );
 
                     let mut card_col = column![
                         row![container(host_el).width(Length::Fill), close_btn]
@@ -386,35 +416,14 @@ pub fn render<'a>(
                     if !conn.metadata.network.trim().is_empty() || !conn.rule.trim().is_empty() {
                         card_col = card_col.push(badges);
                     }
-                    card_col = card_col
-                        .push(
-                            text(fit_width(
-                                &labelled(lang, tr(lang, "col_process"), process_label),
-                                card_text_w,
-                                theme::TYPE_CAPTION,
-                            ))
-                            .color(text_muted)
-                            .size(theme::TYPE_CAPTION)
-                            .wrapping(Wrapping::None),
-                        )
-                        .push(
-                            text(fit_width(
-                                &labelled(lang, tr(lang, "chains"), chains_text),
-                                card_text_w,
-                                theme::TYPE_CAPTION,
-                            ))
-                            .color(text_muted)
-                            .size(theme::TYPE_CAPTION)
-                            .wrapping(Wrapping::None),
-                        )
-                        .push(
-                            row![
-                                rate_label(ICON_DOWN, down_color, conn.download, theme),
-                                rate_label(ICON_UP, up_color, conn.upload, theme),
-                            ]
-                            .spacing(crate::ui::SP_12)
-                            .align_y(Alignment::Center),
-                        );
+                    card_col = card_col.push(process_el).push(chains_el).push(
+                        row![
+                            rate_label(ICON_DOWN, down_color, conn.download, theme),
+                            rate_label(ICON_UP, up_color, conn.upload, theme),
+                        ]
+                        .spacing(crate::ui::SP_12)
+                        .align_y(Alignment::Center),
+                    );
 
                     let card = container(card_col)
                         // The 28px close button sits in the top-right corner: pull
@@ -545,13 +554,13 @@ pub fn render<'a>(
                 let net_rule_label = format!("{} / {}", tr(lang, "network"), tr(lang, "rule"));
                 row![
                     make_hdr_btn(crate::state::ConnectionSort::Host, "host", 6),
-                    make_hdr_btn(crate::state::ConnectionSort::Process, "col_process", 4),
+                    make_hdr_btn(crate::state::ConnectionSort::Process, "col_process", 3),
                     make_hdr_btn_custom(crate::state::ConnectionSort::Network, net_rule_label, 5),
                     make_hdr_btn(crate::state::ConnectionSort::Chains, "chains", 4),
                     make_hdr_btn_custom(
                         crate::state::ConnectionSort::Download,
                         "↓ / ↑".to_string(),
-                        5
+                        6
                     ),
                     Space::new().width(Length::Fixed(CLOSE_COL_W))
                 ]
@@ -604,12 +613,12 @@ pub fn render<'a>(
                 let len = filtered_connections.len();
                 // Cells are single-line: budget each column from its share of
                 // the table so text ends in an ellipsis instead of wrapping the
-                // row. Fill portions: wide 6+4+2+4+3+2+2, mid 6+4+5+4+5; the
+                // row. Fill portions: wide 6+4+2+4+3+2+2, mid 6+3+5+4+6; the
                 // close column is fixed.
                 let (portions, gutters) = if is_wide { (23.0, 7.0) } else { (24.0, 5.0) };
                 let table_w = crate::ui::page_content_width(size.width, false);
                 let fixed =
-                    2.0 + 8.0 + TABLE_SCROLL_LANE + CLOSE_COL_W + gutters * crate::ui::SP_12;
+                    4.0 + 8.0 + TABLE_SCROLL_LANE + CLOSE_COL_W + gutters * crate::ui::SP_12;
                 let unit = ((table_w - fixed) / portions).max(1.0);
                 // A cell's text room: its share of the row less the 6px insets.
                 let room = |portion: f32| (unit * portion - 12.0).max(24.0);
@@ -644,7 +653,11 @@ pub fn render<'a>(
                         text_primary,
                     );
 
-                    let proc_short = fit_width(process_label, room(4.0), theme::TYPE_BTN_SM);
+                    let proc_short = fit_width(
+                        process_label,
+                        room(if is_wide { 4.0 } else { 3.0 }),
+                        theme::TYPE_BTN_SM,
+                    );
                     let proc_trunc = proc_short != process_label;
                     let process = tip_wrap(
                         text(proc_short)
@@ -738,15 +751,15 @@ pub fn render<'a>(
                             rate_label(ICON_DOWN, down_color, conn.download, theme),
                             rate_label(ICON_UP, up_color, conn.upload, theme),
                         ]
-                        .spacing(8)
+                        .spacing(6)
                         .align_y(Alignment::Center);
 
                         row![
                             cell(host, 6),
-                            cell(process, 4),
+                            cell(process, 3),
                             cell(net_rule, 5),
                             cell(chains, 4),
-                            cell(traffic, 5),
+                            cell(traffic, 6),
                             container(close_button(conn.id.clone(), lang, theme))
                                 .width(Length::Fixed(CLOSE_COL_W))
                                 .align_x(Alignment::End),
@@ -893,7 +906,7 @@ fn rate_label<'a>(
             .size(12)
             .color(color),
         text(format_size(bytes))
-            .size(theme::TYPE_BTN_SM)
+            .size(theme::TYPE_CAPTION)
             .font(theme::metric_font())
             .color(theme::text_primary(theme))
             .wrapping(Wrapping::None),
@@ -1038,5 +1051,74 @@ mod tests {
         items.sort_by(|a, b| compare_connections(a, b, ConnectionSort::Upload, true));
         assert_eq!(items[0].connection.id, "1");
         assert_eq!(items[1].connection.id, "2");
+    }
+
+    #[test]
+    fn connection_sort_is_total_order_for_all_variants_and_directions() {
+        let conns = [
+            Connection {
+                id: "c1".into(),
+                metadata: ConnectionMetadata::default(),
+                upload: 100,
+                download: 200,
+                start: String::new(),
+                chains: vec![],
+                rule: "RuleA".into(),
+            },
+            Connection {
+                id: "c2".into(),
+                metadata: ConnectionMetadata::default(),
+                upload: 100,
+                download: 300,
+                start: String::new(),
+                chains: vec!["Proxy".into()],
+                rule: "RuleB".into(),
+            },
+            Connection {
+                id: "c3".into(),
+                metadata: ConnectionMetadata::default(),
+                upload: 50,
+                download: 200,
+                start: String::new(),
+                chains: vec!["Proxy".into()],
+                rule: "rulea".into(),
+            },
+        ];
+        let prepared = [
+            make_prepared(&conns[0], "a.example", "tcp", "RuleA"),
+            make_prepared(&conns[1], "b.example", "udp", "RuleB"),
+            make_prepared(&conns[2], "a.example", "tcp", "rulea"),
+        ];
+        for sort in [
+            ConnectionSort::None,
+            ConnectionSort::Host,
+            ConnectionSort::Process,
+            ConnectionSort::Network,
+            ConnectionSort::Chains,
+            ConnectionSort::Rule,
+            ConnectionSort::Download,
+            ConnectionSort::Upload,
+        ] {
+            for desc in [false, true] {
+                for a in &prepared {
+                    assert_eq!(
+                        compare_connections(a, a, sort, desc),
+                        std::cmp::Ordering::Equal
+                    );
+                    for b in &prepared {
+                        let ab = compare_connections(a, b, sort, desc);
+                        let ba = compare_connections(b, a, sort, desc);
+                        assert_eq!(ab, ba.reverse());
+                        for c in &prepared {
+                            let bc = compare_connections(b, c, sort, desc);
+                            let ac = compare_connections(a, c, sort, desc);
+                            if ab == bc {
+                                assert_eq!(ac, ab);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

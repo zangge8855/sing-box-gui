@@ -28,10 +28,12 @@ pub fn render<'a>(
             content_w
         } else {
             (content_w - theme::GRID_GAP) / 2.0
-        };
-        // Rule text room: card minus padding, row insets (10 + 4), the close
-        // button (~24) and two 12px gaps. The kind tag is subtracted per row.
-        let item_px = card_w - theme::CARD_PAD * 2.0 - 14.0 - 24.0 - 24.0;
+        }
+        .max(60.0);
+        // Rule text room: card minus padding, card/item borders (4) and scroll
+        // left inset (1), row insets (10 + 4), the close button (~24) and two
+        // 12px gaps. The kind tag is subtracted per row.
+        let item_px = (card_w - theme::CARD_PAD * 2.0 - 14.0 - 24.0 - 24.0 - 5.0).max(60.0);
         let theme = &theme_cloned;
 
         // What the built-in rules already cover, as one quiet line rather
@@ -321,7 +323,10 @@ mod tests {
         cfg.language = Language::Zh;
         cfg.custom_bypass_domains
             .push("very-long-domain.example.internal".into());
+        cfg.custom_proxy_domains
+            .push("another-extremely-long-subdomain.example.org".into());
         cfg.custom_proxy_ips.push("1.1.1.1/32".into());
         let _ = render(&cfg, "example.com", "invalid/ip", &iced::Theme::Dark);
+        let _ = render(&cfg, "10.0.0.0/8", "bad host!", &iced::Theme::Light);
     }
 }
