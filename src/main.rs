@@ -4279,6 +4279,17 @@ impl App {
         }
     }
 
+    fn brand_logo_handle() -> iced::widget::svg::Handle {
+        static HANDLE: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+        HANDLE
+            .get_or_init(|| {
+                iced::widget::svg::Handle::from_memory(
+                    include_bytes!("../assets/logo.svg").as_slice(),
+                )
+            })
+            .clone()
+    }
+
     fn view(&self, _window: iced::window::Id) -> Element<'_, Message> {
         let lang = self.gui_config.language;
         let theme_ref = self.theme_ref();
@@ -4335,6 +4346,7 @@ impl App {
         let show_all_proxies = self.show_all_proxies;
         let ui_anim_tick = self.ui_anim_tick;
         let settings_dirty = self.settings_draft.has_pending_changes(&self.gui_config);
+        let update_available = matches!(update_status_ref, state::UpdateStatus::NewVersion { .. });
 
         let main_content = responsive(move |size| {
             let theme = theme_ref;
@@ -4437,7 +4449,7 @@ impl App {
             let make_tab_btn = |tab: Tab,
                                 icon_char: char,
                                 key: &'static str,
-                                show_dot: bool|
+                                dot_color: Option<iced::Color>|
              -> Element<'_, Message> {
                 let active = current_tab == tab;
                 let icon_color = if active {
@@ -4446,12 +4458,12 @@ impl App {
                     ui::theme::text_tertiary(theme)
                 };
 
-                let dirty_dot = || {
+                let dirty_dot = |color: iced::Color| {
                     container(iced::widget::Space::new())
                         .width(6)
                         .height(6)
-                        .style(|_t| container::Style {
-                            background: Some(iced::Background::Color(ui::theme::WARNING)),
+                        .style(move |_t| container::Style {
+                            background: Some(iced::Background::Color(color)),
                             border: iced::Border {
                                 radius: 3.0.into(),
                                 ..Default::default()
@@ -4461,18 +4473,52 @@ impl App {
                 };
 
                 let btn_content: Element<'_, Message> = if is_compact {
+                    let compact_icon_color = if active && cfg!(target_os = "windows") {
+                        ui::theme::accent(theme)
+                    } else {
+                        icon_color
+                    };
                     let icon_box = container(
                         text(icon_char.to_string())
                             .font(Font::with_name("Material Icons"))
                             .size(ui::ICON_SIZE_LG)
-                            .color(icon_color),
+                            .color(compact_icon_color),
                     )
                     .width(Length::Fill)
-                    .align_x(Alignment::Center);
-                    if show_dot {
-                        iced::widget::stack![
-                            icon_box,
-                            container(dirty_dot())
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center);
+                    let mut layers: Vec<Element<'_, Message>> = vec![icon_box.into()];
+                    if cfg!(target_os = "windows") && active {
+                        layers.push(
+                            container(
+                                container(iced::widget::Space::new())
+                                    .width(3)
+                                    .height(16)
+                                    .style(move |t| container::Style {
+                                        background: Some(iced::Background::Color(
+                                            ui::theme::accent(t),
+                                        )),
+                                        border: iced::Border {
+                                            radius: 1.5.into(),
+                                            ..Default::default()
+                                        },
+                                        ..Default::default()
+                                    }),
+                            )
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .align_x(Alignment::Start)
+                            .align_y(Alignment::Center)
+                            .padding(iced::Padding {
+                                left: 3.0,
+                                ..Default::default()
+                            })
+                            .into(),
+                        );
+                    }
+                    if let Some(color) = dot_color {
+                        layers.push(
+                            container(dirty_dot(color))
                                 .width(Length::Fill)
                                 .align_x(Alignment::End)
                                 .padding(iced::Padding {
@@ -4480,12 +4526,16 @@ impl App {
                                     right: 6.0,
                                     bottom: 0.0,
                                     left: 0.0,
-                                }),
-                        ]
-                        .width(Length::Fill)
-                        .into()
+                                })
+                                .into(),
+                        );
+                    }
+                    if layers.len() > 1 {
+                        iced::widget::Stack::with_children(layers)
+                            .width(Length::Fill)
+                            .into()
                     } else {
-                        icon_box.into()
+                        layers.pop().unwrap()
                     }
                 } else {
                     let active_fg = if cfg!(target_os = "windows") {
@@ -4545,10 +4595,10 @@ impl App {
                             ui::SP_12 as u32
                         })
                         .align_y(Alignment::Center);
-                    if show_dot {
+                    if let Some(color) = dot_color {
                         label_row = label_row
                             .push(iced::widget::Space::new().width(Length::Fill))
-                            .push(dirty_dot());
+                            .push(dirty_dot(color));
                     }
                     label_row.into()
                 };
@@ -4584,11 +4634,36 @@ impl App {
                 }
             };
 
-            let status_dot_color = if core_running {
-                ui::theme::SUCCESS
-            } else {
-                ui::theme::text_tertiary(theme)
-            };
+            let (status_dot_color, status_dot_active, status_label_key, status_text_color) =
+                if core_starting {
+                    (
+                        ui::theme::WARNING,
+                        true,
+                        "status_starting",
+                        ui::theme::warning_text(theme),
+                    )
+                } else if core_stopping {
+                    (
+                        ui::theme::WARNING,
+                        true,
+                        "status_stopping",
+                        ui::theme::warning_text(theme),
+                    )
+                } else if core_running {
+                    (
+                        ui::theme::SUCCESS,
+                        true,
+                        "status_running",
+                        ui::theme::success_text(theme),
+                    )
+                } else {
+                    (
+                        ui::theme::text_tertiary(theme),
+                        false,
+                        "status_stopped",
+                        text_muted,
+                    )
+                };
 
             let nav_divider = if is_compact {
                 container(iced::widget::Space::new())
@@ -4602,82 +4677,122 @@ impl App {
                     .style(ui::theme::hairline)
             };
 
+            let settings_dot = if settings_dirty {
+                Some(ui::theme::WARNING)
+            } else if update_available {
+                Some(ui::theme::accent(theme))
+            } else {
+                None
+            };
+
             let nav = column![
                 make_tab_btn(
                     Tab::Dashboard,
                     ui::icons::ICON_DASHBOARD,
                     "tab_dashboard",
-                    false
+                    None
                 ),
-                make_tab_btn(Tab::Proxies, ui::icons::ICON_PROXIES, "tab_proxies", false),
+                make_tab_btn(Tab::Proxies, ui::icons::ICON_PROXIES, "tab_proxies", None),
                 make_tab_btn(
                     Tab::Profiles,
                     ui::icons::ICON_PROFILES,
                     "tab_profiles",
-                    false
+                    None
                 ),
                 container(nav_divider)
                     .padding(if is_compact { [6, 0] } else { [6, 8] })
                     .width(Length::Fill)
                     .align_x(Alignment::Center),
-                make_tab_btn(Tab::Rules, ui::icons::ICON_RULES, "tab_rules", false),
+                make_tab_btn(Tab::Rules, ui::icons::ICON_RULES, "tab_rules", None),
                 make_tab_btn(
                     Tab::Connections,
                     ui::icons::ICON_CONNECTIONS,
                     "tab_connections",
-                    false
+                    None
                 ),
-                make_tab_btn(Tab::Logs, ui::icons::ICON_LOGS, "tab_logs", false),
+                make_tab_btn(Tab::Logs, ui::icons::ICON_LOGS, "tab_logs", None),
                 make_tab_btn(
                     Tab::Settings,
                     ui::icons::ICON_SETTINGS,
                     "tab_settings",
-                    settings_dirty
+                    settings_dot
                 ),
             ]
             .spacing(3)
             .width(Length::Fill);
 
-            let app_icon_handle = iced::widget::image::Handle::from_bytes(
-                include_bytes!("../assets/app-icon.png").as_slice(),
-            );
+            let logo_handle = Self::brand_logo_handle();
             let sidebar = if is_compact {
-                let brand_compact =
-                    container(iced::widget::image(app_icon_handle).width(24).height(24))
+                let brand_compact = tooltip(
+                    container(iced::widget::svg(logo_handle).width(26).height(26))
                         .padding(iced::Padding {
                             top: 0.0,
                             right: 0.0,
                             bottom: 14.0,
                             left: 0.0,
                         })
-                        .center_x(Length::Fill);
+                        .center_x(Length::Fill),
+                    container(
+                        text("sing-box GUI")
+                            .size(ui::theme::TYPE_BTN_SM)
+                            .color(ui::theme::text_primary(theme)),
+                    )
+                    .padding([6, 10])
+                    .style(ui::theme::popover_bg),
+                    tooltip::Position::Right,
+                );
+
+                let compact_status = {
+                    let dot = container(iced::widget::Space::new())
+                        .width(8)
+                        .height(8)
+                        .style(move |_t| container::Style {
+                            background: Some(iced::Background::Color(status_dot_color)),
+                            border: iced::Border {
+                                radius: 4.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        });
+                    let ringed = if status_dot_active {
+                        container(dot)
+                            .padding(4)
+                            .style(move |_t| ui::theme::status_ring(status_dot_color))
+                    } else {
+                        container(dot).padding(4)
+                    };
+                    tooltip(
+                        container(ringed).center_x(Length::Fill),
+                        container(
+                            text(format!(
+                                "{} · v{}",
+                                ui::i18n::tr(lang, status_label_key),
+                                env!("CARGO_PKG_VERSION")
+                            ))
+                            .size(ui::theme::TYPE_BTN_SM)
+                            .color(ui::theme::text_primary(theme)),
+                        )
+                        .padding([6, 10])
+                        .style(ui::theme::popover_bg),
+                        tooltip::Position::Right,
+                    )
+                };
 
                 container(
                     column![
                         brand_compact,
                         nav,
                         iced::widget::Space::new().height(Length::Fill),
-                        container({
-                            let dot = container(iced::widget::Space::new())
-                                .width(8)
-                                .height(8)
-                                .style(move |_t| container::Style {
-                                    background: Some(iced::Background::Color(status_dot_color)),
-                                    border: iced::Border {
-                                        radius: 4.0.into(),
-                                        ..Default::default()
-                                    },
-                                    ..Default::default()
-                                });
-                            if core_running {
-                                container(dot)
-                                    .padding(4)
-                                    .style(move |_t| ui::theme::status_ring(status_dot_color))
-                            } else {
-                                container(dot).padding(4)
-                            }
-                        })
-                        .center_x(Length::Fill)
+                        container(
+                            container(iced::widget::Space::new())
+                                .height(1)
+                                .width(24)
+                                .style(ui::theme::hairline),
+                        )
+                        .padding([8, 0])
+                        .width(Length::Fill)
+                        .align_x(Alignment::Center),
+                        compact_status,
                     ]
                     .width(Length::Fill)
                     .align_x(Alignment::Center),
@@ -4697,17 +4812,9 @@ impl App {
                     row![
                         ui::status_dot(
                             status_dot_color,
-                            core_running,
-                            if core_running {
-                                ui::i18n::tr(lang, "status_running")
-                            } else {
-                                ui::i18n::tr(lang, "status_stopped")
-                            },
-                            if core_running {
-                                ui::theme::success_text(theme)
-                            } else {
-                                text_muted
-                            },
+                            status_dot_active,
+                            ui::i18n::tr(lang, status_label_key),
+                            status_text_color,
                             ui::theme::TYPE_CAPTION
                         ),
                         iced::widget::Space::new().width(Length::Fill),
@@ -4725,7 +4832,7 @@ impl App {
 
                 let brand_header = container(
                     row![
-                        iced::widget::image(app_icon_handle).width(22).height(22),
+                        iced::widget::svg(logo_handle).width(24).height(24),
                         text("sing-box")
                             .size(ui::theme::TYPE_HEADING)
                             .font(ui::theme::ui_font(iced::font::Weight::Semibold))
@@ -4737,8 +4844,8 @@ impl App {
                 .padding(iced::Padding {
                     top: 0.0,
                     right: 8.0,
-                    bottom: 16.0,
-                    left: 10.0,
+                    bottom: 18.0,
+                    left: 8.0,
                 })
                 .width(Length::Fill);
 

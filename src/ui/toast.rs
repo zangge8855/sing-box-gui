@@ -32,10 +32,27 @@ fn render_toast<'a>(
         ToastKind::Info => (crate::ui::icons::ICON_INFO, theme::info_text(theme)),
     };
 
-    let icon = text(glyph.to_string())
-        .font(Font::with_name("Material Icons"))
-        .size(crate::ui::ICON_SIZE_LG)
-        .color(glyph_color);
+    let icon = container(
+        text(glyph.to_string())
+            .font(Font::with_name("Material Icons"))
+            .size(crate::ui::ICON_SIZE)
+            .color(glyph_color),
+    )
+    .width(26)
+    .height(26)
+    .align_x(Alignment::Center)
+    .align_y(Alignment::Center)
+    .style(move |t| container::Style {
+        background: Some(iced::Background::Color(theme::with_alpha(
+            glyph_color,
+            if theme::is_dark(t) { 0.16 } else { 0.12 },
+        ))),
+        border: iced::Border {
+            radius: 13.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
 
     let dismiss_msg = match index {
         Some(i) => Message::DismissToastAt(i),
@@ -43,12 +60,20 @@ fn render_toast<'a>(
     };
 
     let dismiss = button(
-        text(crate::ui::icons::ICON_CLOSE)
-            .font(Font::with_name("Material Icons"))
-            .size(14),
+        container(
+            text(crate::ui::icons::ICON_CLOSE)
+                .font(Font::with_name("Material Icons"))
+                .size(14),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center),
     )
-    .padding(4)
-    .style(theme::button_ghost)
+    .width(24)
+    .height(24)
+    .padding(0)
+    .style(theme::button_dismiss)
     .on_press(dismiss_msg);
 
     let msg_scroll = container(
@@ -56,9 +81,9 @@ fn render_toast<'a>(
             text(&toast.message)
                 .size(theme::TYPE_BTN_SM)
                 .color(theme::text_primary(theme))
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
-                .width(Length::Fill),
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
         )
+        .width(Length::Shrink)
         .height(Length::Shrink)
         .direction(iced::widget::scrollable::Direction::Vertical(
             iced::widget::scrollable::Scrollbar::new()
@@ -68,17 +93,18 @@ fn render_toast<'a>(
         ))
         .style(theme::scrollbar_style),
     )
-    .width(Length::Fill)
+    .width(Length::Shrink)
+    .max_width(340.0)
     .max_height(120.0);
 
-    let body = row![icon, msg_scroll, dismiss,]
-        .spacing(crate::ui::SP_12)
+    let body = row![icon, msg_scroll, dismiss]
+        .spacing(10)
         .align_y(Alignment::Center)
         .padding(iced::Padding {
             top: 10.0,
-            right: 8.0,
+            right: 10.0,
             bottom: 10.0,
-            left: 14.0,
+            left: 12.0,
         });
 
     container(body)

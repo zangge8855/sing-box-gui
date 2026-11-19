@@ -52,7 +52,7 @@ pub fn render<'a>(
         // sources tucked beside the title instead of a half-empty second row.
         let mut input = text_input(tr(lang, "sub_url_placeholder"), url_input)
             .on_input(Message::SubscriptionInputChanged)
-            .padding(crate::ui::SP_12)
+            .padding([10.0, crate::ui::SP_12])
             .width(Length::Fill)
             .size(theme::TYPE_BODY)
             .style(theme::input_field);
@@ -83,9 +83,16 @@ pub fn render<'a>(
         }
 
         let open_folder_btn = button(
-            text(tr(lang, "btn_open_folder"))
-                .size(theme::TYPE_BTN_MD)
-                .align_x(Alignment::Center),
+            row![
+                text(crate::ui::icons::ICON_FOLDER_OPEN)
+                    .font(iced::Font::with_name("Material Icons"))
+                    .size(crate::ui::ICON_SIZE),
+                text(tr(lang, "btn_open_folder"))
+                    .size(theme::TYPE_BTN_MD)
+                    .align_x(Alignment::Center),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
         )
         .padding(theme::BTN_PAD_MD)
         .style(theme::button_secondary)
@@ -151,7 +158,8 @@ pub fn render<'a>(
 
         // Grid system for profiles list (Responsive Grid)
         let grid_content: Element<'a, Message> = if gui_config.subscriptions.is_empty() {
-            crate::ui::empty_state(
+            crate::ui::empty_state_with_icon(
+                Some(crate::ui::icons::ICON_PROFILES),
                 tr(lang, "no_profiles"),
                 Some(tr(lang, "empty_profiles_hint")),
                 None,
@@ -199,7 +207,7 @@ pub fn render<'a>(
                         } else {
                             crate::ui::icons::ICON_EXPAND_MORE
                         })
-                        .size(theme::TYPE_BTN_SM),
+                        .size(crate::ui::ICON_SIZE),
                     ]
                     .spacing(2)
                     .align_y(Alignment::Center),
@@ -226,6 +234,15 @@ pub fn render<'a>(
                 actions_row = actions_row.push(more_btn);
 
                 let secondary_row: Option<Element<'a, Message>> = if show_more {
+                    let edit_url_btn =
+                        button(text(tr(lang, "btn_edit_url")).size(theme::TYPE_BTN_SM))
+                            .padding(theme::BTN_PAD_SM)
+                            .style(theme::button_secondary)
+                            .on_press(Message::StartEditProfile(profile.id.clone()));
+                    let edit_btn = button(text(tr(lang, "btn_edit")).size(theme::TYPE_BTN_SM))
+                        .padding(theme::BTN_PAD_SM)
+                        .style(theme::button_secondary)
+                        .on_press(Message::EditProfile(profile.id.clone()));
                     let delete_actions: Element<'a, Message> = if confirming_delete {
                         row![
                             button(text(tr(lang, "btn_cancel")).size(theme::TYPE_BTN_SM))
@@ -247,26 +264,28 @@ pub fn render<'a>(
                             .on_press(Message::RequestDeleteProfile(profile.id.clone()))
                             .into()
                     };
-                    // Destructive action set apart; wraps cleanly on 640px windows.
-                    Some(
-                        row![
-                            button(text(tr(lang, "btn_edit_url")).size(theme::TYPE_BTN_SM))
-                                .padding(theme::BTN_PAD_SM)
-                                .style(theme::button_secondary)
-                                .on_press(Message::StartEditProfile(profile.id.clone())),
-                            button(text(tr(lang, "btn_edit")).size(theme::TYPE_BTN_SM))
-                                .padding(theme::BTN_PAD_SM)
-                                .style(theme::button_secondary)
-                                .on_press(Message::EditProfile(profile.id.clone())),
-                            Space::new().width(Length::Fill),
-                            delete_actions,
-                        ]
-                        .spacing(crate::ui::SP_8)
-                        .align_y(Alignment::Center)
-                        .wrap()
-                        .vertical_spacing(crate::ui::SP_8)
-                        .into(),
-                    )
+                    if is_compact {
+                        Some(
+                            row![edit_url_btn, edit_btn, delete_actions]
+                                .spacing(crate::ui::SP_8)
+                                .align_y(Alignment::Center)
+                                .wrap()
+                                .vertical_spacing(crate::ui::SP_8)
+                                .into(),
+                        )
+                    } else {
+                        Some(
+                            row![
+                                edit_url_btn,
+                                edit_btn,
+                                Space::new().width(Length::Fill),
+                                delete_actions,
+                            ]
+                            .spacing(crate::ui::SP_8)
+                            .align_y(Alignment::Center)
+                            .into(),
+                        )
+                    }
                 } else {
                     None
                 };
@@ -353,11 +372,14 @@ pub fn render<'a>(
                                     |s: String| text(s).color(text_muted).size(theme::TYPE_CAPTION);
                                 if let Some(ratio) = traffic_usage_ratio(u, d, total) {
                                     let labels = row![
-                                        caption(format!(
+                                        text(format!(
                                             "{} / {}",
                                             format_size(used),
                                             format_size(total)
-                                        )),
+                                        ))
+                                        .font(theme::metric_font())
+                                        .color(text_primary)
+                                        .size(theme::TYPE_BTN_SM),
                                         Space::new().width(Length::Fill),
                                         caption(labelled_size(
                                             lang,
@@ -534,7 +556,14 @@ pub fn render<'a>(
                         }
                     }
                     if let Some(sec) = secondary_row {
-                        card_layout = card_layout.push(sec);
+                        card_layout = card_layout
+                            .push(
+                                container(Space::new())
+                                    .width(Length::Fill)
+                                    .height(1)
+                                    .style(theme::hairline),
+                            )
+                            .push(sec);
                     }
 
                     container(card_layout)

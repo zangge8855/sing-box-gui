@@ -79,22 +79,30 @@ pub fn render<'a>(
     // should only assemble widgets, not re-scan every log line.
     let q_upper = log_search.to_uppercase();
     const MAX_VISIBLE_LOG_LINES: usize = 400;
+    let mut warn_count = 0usize;
+    let mut error_count = 0usize;
     let mut filtered_lines: Vec<(&str, u8, Option<Range<usize>>)> = log_lines
         .iter()
         .filter_map(|line| {
             let uppercase = line.to_uppercase();
+            // The level tag wins over keywords, so an INFO line that merely
+            // mentions "error" is not painted as a failure.
+            let (severity, range) = match level_token(line) {
+                Some((range, severity)) => (severity, Some(range)),
+                None => (keyword_severity(&uppercase), None),
+            };
+            match severity {
+                2 => warn_count += 1,
+                3 => error_count += 1,
+                _ => {}
+            }
             if !log_filter.matches_upper(&uppercase) {
                 return None;
             }
             if !q_upper.is_empty() && !uppercase.contains(&q_upper) {
                 return None;
             }
-            // The level tag wins over keywords, so an INFO line that merely
-            // mentions "error" is not painted as a failure.
-            Some(match level_token(line) {
-                Some((range, severity)) => (line.as_str(), severity, Some(range)),
-                None => (line.as_str(), keyword_severity(&uppercase), None),
-            })
+            Some((line.as_str(), severity, range))
         })
         .collect();
     if filtered_lines.len() > MAX_VISIBLE_LOG_LINES {
@@ -147,7 +155,7 @@ pub fn render<'a>(
             .width(if stacked {
                 Length::Fill
             } else {
-                Length::Fixed(148.0)
+                Length::Fixed(136.0)
             })
             .size(theme::TYPE_BODY)
             .style(theme::input_field);
@@ -179,27 +187,35 @@ pub fn render<'a>(
                 text(tr(lang, key)).size(theme::TYPE_BTN_MD).into()
             };
             let mut b = button(content)
-                .padding(theme::BTN_PAD_TOOLBAR)
+                .padding([8, 11])
                 .style(theme::button_secondary);
             if let Some(m) = msg {
                 b = b.on_press(m);
             }
             b
         };
+        let actions_divider = container(
+            container(Space::new())
+                .width(1)
+                .height(18)
+                .style(theme::hairline),
+        )
+        .padding([0, 4]);
         let actions_group = row![
             follow_switch,
+            actions_divider,
             action(
                 Some(crate::ui::icons::ICON_COPY),
                 "btn_copy",
                 (total_shown > 0).then_some(Message::CopyLogs),
             ),
             action(
-                None,
+                Some(crate::ui::icons::ICON_DELETE_SWEEP),
                 "clear_logs",
                 (total_lines > 0).then_some(Message::ClearLogs),
             ),
             action(
-                None,
+                Some(crate::ui::icons::ICON_FILE_DOWNLOAD),
                 "export_logs",
                 (total_lines > 0).then_some(Message::ExportLogs),
             ),
@@ -235,7 +251,7 @@ pub fn render<'a>(
             .into()
         };
 
-        let mut logs_col = Column::new().spacing(3);
+        let mut logs_col = Column::new().spacing(4);
         let shown = filtered_lines.len();
 
         for (line, severity, level) in &filtered_lines {
@@ -258,7 +274,7 @@ pub fn render<'a>(
                     Span::new(&line[..range.start]).color(text_tertiary),
                     Span::new(&line[range.clone()])
                         .color(level_color)
-                        .font(theme::mono_font()),
+                        .font(theme::mono_font_bold()),
                     Span::new(&line[range.end..]).color(message_color),
                 ],
                 None => vec![Span::new(*line).color(match severity {
@@ -289,7 +305,8 @@ pub fn render<'a>(
                         .into(),
                 )
             };
-            container(crate::ui::empty_state(
+            container(crate::ui::empty_state_plain(
+                Some(crate::ui::icons::ICON_LOGS),
                 tr(lang, "no_logs"),
                 Some(tr(lang, "empty_logs_start_hint")),
                 cta,
@@ -305,7 +322,8 @@ pub fn render<'a>(
                 .padding(theme::BTN_PAD_MD)
                 .style(theme::button_secondary)
                 .on_press(Message::ResetLogFilters);
-            container(crate::ui::empty_state(
+            container(crate::ui::empty_state_plain(
+                Some(crate::ui::icons::ICON_SEARCH),
                 tr(lang, "no_matching_logs"),
                 None,
                 Some(cta.into()),
@@ -320,14 +338,102 @@ pub fn render<'a>(
             let count_label = tr(lang, "logs_count_fmt")
                 .replacen("{}", &shown.to_string(), 1)
                 .replacen("{}", &total_lines.to_string(), 1);
-            let meta_bar = row![
+            let level_pill = |count: usize,
+                              label: &str,
+                              target_filter: LogFilter,
+                              hue: iced::Color,
+                              fg: iced::Color| {
+                let is_on = log_filter == target_filter;
+                let next_filter = if is_on { LogFilter::All } else { target_filter };
+                button(
+                    text(format!("{count} {label}"))
+                        .size(theme::TYPE_MICRO)
+                        .font(theme::metric_font())
+                        .color(fg),
+                )
+                .padding([2, 7])
+                .style(move |t, status| {
+                    let dark = theme::is_dark(t);
+                    let hovered =
+                        matches!(status, button::Status::Hovered | button::Status::Pressed);
+                    let fill_alpha = if is_on {
+                        if dark { 0.24 } else { 0.18 }
+                    } else if hovered {
+                        if dark { 0.20 } else { 0.15 }
+                    } else if dark {
+                        0.14
+                    } else {
+                        0.10
+                    };
+                    button::Style {
+                        background: Some(iced::Background::Color(theme::with_alpha(
+                            hue, fill_alpha,
+                        ))),
+                        text_color: fg,
+                        border: iced::Border {
+                            color: theme::with_alpha(hue, if is_on { 0.55 } else { 0.28 }),
+                            width: 1.0,
+                            radius: theme::RADIUS_XS.into(),
+                        },
+                        ..Default::default()
+                    }
+                })
+                .on_press(Message::LogFilterChanged(next_filter))
+            };
+            let mut meta_bar = row![
                 text(count_label)
                     .size(theme::TYPE_CAPTION)
                     .font(theme::metric_font())
                     .color(text_tertiary),
-                Space::new().width(Length::Fill),
             ]
-            .padding(iced::Padding {
+            .spacing(crate::ui::SP_8)
+            .align_y(Alignment::Center);
+            if warn_count > 0 {
+                meta_bar = meta_bar.push(level_pill(
+                    warn_count,
+                    "WARN",
+                    LogFilter::Warn,
+                    theme::WARNING,
+                    theme::warning_text(theme),
+                ));
+            }
+            if error_count > 0 {
+                meta_bar = meta_bar.push(level_pill(
+                    error_count,
+                    "ERROR",
+                    LogFilter::Error,
+                    theme::DANGER,
+                    theme::danger_text(theme),
+                ));
+            }
+            meta_bar = meta_bar.push(Space::new().width(Length::Fill));
+            if core_running {
+                let (live_color, live_text_color, live_key) = if logs_follow {
+                    (theme::SUCCESS, theme::success_text(theme), "logs_live")
+                } else {
+                    (theme::WARNING, theme::warning_text(theme), "logs_paused")
+                };
+                meta_bar = meta_bar.push(
+                    row![
+                        container(Space::new()).width(6).height(6).style(move |_| {
+                            container::Style {
+                                background: Some(iced::Background::Color(live_color)),
+                                border: iced::Border {
+                                    radius: 3.0.into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            }
+                        }),
+                        text(tr(lang, live_key))
+                            .size(theme::TYPE_CAPTION)
+                            .color(live_text_color),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                );
+            }
+            let meta_bar = meta_bar.padding(iced::Padding {
                 top: 0.0,
                 right: 4.0,
                 bottom: 6.0,

@@ -151,6 +151,7 @@ pub fn render<'a>(
             b
         };
         let section = |title_key: &'static str, rows: Vec<Element<'a, Message>>| {
+            let row_count = rows.len();
             let mut col = Column::new().width(Length::Fill).push(
                 container(
                     text(tr(lang, title_key))
@@ -172,10 +173,15 @@ pub fn render<'a>(
                             .style(theme::hairline),
                     );
                 }
-                col = col.push(container(row_el).padding([12, 0]).width(Length::Fill));
+                let row_pad = iced::Padding {
+                    top: 10.0,
+                    bottom: if i + 1 == row_count { 2.0 } else { 10.0 },
+                    ..Default::default()
+                };
+                col = col.push(container(row_el).padding(row_pad).width(Length::Fill));
             }
             container(col)
-                .padding([16.0, theme::CARD_PAD])
+                .padding([18.0, theme::CARD_PAD])
                 .width(Length::Fill)
                 .style(theme::card_bg)
         };
@@ -342,13 +348,25 @@ pub fn render<'a>(
                 } else {
                     None
                 };
-                let mut col = column![caption(
-                    format!(
-                        "{} · {current_version}",
-                        crate::ui::util::labelled(lang, tr(lang, "status_new_version"), tag)
-                    ),
-                    theme::warning_text(theme),
-                )]
+                let mut col = column![
+                    row![
+                        caption(
+                            tr(lang, "status_new_version").to_string(),
+                            theme::warning_text(theme),
+                        ),
+                        container(
+                            text(tag)
+                                .size(theme::TYPE_MICRO)
+                                .font(theme::metric_font())
+                                .color(theme::warning_text(theme)),
+                        )
+                        .padding([1, 6])
+                        .style(|t| theme::badge_colored(theme::WARNING, t)),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                    caption(current_version, theme::text_tertiary(theme)),
+                ]
                 .spacing(3);
                 if let Some(key) = missing_key {
                     col = col.push(caption(tr(lang, key).to_string(), danger));
@@ -385,47 +403,43 @@ pub fn render<'a>(
         }
 
         // Visually separate instant-apply Appearance from draft settings.
-        let appearance_hint = container(
-            text(tr(lang, "appearance_instant_hint"))
-                .size(theme::TYPE_MICRO)
-                .color(theme::info_text(theme)),
+        let appearance_header = container(
+            column![
+                text(tr(lang, "appearance_settings"))
+                    .size(theme::TYPE_HEADING)
+                    .font(theme::ui_font(iced::font::Weight::Semibold))
+                    .color(text_primary),
+                text(tr(lang, "appearance_instant_hint"))
+                    .size(theme::TYPE_CAPTION)
+                    .color(theme::text_tertiary(theme)),
+            ]
+            .spacing(3),
         )
-        .padding([2, 8])
-        .style(|t| theme::badge_colored(theme::INFO, t));
-        let appearance_title = text(tr(lang, "appearance_settings"))
-            .size(theme::TYPE_HEADING)
-            .font(theme::ui_font(iced::font::Weight::Semibold))
-            .color(text_primary);
-        let appearance_header: Element<'_, Message> =
-            if size.width >= crate::ui::SETTINGS_2COL_W && size.width < 865.0 {
-                column![appearance_title, appearance_hint].spacing(6).into()
-            } else {
-                row![
-                    appearance_title,
-                    Space::new().width(Length::Fill),
-                    appearance_hint,
-                ]
-                .spacing(crate::ui::SP_8)
-                .align_y(Alignment::Center)
-                .into()
-            };
+        .padding(iced::Padding {
+            bottom: 4.0,
+            ..Default::default()
+        });
         let appearance = container(
             column![
                 appearance_header,
                 container(inline("app_language", None, None, lang_picker.into()))
-                    .padding([12, 0])
+                    .padding([10, 0])
                     .width(Length::Fill),
                 container(Space::new())
                     .width(Length::Fill)
                     .height(1)
                     .style(theme::hairline),
                 container(inline("app_theme", None, None, theme_picker.into()))
-                    .padding([12, 0])
+                    .padding(iced::Padding {
+                        top: 10.0,
+                        bottom: 2.0,
+                        ..Default::default()
+                    })
                     .width(Length::Fill),
             ]
             .width(Length::Fill),
         )
-        .padding([16.0, theme::CARD_PAD])
+        .padding([18.0, theme::CARD_PAD])
         .width(Length::Fill)
         .style(theme::card_bg);
 
@@ -716,10 +730,19 @@ pub fn render<'a>(
         ]
         .spacing(10);
         if core_running {
-            core_status = core_status.push(caption(
-                tr(lang, "core_download_requires_stop").to_string(),
-                theme::warning_text(theme),
-            ));
+            core_status = core_status.push(
+                row![
+                    crate::ui::material_icon(crate::ui::icons::ICON_INFO)
+                        .size(14.0)
+                        .color(theme::warning_text(theme)),
+                    caption(
+                        tr(lang, "core_download_requires_stop").to_string(),
+                        theme::warning_text(theme),
+                    ),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            );
         }
         let install_line: Option<Element<'a, Message>> = match install_state {
             CoreInstallState::Idle => None,
@@ -792,12 +815,14 @@ pub fn render<'a>(
             crate::ui::icons::ICON_FOLDER_OPEN,
             "btn_browse",
             Some(Message::BrowseCorePath),
-        );
+        )
+        .padding([8, 12]);
         let clear_path_btn = small_btn(
             "btn_clear_core_path",
             has_custom_path.then_some(Message::ClearCorePath),
             false,
-        );
+        )
+        .padding([8, 12]);
         let core_path_control: Element<'a, Message> =
             if size.width >= crate::ui::SETTINGS_2COL_W && size.width < 865.0 {
                 column![
@@ -829,7 +854,12 @@ pub fn render<'a>(
                     "data_dir_label",
                     Some("help_data_dir"),
                     None,
-                    small_btn("btn_open", Some(Message::OpenDataDir), false).into(),
+                    small_icon_btn(
+                        crate::ui::icons::ICON_FOLDER_OPEN,
+                        "btn_open",
+                        Some(Message::OpenDataDir),
+                    )
+                    .into(),
                 ),
             ],
         );
@@ -857,12 +887,22 @@ pub fn render<'a>(
 
         // Collapsible config preview — avoids nested scroll fight when collapsed
         let preview_toggle = button(
-            text(if config_preview_expanded {
-                tr(lang, "btn_hide_preview")
-            } else {
-                tr(lang, "btn_show_preview")
-            })
-            .size(theme::TYPE_BTN_SM),
+            row![
+                text(if config_preview_expanded {
+                    tr(lang, "btn_hide_preview")
+                } else {
+                    tr(lang, "btn_show_preview")
+                })
+                .size(theme::TYPE_BTN_SM),
+                crate::ui::material_icon(if config_preview_expanded {
+                    crate::ui::icons::ICON_EXPAND_LESS
+                } else {
+                    crate::ui::icons::ICON_EXPAND_MORE
+                })
+                .size(crate::ui::ICON_SIZE),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
         )
         .padding(theme::BTN_PAD_SM)
         .style(theme::button_secondary)
@@ -879,7 +919,8 @@ pub fn render<'a>(
         let preview_header = row![
             column![
                 text(tr(lang, "core_config_preview"))
-                    .size(theme::TYPE_BODY)
+                    .size(theme::TYPE_HEADING)
+                    .font(theme::ui_font(iced::font::Weight::Semibold))
                     .color(text_primary),
                 text(tr(lang, "help_config_preview"))
                     .size(theme::TYPE_CAPTION)
@@ -921,7 +962,7 @@ pub fn render<'a>(
             );
         }
         let preview_card = container(preview_col)
-            .padding([16.0, theme::CARD_PAD])
+            .padding([18.0, theme::CARD_PAD])
             .width(Length::Fill)
             .style(theme::card_bg);
 

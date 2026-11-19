@@ -201,7 +201,13 @@ pub fn render<'a>(
         .width(power_size)
         .height(power_size)
         .padding(0)
-        .style(theme::power_button(core_running));
+        .style(move |t, status| {
+            if core_busy {
+                theme::power_button_busy(t, status)
+            } else {
+                theme::power_button(core_running)(t, status)
+            }
+        });
         if !core_busy && (core_running || can_start) {
             power = power.on_press(Message::ToggleCore);
         }
@@ -246,7 +252,7 @@ pub fn render<'a>(
         // A long name steps down a size before it is cut: a slightly smaller
         // headline reads better than "Premiu…". The ghost button insets the
         // text 8px on each side.
-        let headline_room = (identity_w - 16.0).max(80.0);
+        let headline_room = (identity_w - 16.0 - if has_profile { 22.0 } else { 0.0 }).max(80.0);
         let headline_sizes: &[f32] = if is_compact || identity_w < 320.0 {
             &[theme::TYPE_TITLE, theme::TYPE_TITLE_SM]
         } else {
@@ -266,10 +272,17 @@ pub fn render<'a>(
             .wrapping(text::Wrapping::None)
             .color(headline_color);
         let headline_el: Element<'_, Message> = if has_profile {
-            let btn = button(headline_text)
-                .padding([2, 8])
-                .style(theme::button_ghost)
-                .on_press(Message::TabChanged(Tab::Proxies));
+            let btn = button(
+                row![
+                    headline_text,
+                    icon(crate::ui::icons::ICON_CHEVRON_RIGHT, 18.0).color(text_tertiary),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .padding([2, 8])
+            .style(theme::button_ghost)
+            .on_press(Message::TabChanged(Tab::Proxies));
             if headline_truncated {
                 tooltip(
                     btn,
@@ -320,11 +333,18 @@ pub fn render<'a>(
             );
         } else {
             fact_items.push(
-                button(fact("dash_connections", active_connections.to_string()))
-                    .padding([2, 8])
-                    .style(theme::button_ghost)
-                    .on_press(Message::TabChanged(Tab::Connections))
-                    .into(),
+                button(
+                    row![
+                        fact("dash_connections", active_connections.to_string()),
+                        icon(crate::ui::icons::ICON_CHEVRON_RIGHT, 14.0).color(text_tertiary),
+                    ]
+                    .spacing(2)
+                    .align_y(Alignment::Center),
+                )
+                .padding([2, 8])
+                .style(theme::button_ghost)
+                .on_press(Message::TabChanged(Tab::Connections))
+                .into(),
             );
             // The active profile has its own strip below; the hero keeps to
             // what the core is doing right now.
@@ -552,7 +572,12 @@ pub fn render<'a>(
                             })
                             .font(theme::display_font())
                             .color(text_primary),
-                        text(unit).size(theme::TYPE_BTN_SM).color(text_muted),
+                        container(text(unit).size(theme::TYPE_BTN_SM).color(text_muted)).padding(
+                            iced::Padding {
+                                bottom: if is_compact { 3.0 } else { 4.5 },
+                                ..Default::default()
+                            }
+                        ),
                     ]
                     .spacing(6)
                     .align_y(Alignment::End),
@@ -567,24 +592,50 @@ pub fn render<'a>(
                 .spacing(4)
                 .width(Length::FillPortion(1))
             };
-        let figures = row![
-            figure_block(
-                "download",
-                crate::ui::icons::ICON_DOWN,
-                down_color,
-                speed.down,
-                total_downloaded,
-            ),
-            figure_block(
-                "upload",
-                crate::ui::icons::ICON_UP,
-                up_color,
-                speed.up,
-                total_uploaded,
-            ),
-        ]
-        .spacing(crate::ui::SP_20)
-        .width(Length::Fill);
+        let figures = if is_compact {
+            row![
+                figure_block(
+                    "download",
+                    crate::ui::icons::ICON_DOWN,
+                    down_color,
+                    speed.down,
+                    total_downloaded,
+                ),
+                figure_block(
+                    "upload",
+                    crate::ui::icons::ICON_UP,
+                    up_color,
+                    speed.up,
+                    total_uploaded,
+                ),
+            ]
+            .spacing(crate::ui::SP_20)
+            .width(Length::Fill)
+        } else {
+            row![
+                figure_block(
+                    "download",
+                    crate::ui::icons::ICON_DOWN,
+                    down_color,
+                    speed.down,
+                    total_downloaded,
+                ),
+                container(Space::new())
+                    .width(1)
+                    .height(Length::Fill)
+                    .style(theme::hairline),
+                figure_block(
+                    "upload",
+                    crate::ui::icons::ICON_UP,
+                    up_color,
+                    speed.up,
+                    total_uploaded,
+                ),
+            ]
+            .spacing(crate::ui::SP_20)
+            .height(Length::Shrink)
+            .width(Length::Fill)
+        };
 
         let legend_swatch = |color: Color| {
             container(Space::new())
@@ -735,27 +786,50 @@ fn onboarding_card<'a>(
     let text_muted = theme::text_muted(theme);
     let text_tertiary = theme::text_tertiary(theme);
 
-    let step_badge = |done: bool| -> Element<'a, Message> {
-        if done {
-            crate::ui::material_icon(crate::ui::icons::ICON_CHECK_CIRCLE)
-                .size(crate::ui::ICON_SIZE_LG)
-                .color(theme::success_text(theme))
+    let step_badge =
+        |done: bool, active: bool| -> Element<'a, Message> {
+            let inner: Element<'a, Message> =
+                if done {
+                    crate::ui::material_icon(crate::ui::icons::ICON_CHECK_CIRCLE)
+                        .size(crate::ui::ICON_SIZE_LG)
+                        .color(theme::success_text(theme))
+                        .into()
+                } else if active {
+                    container(container(Space::new()).width(8).height(8).style(|t| {
+                        container::Style {
+                            background: Some(iced::Background::Color(theme::accent(t))),
+                            border: iced::Border {
+                                radius: 4.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    }))
+                    .padding(4)
+                    .style(|t| theme::status_ring(theme::accent(t)))
+                    .into()
+                } else {
+                    container(Space::new())
+                        .width(10)
+                        .height(10)
+                        .style(|t| container::Style {
+                            background: None,
+                            border: iced::Border {
+                                radius: 5.0.into(),
+                                width: 1.5,
+                                color: theme::border_strong(t),
+                            },
+                            ..Default::default()
+                        })
+                        .into()
+                };
+            container(inner)
+                .width(20)
+                .height(20)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
                 .into()
-        } else {
-            container(Space::new())
-                .width(10)
-                .height(10)
-                .style(|t| container::Style {
-                    background: Some(iced::Background::Color(theme::accent(t))),
-                    border: iced::Border {
-                        radius: 5.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
-                .into()
-        }
-    };
+        };
 
     // Step 1: Install sing-box core
     let step1_body: Element<'a, Message> = if core_installed {
@@ -812,7 +886,7 @@ fn onboarding_card<'a>(
         }
     };
     let step1 = row![
-        step_badge(core_installed),
+        step_badge(core_installed, !core_installed),
         column![
             text(tr(lang, "onboarding_step1_title"))
                 .size(theme::TYPE_BODY)
@@ -900,7 +974,7 @@ fn onboarding_card<'a>(
         col.into()
     };
     let step2 = row![
-        step_badge(has_profile),
+        step_badge(has_profile, core_installed && !has_profile),
         column![
             text(tr(lang, "onboarding_step2_title"))
                 .size(theme::TYPE_BODY)
@@ -916,7 +990,7 @@ fn onboarding_card<'a>(
 
     // Step 3: Ready to connect
     let step3 = row![
-        step_badge(can_start),
+        step_badge(can_start, can_start),
         column![
             text(tr(lang, "onboarding_step3_title"))
                 .size(theme::TYPE_BODY)
@@ -1025,12 +1099,13 @@ fn profile_strip<'a>(
 
     // Wide: the name gets a fixed column beside the meter. Compact: it shares
     // a row with the Update button only.
-    let ident_w = (content_w * 0.24).clamp(180.0, 280.0);
+    let ident_w = (content_w * 0.27).clamp(200.0, 300.0);
     let name_room = if is_compact {
         content_w - theme::CARD_PAD_DENSE * 2.0 - 120.0
     } else {
         ident_w
-    } - 16.0;
+    } - 16.0
+        - 18.0;
     let name = fit_width(
         &profile.name,
         name_room.max(60.0),
@@ -1039,12 +1114,17 @@ fn profile_strip<'a>(
 
     let name_truncated = name != profile.name;
     let name_btn = button(
-        text(name)
-            .size(theme::TYPE_BODY)
-            .font(theme::ui_font(iced::font::Weight::Semibold))
-            .shaping(text::Shaping::Advanced)
-            .wrapping(text::Wrapping::None)
-            .color(text_primary),
+        row![
+            text(name)
+                .size(theme::TYPE_BODY)
+                .font(theme::ui_font(iced::font::Weight::Semibold))
+                .shaping(text::Shaping::Advanced)
+                .wrapping(text::Wrapping::None)
+                .color(text_primary),
+            icon(crate::ui::icons::ICON_CHEVRON_RIGHT, 15.0).color(theme::text_tertiary(theme)),
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center),
     )
     .padding([2, 6])
     .style(theme::button_ghost)
@@ -1349,7 +1429,8 @@ fn traffic_waveform<'a>(
         } else {
             1.0
         };
-        let alpha = 0.5 + 0.5 * recency;
+        let min_alpha = if theme::is_dark(theme) { 0.44 } else { 0.50 };
+        let alpha = min_alpha + (1.0 - min_alpha) * recency;
         let column_el = column![
             container(bar(down, down_color, alpha, true))
                 .height(down_area)
@@ -1405,7 +1486,10 @@ fn traffic_waveform<'a>(
         container(Space::new())
             .width(Length::Fill)
             .height(1)
-            .style(theme::hairline),
+            .style(|t| container::Style {
+                background: Some(iced::Background::Color(theme::border_strong(t))),
+                ..Default::default()
+            }),
     ]
     .width(Length::Fill)
     .height(height);

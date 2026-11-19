@@ -3,12 +3,13 @@ use crate::state::{GuiConfig, Language, RuleField, RuleTarget};
 use crate::ui::i18n::tr;
 use crate::ui::page_header;
 use crate::ui::theme;
-use iced::widget::{Column, button, column, container, responsive, row, text, text_input, tooltip};
+use iced::widget::{
+    Column, Space, button, column, container, responsive, row, text, text_input, tooltip,
+};
 use iced::{Alignment, Element, Length};
 
 /// Every list row has the same height, so two cards can be matched by count.
-const RULE_ROW_H: f32 = 30.0;
-const RULE_ROW_GAP: f32 = 2.0;
+const RULE_ROW_H: f32 = 34.0;
 
 pub fn render<'a>(
     gui_config: &'a GuiConfig,
@@ -138,7 +139,22 @@ fn rule_card<'a>(
     };
     let count = lists[0].1.len() + lists[1].1.len();
 
+    let target_dot_color = match target {
+        RuleTarget::Direct => theme::SUCCESS,
+        RuleTarget::Proxy => theme::accent(theme),
+    };
     let title_row = row![
+        container(Space::new())
+            .width(7)
+            .height(7)
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(target_dot_color)),
+                border: iced::Border {
+                    radius: 3.5.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
         text(tr(lang, title_key))
             .size(theme::TYPE_HEADING)
             .font(theme::ui_font(iced::font::Weight::Semibold))
@@ -183,22 +199,37 @@ fn rule_card<'a>(
         .align_y(Alignment::Center),
     )
     .padding(theme::BTN_PAD_SM)
-    .style(theme::button_secondary);
+    .style(if can_add {
+        theme::button_primary
+    } else {
+        theme::button_secondary
+    });
     if can_add {
         add_btn = add_btn.on_press(Message::AddRule { target });
     }
 
-    let mut list = Column::new().spacing(RULE_ROW_GAP).width(Length::Fill);
+    let mut list = Column::new().spacing(0).width(Length::Fill);
+    let mut rendered_rows = 0usize;
     for (field, items) in lists {
+        let is_ip = field.is_ip();
         let tag = tr(
             lang,
-            if field.is_ip() {
+            if is_ip {
                 "rule_tag_ip"
             } else {
                 "rule_tag_domain"
             },
         );
         for (index, item) in items.iter().enumerate() {
+            if rendered_rows > 0 {
+                list = list.push(
+                    container(Space::new())
+                        .height(1)
+                        .width(Length::Fill)
+                        .style(theme::hairline),
+                );
+            }
+            rendered_rows += 1;
             // Quiet until hovered, like the connection table's close glyph.
             let delete = button(
                 text(crate::ui::icons::ICON_CLOSE)
@@ -208,7 +239,7 @@ fn rule_card<'a>(
             .style(theme::button_dismiss)
             .padding(3)
             .on_press(Message::RemoveRule { field, index });
-            let room = item_px - crate::ui::util::text_width(tag, theme::TYPE_MICRO);
+            let room = item_px - crate::ui::util::text_width(tag, theme::TYPE_MICRO) - 16.0;
             let short_item = crate::ui::util::fit_mono(item, room.max(60.0), theme::TYPE_BTN_SM);
             let is_truncated = short_item != *item;
             let item_text = container(
@@ -238,24 +269,37 @@ fn rule_card<'a>(
             } else {
                 item_text.into()
             };
-            let line = row![
-                item_el,
-                text(tag).size(theme::TYPE_MICRO).color(text_tertiary),
-                delete,
-            ]
-            .spacing(crate::ui::SP_12)
-            .align_y(Alignment::Center);
+            let tag_pill = container(
+                text(tag)
+                    .size(theme::TYPE_MICRO)
+                    .font(theme::ui_font(iced::font::Weight::Medium))
+                    .color(if is_ip {
+                        theme::badge_text(theme::INFO, theme)
+                    } else {
+                        text_muted
+                    }),
+            )
+            .padding([1, 6])
+            .style(move |t| {
+                if is_ip {
+                    theme::badge_colored(theme::INFO, t)
+                } else {
+                    theme::badge_bg(t)
+                }
+            });
+            let line = row![item_el, tag_pill, delete]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center);
             list = list.push(
                 container(line)
                     .padding(iced::Padding {
-                        left: 10.0,
-                        right: 4.0,
+                        left: 12.0,
+                        right: 6.0,
                         ..Default::default()
                     })
                     .height(RULE_ROW_H)
                     .align_y(Alignment::Center)
-                    .width(Length::Fill)
-                    .style(theme::list_item_flat),
+                    .width(Length::Fill),
             );
         }
     }
@@ -266,12 +310,24 @@ fn rule_card<'a>(
                 .color(text_tertiary),
         )
         .width(Length::Fill)
-        .height(RULE_ROW_H * 2.0 + RULE_ROW_GAP)
+        .height(RULE_ROW_H * 2.0 + 1.0)
         .align_x(Alignment::Center)
         .align_y(Alignment::Center)
+        .style(theme::status_card)
         .into()
     } else {
-        list.into()
+        container(list)
+            .width(Length::Fill)
+            .style(|t| iced::widget::container::Style {
+                background: Some(iced::Background::Color(theme::input_surface(t))),
+                border: iced::Border {
+                    color: theme::border_color(t),
+                    width: 1.0,
+                    radius: theme::RADIUS_MD.into(),
+                },
+                ..Default::default()
+            })
+            .into()
     };
 
     let mut card_items = column![

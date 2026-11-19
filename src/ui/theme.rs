@@ -38,6 +38,7 @@ pub const RADIUS_SM: f32 = 5.0;
 #[cfg(target_os = "windows")]
 pub const RADIUS_XS: f32 = 4.0;
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 pub const RADIUS_MICRO: f32 = 3.0;
 
 // macOS (Aqua / Sequoia HIG): generous 14px surfaces, 10px controls, 7px chips.
@@ -50,6 +51,7 @@ pub const RADIUS_SM: f32 = 7.0;
 #[cfg(target_os = "macos")]
 pub const RADIUS_XS: f32 = 5.0;
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 pub const RADIUS_MICRO: f32 = 3.0;
 
 // Linux (GNOME / Libadwaita): 12px cards, 8px controls, 6px chips.
@@ -62,6 +64,7 @@ pub const RADIUS_SM: f32 = 6.0;
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const RADIUS_XS: f32 = 4.0;
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[allow(dead_code)]
 pub const RADIUS_MICRO: f32 = 3.0;
 
 /// Font for numeric metrics (latency, speeds).
@@ -95,6 +98,13 @@ pub fn mono_font() -> iced::Font {
     iced::Font {
         family,
         ..Default::default()
+    }
+}
+
+pub fn mono_font_bold() -> iced::Font {
+    iced::Font {
+        weight: iced::font::Weight::Bold,
+        ..mono_font()
     }
 }
 
@@ -1025,13 +1035,18 @@ pub fn button_primary(theme: &iced::Theme, status: button::Status) -> button::St
         }
     };
 
+    let disabled = matches!(status, button::Status::Disabled);
     button::Style {
         background: Some(Background::Color(bg)),
         text_color: text,
         border: Border {
             radius: RADIUS_MD.into(),
-            width: 0.0,
-            color: Color::TRANSPARENT,
+            width: if disabled { 1.0 } else { 0.0 },
+            color: if disabled {
+                border_color(theme)
+            } else {
+                Color::TRANSPARENT
+            },
         },
         shadow: if !dark && matches!(status, button::Status::Active | button::Status::Hovered) {
             Shadow {
@@ -1087,7 +1102,15 @@ pub fn button_secondary(theme: &iced::Theme, status: button::Status) -> button::
             width: 1.0,
             color: border_c,
         },
-        shadow: Shadow::default(),
+        shadow: if !dark && matches!(status, button::Status::Active | button::Status::Hovered) {
+            Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.035),
+                offset: iced::Vector::new(0.0, 1.0),
+                blur_radius: 1.5,
+            }
+        } else {
+            Shadow::default()
+        },
         ..Default::default()
     }
 }
@@ -1222,6 +1245,48 @@ pub fn segmented_track(theme: &iced::Theme) -> container::Style {
     }
 }
 
+/// Proxy group selector item on the Proxies page.
+pub fn group_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |theme: &iced::Theme, status: button::Status| {
+        let dark = is_dark(theme);
+        if is_active {
+            let fill = if dark {
+                mix(CARD_DARK, ACCENT_BRIGHT, 0.08)
+            } else {
+                CARD_SELECTED_LIGHT
+            };
+            button::Style {
+                background: Some(Background::Color(fill)),
+                text_color: accent_text(theme),
+                border: Border {
+                    radius: RADIUS_MD.into(),
+                    width: 1.0,
+                    color: with_alpha(accent(theme), if dark { 0.45 } else { 0.40 }),
+                },
+                shadow: surface_shadow(theme),
+                ..Default::default()
+            }
+        } else {
+            let bg = match status {
+                button::Status::Hovered => Some(Background::Color(hover_wash(theme, false))),
+                button::Status::Pressed => Some(Background::Color(hover_wash(theme, true))),
+                _ => None,
+            };
+            button::Style {
+                background: bg,
+                text_color: text_primary(theme),
+                border: Border {
+                    radius: RADIUS_MD.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                shadow: Shadow::default(),
+                ..Default::default()
+            }
+        }
+    }
+}
+
 /// Sidebar navigation item:
 /// - Windows (WinUI 3 NavigationView): subtle neutral active pill; accent comes
 ///   from the leading 3px indicator bar.
@@ -1232,9 +1297,18 @@ pub fn nav_item(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> but
         #[cfg(target_os = "windows")]
         let (bg, fg) = {
             let bg = if is_active {
-                Some(Background::Color(match status {
-                    button::Status::Hovered => hover_wash(theme, true),
-                    _ => hover_wash(theme, false),
+                Some(Background::Color(if dark {
+                    match status {
+                        button::Status::Hovered => Color::from_rgba(1.0, 1.0, 1.0, 0.11),
+                        button::Status::Pressed => Color::from_rgba(1.0, 1.0, 1.0, 0.06),
+                        _ => Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+                    }
+                } else {
+                    match status {
+                        button::Status::Hovered => Color::from_rgba(1.0, 1.0, 1.0, 0.90),
+                        button::Status::Pressed => Color::from_rgba(1.0, 1.0, 1.0, 0.56),
+                        _ => Color::from_rgba(1.0, 1.0, 1.0, 0.72),
+                    }
                 }))
             } else {
                 match status {
@@ -1386,6 +1460,30 @@ pub fn power_button(running: bool) -> impl Fn(&iced::Theme, button::Status) -> b
     }
 }
 
+/// Busy (starting / stopping) state for the round power control on the dashboard hero.
+pub fn power_button_busy(theme: &iced::Theme, _status: button::Status) -> button::Style {
+    let dark = is_dark(theme);
+    button::Style {
+        background: Some(Background::Color(mix(
+            card_surface(theme),
+            WARNING,
+            if dark { 0.12 } else { 0.10 },
+        ))),
+        text_color: warning_text(theme),
+        border: Border {
+            radius: 999.0.into(),
+            width: 1.5,
+            color: with_alpha(WARNING, if dark { 0.55 } else { 0.45 }),
+        },
+        shadow: Shadow {
+            color: with_alpha(WARNING, if dark { 0.24 } else { 0.18 }),
+            offset: iced::Vector::new(0.0, 0.0),
+            blur_radius: 16.0,
+        },
+        ..Default::default()
+    }
+}
+
 pub fn list_item_style(
     theme: &iced::Theme,
     is_selected: bool,
@@ -1420,8 +1518,17 @@ pub fn list_item_style(
     }
 }
 
+#[allow(dead_code)]
 pub fn list_item_flat(theme: &iced::Theme) -> container::Style {
     list_item_style(theme, false, false)
+}
+
+pub fn table_header_bg(theme: &iced::Theme) -> Color {
+    if is_dark(theme) {
+        CARD_ELEVATED_DARK
+    } else {
+        mix(CARD_LIGHT_BG, BG_LIGHT, 0.72)
+    }
 }
 
 pub fn table_row_bg(theme: &iced::Theme, is_zebra: bool) -> container::Style {
@@ -1436,7 +1543,11 @@ pub fn list_item_zebra(
 ) -> container::Style {
     let mut style = list_item_style(theme, is_selected, is_hovered);
     if !is_selected && !is_hovered && is_zebra {
-        let bg = mix(card_surface(theme), elevated_surface(theme), 0.45);
+        let bg = if is_dark(theme) {
+            mix(card_surface(theme), elevated_surface(theme), 0.42)
+        } else {
+            mix(card_surface(theme), bg(theme), 0.36)
+        };
         style.background = Some(Background::Color(bg));
     }
     style.border.width = 0.0;
@@ -1765,6 +1876,14 @@ mod tests {
                         );
                     }
                 }
+                let power_busy = power_button_busy(&theme, status);
+                if let Some(Background::Color(fill)) = power_busy.background {
+                    let effective_fg = composite_over(fill, power_busy.text_color);
+                    assert!(
+                        contrast_ratio(effective_fg, fill) >= 4.5,
+                        "power button busy ({status:?}) unreadable"
+                    );
+                }
             }
             let input_s = input_field(&theme, text_input::Status::Active);
             if let Background::Color(fill) = input_s.background {
@@ -1919,6 +2038,8 @@ mod tests {
                     ),
                     ("tab_active", button_tab(true)(&theme, status), track),
                     ("tab_inactive", button_tab(false)(&theme, status), track),
+                    ("group_active", group_tab(true)(&theme, status), canvas),
+                    ("group_inactive", group_tab(false)(&theme, status), canvas),
                     (
                         "nav_active",
                         nav_item(true)(&theme, status),

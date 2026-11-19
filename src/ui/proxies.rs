@@ -2,7 +2,7 @@ use crate::message::Message;
 use crate::state::ProxyNode;
 use crate::ui::theme;
 use crate::ui::util::{SEMIBOLD_WIDTH, fit_width};
-use crate::ui::{PAGE_COMPACT_W, SCROLL_GUTTER, empty_state, page_header};
+use crate::ui::{PAGE_COMPACT_W, SCROLL_GUTTER, page_header};
 use iced::widget::{
     Column, Row, Space, button, column, container, responsive, row, scrollable, text, text_input,
 };
@@ -261,7 +261,8 @@ pub fn render<'a>(
         };
 
         let Some(group_info) = proxy_groups.get(group_name) else {
-            return empty_state(
+            return crate::ui::empty_state_with_icon(
+                Some(crate::ui::icons::ICON_PROXIES),
                 tr(lang, "no_proxy_groups"),
                 Some(tr(lang, "core_not_running_hint")),
                 None,
@@ -301,7 +302,11 @@ pub fn render<'a>(
                             text(short_group)
                                 .wrapping(text::Wrapping::None)
                                 .size(theme::TYPE_BTN_SM)
-                                .font(theme::ui_font(iced::font::Weight::Bold))
+                                .font(theme::ui_font(if is_active {
+                                    iced::font::Weight::Semibold
+                                } else {
+                                    iced::font::Weight::Medium
+                                }))
                                 .color(if is_active {
                                     theme::accent_text(theme)
                                 } else {
@@ -311,15 +316,15 @@ pub fn render<'a>(
                                 .wrapping(text::Wrapping::None)
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active {
-                                    theme::accent_text(theme)
-                                } else {
                                     theme::text_muted(theme)
+                                } else {
+                                    theme::text_tertiary(theme)
                                 })
                         ]
                         .spacing(2),
                     )
                     .padding(theme::BTN_PAD_SM)
-                    .style(theme::button_tab(is_active))
+                    .style(theme::group_tab(is_active))
                     .on_press(Message::SelectGroup(g.name.clone()));
 
                     let g_el: Element<'_, Message> = if group_truncated {
@@ -363,36 +368,65 @@ pub fn render<'a>(
                 for g in &groups_moved {
                     let is_active = g.name == selected_group_moved;
                     let active_node = g.now.as_deref().unwrap_or("—");
+                    let count = g.all.as_ref().map(|v| v.len());
+                    let name_budget = if count.is_some() { 106.0 } else { 132.0 };
                     let short_group =
-                        fit_width(&g.name, 132.0, theme::TYPE_SECTION * SEMIBOLD_WIDTH);
+                        fit_width(&g.name, name_budget, theme::TYPE_SECTION * SEMIBOLD_WIDTH);
                     let short_node = fit_width(active_node, 132.0, theme::TYPE_CAPTION);
                     let group_truncated = short_group != g.name || short_node != active_node;
 
+                    let mut title_row = row![
+                        text(short_group)
+                            .wrapping(text::Wrapping::None)
+                            .size(theme::TYPE_SECTION)
+                            .font(theme::ui_font(if is_active {
+                                iced::font::Weight::Semibold
+                            } else {
+                                iced::font::Weight::Medium
+                            }))
+                            .color(if is_active {
+                                theme::accent_text(theme)
+                            } else {
+                                text_primary
+                            }),
+                        Space::new().width(Length::Fill),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center);
+                    if let Some(n) = count {
+                        title_row = title_row.push(
+                            container(
+                                text(n.to_string())
+                                    .size(theme::TYPE_MICRO)
+                                    .font(theme::metric_font())
+                                    .color(if is_active {
+                                        theme::accent_text(theme)
+                                    } else {
+                                        theme::text_muted(theme)
+                                    }),
+                            )
+                            .padding([1, 6])
+                            .style(theme::badge_bg),
+                        );
+                    }
+
                     let g_btn = button(
                         column![
-                            text(short_group)
-                                .wrapping(text::Wrapping::None)
-                                .size(theme::TYPE_SECTION)
-                                .font(theme::ui_font(iced::font::Weight::Bold))
-                                .color(if is_active {
-                                    theme::accent_text(theme)
-                                } else {
-                                    text_primary
-                                }),
+                            title_row,
                             text(short_node)
                                 .wrapping(text::Wrapping::None)
                                 .size(theme::TYPE_CAPTION)
                                 .color(if is_active {
-                                    theme::accent_text(theme)
-                                } else {
                                     theme::text_muted(theme)
+                                } else {
+                                    theme::text_tertiary(theme)
                                 })
                         ]
                         .spacing(3),
                     )
                     .padding(theme::BTN_PAD_MD)
                     .width(Length::Fill)
-                    .style(theme::button_tab(is_active))
+                    .style(theme::group_tab(is_active))
                     .on_press(Message::SelectGroup(g.name.clone()));
 
                     let g_el: Element<'_, Message> = if group_truncated {
@@ -477,7 +511,8 @@ pub fn render<'a>(
                         .padding(theme::BTN_PAD_MD)
                         .style(theme::button_secondary)
                         .on_press(Message::NodeSearchChanged(String::new()));
-                    crate::ui::empty_state(
+                    crate::ui::empty_state_with_icon(
+                        Some(crate::ui::icons::ICON_SEARCH),
                         tr(lang, "no_matching_nodes"),
                         None,
                         Some(cta.into()),
@@ -525,7 +560,8 @@ pub fn render<'a>(
                 }
             } else {
                 // Group has no `all` node list (not a failed search filter).
-                crate::ui::empty_state(
+                crate::ui::empty_state_with_icon(
+                    Some(crate::ui::icons::ICON_PROXIES),
                     tr(lang, "no_nodes"),
                     Some(tr(lang, "no_proxy_groups")),
                     None,
@@ -621,7 +657,8 @@ pub fn render<'a>(
                         .on_press(msg)
                         .into()
                 });
-                let content = crate::ui::empty_state(
+                let content = crate::ui::empty_state_with_icon(
+                    Some(crate::ui::icons::ICON_PROXIES),
                     tr(lang, title_key),
                     Some(tr(lang, hint_key)),
                     cta,
@@ -630,7 +667,11 @@ pub fn render<'a>(
                 let header = page_header(
                     "proxy_nodes",
                     lang,
-                    Some(make_header_actions(search_query, header_stacked)),
+                    if search_query.trim().is_empty() {
+                        None
+                    } else {
+                        Some(make_header_actions(search_query, header_stacked))
+                    },
                     theme,
                     header_stacked,
                 );
@@ -664,7 +705,8 @@ pub fn render<'a>(
                     .padding(theme::BTN_PAD_MD)
                     .style(theme::button_secondary)
                     .on_press(Message::NodeSearchChanged(String::new()));
-                let content = crate::ui::empty_state(
+                let content = crate::ui::empty_state_with_icon(
+                    Some(crate::ui::icons::ICON_SEARCH),
                     tr(lang, "no_matching_nodes"),
                     None,
                     Some(cta.into()),
@@ -966,7 +1008,7 @@ fn render_proxy_card<'a>(
     };
     let mut server_truncated = false;
     if let Some(ref addr) = server_label {
-        let server_px = card_w - pad * 2.0 - chip_w - latency_w - crate::ui::SP_8 * 2.0 - 4.0;
+        let server_px = card_w - pad * 2.0 - chip_w - latency_w - crate::ui::SP_8 * 2.0;
         let short_addr = fit_width(addr, server_px.max(20.0), theme::TYPE_CAPTION);
         server_truncated = short_addr != *addr;
         meta_row = meta_row.push(
@@ -988,9 +1030,8 @@ fn render_proxy_card<'a>(
     // chip and the selection mark (each with its 8px gap).
     let name_px = card_w
         - pad * 2.0
-        - 3.0
-        - if flag_opt.is_some() { 38.0 } else { 0.0 }
-        - if is_selected { 26.0 } else { 0.0 }
+        - if flag_opt.is_some() { 34.0 } else { 0.0 }
+        - if is_selected { 24.0 } else { 0.0 }
         - 2.0;
     let display_name = fit_width(
         &clean_name,

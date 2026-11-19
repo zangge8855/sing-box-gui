@@ -184,6 +184,9 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "core_start_cancelled",
     "detached_core_detected",
     "tun_privilege_required",
+    "connections_unit",
+    "logs_live",
+    "logs_paused",
 ];
 
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
@@ -575,6 +578,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tun_privilege_required" => {
                 "TUN mode requires administrator privileges or cap_net_admin on sing-box."
             }
+            "connections_unit" => "connections",
+            "logs_live" => "Live",
+            "logs_paused" => "Paused",
 
             _ => key,
         },
@@ -935,6 +941,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "tun_privilege_required" => {
                 "TUN 模式需要管理员权限或为 sing-box 授予 cap_net_admin 权限。"
             }
+            "connections_unit" => "个连接",
+            "logs_live" => "实时追踪",
+            "logs_paused" => "已暂停",
 
             _ => key,
         },

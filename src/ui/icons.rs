@@ -19,6 +19,10 @@ pub const ICON_ERROR: char = '\u{E000}';
 pub const ICON_INFO: char = '\u{E88E}';
 pub const ICON_EXPAND_MORE: char = '\u{E5CF}';
 pub const ICON_EXPAND_LESS: char = '\u{E5CE}';
+pub const ICON_CHEVRON_RIGHT: char = '\u{E5CC}';
+pub const ICON_SEARCH: char = '\u{E8B6}';
+pub const ICON_DELETE_SWEEP: &str = "\u{E16C}";
+pub const ICON_FILE_DOWNLOAD: &str = "\u{E2C4}";
 
 #[cfg(test)]
 mod tests {
@@ -46,12 +50,16 @@ mod tests {
             ICON_INFO,
             ICON_EXPAND_MORE,
             ICON_EXPAND_LESS,
+            ICON_CHEVRON_RIGHT,
+            ICON_SEARCH,
         ]
         .into_iter()
         .chain(ICON_CLOSE.chars())
         .chain(ICON_ADD.chars())
         .chain(ICON_COPY.chars())
         .chain(ICON_FOLDER_OPEN.chars())
+        .chain(ICON_DELETE_SWEEP.chars())
+        .chain(ICON_FILE_DOWNLOAD.chars())
         {
             assert!(
                 font.glyph_index(icon).is_some(),

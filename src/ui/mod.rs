@@ -368,20 +368,81 @@ pub fn page_body_fixed_with_pad<'a>(
 }
 
 /// Shared empty-state block: title + description + optional primary CTA.
+#[allow(dead_code)]
 pub fn empty_state<'a>(
     title: &'a str,
     description: Option<&'a str>,
     cta: Option<Element<'a, Message>>,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
-    let mut col = column![
+    empty_state_with_icon(None, title, description, cta, theme)
+}
+
+/// Shared empty-state block with an optional leading circular icon badge.
+pub fn empty_state_with_icon<'a>(
+    icon: Option<char>,
+    title: &'a str,
+    description: Option<&'a str>,
+    cta: Option<Element<'a, Message>>,
+    theme: &iced::Theme,
+) -> Element<'a, Message> {
+    container(empty_state_inner(icon, title, description, cta, theme))
+        .padding(theme::SP_40)
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+        .style(ui_theme::status_card)
+        .into()
+}
+
+/// Frameless empty-state block for embedding inside an existing surface (e.g. log console).
+pub fn empty_state_plain<'a>(
+    icon: Option<char>,
+    title: &'a str,
+    description: Option<&'a str>,
+    cta: Option<Element<'a, Message>>,
+    theme: &iced::Theme,
+) -> Element<'a, Message> {
+    container(empty_state_inner(icon, title, description, cta, theme))
+        .padding(theme::SP_40)
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+        .into()
+}
+
+fn empty_state_inner<'a>(
+    icon: Option<char>,
+    title: &'a str,
+    description: Option<&'a str>,
+    cta: Option<Element<'a, Message>>,
+    theme: &iced::Theme,
+) -> Element<'a, Message> {
+    let mut col = column![].spacing(SP_8).align_x(Alignment::Center);
+
+    if let Some(glyph) = icon {
+        let badge = container(
+            text(glyph.to_string())
+                .font(iced::Font::with_name("Material Icons"))
+                .size(22.0)
+                .color(ui_theme::text_muted(theme)),
+        )
+        .width(44)
+        .height(44)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .style(|t| {
+            let mut s = ui_theme::badge_bg(t);
+            s.border.radius = 22.0.into();
+            s
+        });
+        col = col.push(badge).push(Space::new().height(4));
+    }
+
+    col = col.push(
         text(title)
             .size(ui_theme::TYPE_HEADING)
             .color(ui_theme::text_primary(theme))
             .font(ui_theme::ui_font(iced::font::Weight::Medium)),
-    ]
-    .spacing(SP_8)
-    .align_x(Alignment::Center);
+    );
 
     if let Some(desc) = description {
         col = col.push(
@@ -395,12 +456,7 @@ pub fn empty_state<'a>(
         col = col.push(Space::new().height(SP_8)).push(btn);
     }
 
-    container(col.max_width(420))
-        .padding(theme::SP_40)
-        .width(Length::Fill)
-        .center_x(Length::Fill)
-        .style(ui_theme::status_card)
-        .into()
+    col.max_width(420).into()
 }
 
 /// Animated dual-tone busy indicator; `phase` advances on UI ticks.
@@ -492,11 +548,11 @@ pub fn usage_bar<'a>(ratio: f32, theme: &iced::Theme) -> Element<'a, Message> {
     let segment = |portion: u16, color: Option<iced::Color>| {
         container(Space::new())
             .width(Length::FillPortion(portion))
-            .height(4.0)
+            .height(5.0)
             .style(move |_| container::Style {
                 background: color.map(iced::Background::Color),
                 border: iced::Border {
-                    radius: ui_theme::RADIUS_MICRO.into(),
+                    radius: 2.5.into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -513,9 +569,13 @@ pub fn usage_bar<'a>(ratio: f32, theme: &iced::Theme) -> Element<'a, Message> {
     container(track)
         .width(Length::Fill)
         .style(|t| container::Style {
-            background: Some(iced::Background::Color(ui_theme::border_color(t))),
+            background: Some(iced::Background::Color(if ui_theme::is_dark(t) {
+                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.10)
+            } else {
+                iced::Color::from_rgba(0.0, 0.0, 0.0, 0.09)
+            })),
             border: iced::Border {
-                radius: ui_theme::RADIUS_MICRO.into(),
+                radius: 2.5.into(),
                 ..Default::default()
             },
             ..Default::default()

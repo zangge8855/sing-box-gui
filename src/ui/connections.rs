@@ -1,6 +1,6 @@
 use crate::api::Connection;
 use crate::message::Message;
-use crate::ui::icons::{ICON_CLOSE, ICON_DOWN, ICON_UP};
+use crate::ui::icons::{ICON_CLOSE, ICON_CONNECTIONS, ICON_DOWN, ICON_SEARCH, ICON_UP};
 use crate::ui::theme;
 use crate::ui::util::{SEMIBOLD_WIDTH, fit_width, format_size, labelled, with_colon};
 use crate::ui::{CONNECTIONS_TABLE_W, CONNECTIONS_WIDE_W, page_header};
@@ -111,10 +111,13 @@ pub fn render<'a>(
         prepared_connections
             .sort_by(|a, b| compare_connections(a, b, connections_sort, connections_sort_desc));
     }
+    let total_active = active_connections.len();
+    let total_filtered = prepared_connections.len();
+    let (sum_down, sum_up) = active_connections.iter().fold((0u64, 0u64), |(d, u), c| {
+        (d.saturating_add(c.download), u.saturating_add(c.upload))
+    });
     const MAX_VISIBLE_CONNECTIONS: usize = 100;
-    let hidden_connections = prepared_connections
-        .len()
-        .saturating_sub(MAX_VISIBLE_CONNECTIONS);
+    let hidden_connections = total_filtered.saturating_sub(MAX_VISIBLE_CONNECTIONS);
     prepared_connections.truncate(MAX_VISIBLE_CONNECTIONS);
 
     let main_content = responsive(move |size| {
@@ -250,13 +253,29 @@ pub fn render<'a>(
                 .into()
         };
 
+        let show_toolbar = !active_connections.is_empty() || !query_str.trim().is_empty();
         let page_title = page_header(
             "tab_connections",
             lang,
-            Some(header_actions),
+            show_toolbar.then_some(header_actions),
             theme,
             header_stacked,
         );
+        let heading: Element<'_, Message> = if show_toolbar {
+            let summary = render_connections_summary(
+                total_active,
+                total_filtered,
+                !query_str.trim().is_empty(),
+                sum_down,
+                sum_up,
+                core_running,
+                theme,
+                lang,
+            );
+            column![page_title, summary].spacing(crate::ui::SP_8).into()
+        } else {
+            page_title
+        };
 
         if is_compact {
             // Mobile / Compact Layout: List of clean Connection Cards
@@ -306,7 +325,18 @@ pub fn render<'a>(
                 } else {
                     None
                 };
-                list = list.push(crate::ui::empty_state(empty_msg, hint, cta, theme));
+                let empty_icon = if query_str.trim().is_empty() {
+                    ICON_CONNECTIONS
+                } else {
+                    ICON_SEARCH
+                };
+                list = list.push(crate::ui::empty_state_with_icon(
+                    Some(empty_icon),
+                    empty_msg,
+                    hint,
+                    cta,
+                    theme,
+                ));
             } else {
                 for prepared in filtered_connections.iter() {
                     let conn = prepared.connection;
@@ -356,15 +386,26 @@ pub fn render<'a>(
 
                     let mut badges = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
                     if !conn.metadata.network.trim().is_empty() {
+                        let is_udp = conn.metadata.network.to_lowercase().contains("udp");
                         badges = badges.push(
                             container(
                                 text(conn.metadata.network.to_uppercase())
                                     .size(theme::TYPE_MICRO)
                                     .font(theme::ui_font(iced::font::Weight::Semibold))
-                                    .color(text_muted),
+                                    .color(if is_udp {
+                                        theme::badge_text(theme::INFO, theme)
+                                    } else {
+                                        text_muted
+                                    }),
                             )
                             .padding([2, 6])
-                            .style(theme::badge_bg),
+                            .style(move |t| {
+                                if is_udp {
+                                    theme::badge_colored(theme::INFO, t)
+                                } else {
+                                    theme::badge_bg(t)
+                                }
+                            }),
                         );
                     }
                     if !conn.rule.trim().is_empty() {
@@ -463,7 +504,7 @@ pub fn render<'a>(
                 crate::ui::SCROLL_GUTTER
             };
             let col = column![
-                page_title,
+                heading,
                 scrollable(container(list).padding(iced::Padding {
                     right: list_gutter,
                     ..Default::default()
@@ -496,13 +537,20 @@ pub fn render<'a>(
                     } else {
                         tr(lang, s).to_string()
                     };
-                    button(text(label).size(theme::TYPE_SECTION).font(theme::ui_font(
-                        if is_sorted {
-                            iced::font::Weight::Bold
-                        } else {
-                            iced::font::Weight::Semibold
-                        },
-                    )))
+                    button(
+                        text(label)
+                            .size(theme::TYPE_CAPTION)
+                            .color(if is_sorted {
+                                theme::accent_text(theme)
+                            } else {
+                                text_muted
+                            })
+                            .font(theme::ui_font(if is_sorted {
+                                iced::font::Weight::Bold
+                            } else {
+                                iced::font::Weight::Semibold
+                            })),
+                    )
                     .style(theme::button_header)
                     .padding([4, 6])
                     .on_press(Message::SortConnections(sort_col))
@@ -523,7 +571,12 @@ pub fn render<'a>(
                     };
                     button(
                         text(final_label)
-                            .size(theme::TYPE_SECTION)
+                            .size(theme::TYPE_CAPTION)
+                            .color(if is_sorted {
+                                theme::accent_text(theme)
+                            } else {
+                                text_muted
+                            })
                             .font(theme::ui_font(if is_sorted {
                                 iced::font::Weight::Bold
                             } else {
@@ -556,11 +609,11 @@ pub fn render<'a>(
                     make_hdr_btn(crate::state::ConnectionSort::Host, "host", 6),
                     make_hdr_btn(crate::state::ConnectionSort::Process, "col_process", 3),
                     make_hdr_btn_custom(crate::state::ConnectionSort::Network, net_rule_label, 5),
-                    make_hdr_btn(crate::state::ConnectionSort::Chains, "chains", 4),
+                    make_hdr_btn(crate::state::ConnectionSort::Chains, "chains", 5),
                     make_hdr_btn_custom(
                         crate::state::ConnectionSort::Download,
                         "↓ / ↑".to_string(),
-                        6
+                        5
                     ),
                     Space::new().width(Length::Fixed(CLOSE_COL_W))
                 ]
@@ -607,13 +660,18 @@ pub fn render<'a>(
                 } else {
                     None
                 };
-                crate::ui::empty_state(empty_msg, hint, cta, theme)
+                let empty_icon = if query_str.trim().is_empty() {
+                    ICON_CONNECTIONS
+                } else {
+                    ICON_SEARCH
+                };
+                crate::ui::empty_state_with_icon(Some(empty_icon), empty_msg, hint, cta, theme)
             } else {
                 let mut list = column!().spacing(0);
                 let len = filtered_connections.len();
                 // Cells are single-line: budget each column from its share of
                 // the table so text ends in an ellipsis instead of wrapping the
-                // row. Fill portions: wide 6+4+2+4+3+2+2, mid 6+3+5+4+6; the
+                // row. Fill portions: wide 6+4+2+4+3+2+2, mid 6+3+5+5+5; the
                 // close column is fixed.
                 let (portions, gutters) = if is_wide { (23.0, 7.0) } else { (24.0, 5.0) };
                 let table_w = crate::ui::page_content_width(size.width, false);
@@ -670,7 +728,11 @@ pub fn render<'a>(
                         text_primary,
                     );
 
-                    let chains_short = fit_width(chains_label, room(4.0), theme::TYPE_BTN_SM);
+                    let chains_short = fit_width(
+                        chains_label,
+                        room(if is_wide { 4.0 } else { 5.0 }),
+                        theme::TYPE_BTN_SM,
+                    );
                     let chains_trunc = chains_short != chains_label;
                     let chains = tip_wrap(
                         text(chains_short)
@@ -688,7 +750,11 @@ pub fn render<'a>(
                         text(conn.metadata.network.to_uppercase())
                             .size(theme::TYPE_MICRO)
                             .font(theme::ui_font(iced::font::Weight::Semibold))
-                            .color(text_muted)
+                            .color(if is_udp {
+                                theme::badge_text(theme::INFO, theme)
+                            } else {
+                                text_muted
+                            })
                             .wrapping(Wrapping::None),
                     )
                     .padding([1, 5])
@@ -758,8 +824,8 @@ pub fn render<'a>(
                             cell(host, 6),
                             cell(process, 3),
                             cell(net_rule, 5),
-                            cell(chains, 4),
-                            cell(traffic, 6),
+                            cell(chains, 5),
+                            cell(traffic, 5),
                             container(close_button(conn.id.clone(), lang, theme))
                                 .width(Length::Fixed(CLOSE_COL_W))
                                 .align_x(Alignment::End),
@@ -799,7 +865,7 @@ pub fn render<'a>(
                         })
                         .width(Length::Fill)
                         .style(|t| container::Style {
-                            background: Some(iced::Background::Color(theme::elevated_surface(t))),
+                            background: Some(iced::Background::Color(theme::table_header_bg(t))),
                             border: iced::Border {
                                 radius: iced::border::Radius {
                                     top_left: theme::RADIUS_LG - 1.0,
@@ -853,7 +919,7 @@ pub fn render<'a>(
                 .into()
             };
 
-            let col = column![page_title, list_content]
+            let col = column![heading, list_content]
                 .spacing(crate::ui::SP_20)
                 .width(Length::Fill)
                 .height(Length::Fill);
@@ -863,6 +929,67 @@ pub fn render<'a>(
     });
 
     main_content.into()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_connections_summary<'a>(
+    total_active: usize,
+    total_filtered: usize,
+    has_query: bool,
+    sum_down: u64,
+    sum_up: u64,
+    core_running: bool,
+    theme: &iced::Theme,
+    lang: crate::state::Language,
+) -> Element<'a, Message> {
+    use crate::ui::i18n::tr;
+
+    let status_color = if core_running {
+        theme::success_text(theme)
+    } else {
+        theme::text_tertiary(theme)
+    };
+    let status = crate::ui::status_dot(
+        status_color,
+        core_running,
+        if core_running {
+            tr(lang, "status_running")
+        } else {
+            tr(lang, "status_stopped")
+        },
+        status_color,
+        theme::TYPE_CAPTION,
+    );
+
+    let count_text = if has_query {
+        format!("{total_filtered} / {total_active}")
+    } else {
+        total_active.to_string()
+    };
+    let count_el = row![
+        text(count_text)
+            .size(theme::TYPE_CAPTION)
+            .font(theme::metric_font())
+            .color(theme::text_primary(theme)),
+        text(tr(lang, "connections_unit"))
+            .size(theme::TYPE_CAPTION)
+            .color(theme::text_muted(theme)),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
+
+    let mut summary = row![status, count_el]
+        .spacing(crate::ui::SP_20)
+        .align_y(Alignment::Center);
+
+    if total_active > 0 {
+        let (down_color, up_color) = theme::chart_series(theme);
+        summary = summary
+            .push(rate_label(ICON_DOWN, down_color, sum_down, theme))
+            .push(rate_label(ICON_UP, up_color, sum_up, theme));
+    }
+
+    summary.wrap().vertical_spacing(4).into()
 }
 
 /// Table row insets. The right side also clears the scrollbar lane, so the
