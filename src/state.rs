@@ -43,6 +43,61 @@ impl RoutingMode {
     }
 }
 
+/// Which IP families the generated profile resolves and routes.
+///
+/// Both dual-stack modes give the TUN interface an IPv6 address, so IPv6
+/// traffic is captured instead of being made unreachable by `strict_route`.
+/// `Ipv4Only` hides `AAAA` answers from clients and keeps TUN IPv4-only for
+/// networks or nodes where IPv6 is broken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum IpStack {
+    #[default]
+    PreferIpv4,
+    PreferIpv6,
+    Ipv4Only,
+}
+
+impl IpStack {
+    pub const ALL: [IpStack; 3] = [IpStack::PreferIpv4, IpStack::PreferIpv6, IpStack::Ipv4Only];
+
+    /// sing-box `dns.strategy` value.
+    pub fn dns_strategy(self) -> &'static str {
+        match self {
+            IpStack::PreferIpv4 => "prefer_ipv4",
+            IpStack::PreferIpv6 => "prefer_ipv6",
+            IpStack::Ipv4Only => "ipv4_only",
+        }
+    }
+
+    pub fn ipv6_enabled(self) -> bool {
+        !matches!(self, IpStack::Ipv4Only)
+    }
+
+    /// i18n key of the option label in Settings.
+    pub fn label_key(self) -> &'static str {
+        match self {
+            IpStack::PreferIpv4 => "ip_stack_prefer_ipv4",
+            IpStack::PreferIpv6 => "ip_stack_prefer_ipv6",
+            IpStack::Ipv4Only => "ip_stack_ipv4_only",
+        }
+    }
+
+    /// Accepts the serialized variant names plus sing-box / Clash spellings.
+    fn from_lenient(raw: &str) -> Option<Self> {
+        let key: String = raw
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        match key.as_str() {
+            "preferipv4" | "ipv4prefer" | "dual" | "dualstack" => Some(IpStack::PreferIpv4),
+            "preferipv6" | "ipv6prefer" => Some(IpStack::PreferIpv6),
+            "ipv4only" | "ipv4" => Some(IpStack::Ipv4Only),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastKind {
     Success,
@@ -282,6 +337,20 @@ where
     Ok(Option::<bool>::deserialize(deserializer)?.unwrap_or(true))
 }
 
+/// An unrecognized value (for example one written by a newer release) falls
+/// back to the default instead of failing the whole settings file, which would
+/// otherwise reset subscriptions.
+fn deserialize_lenient_ip_stack<'de, D>(deserializer: D) -> Result<IpStack, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<serde_json::Value>::deserialize(deserializer)?
+        .as_ref()
+        .and_then(serde_json::Value::as_str)
+        .and_then(IpStack::from_lenient)
+        .unwrap_or_default())
+}
+
 fn deserialize_null_language<'de, D>(deserializer: D) -> Result<Language, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -375,6 +444,8 @@ pub struct GuiConfig {
     pub selected_node_tag: Option<String>,
     #[serde(deserialize_with = "deserialize_null_default")]
     pub fake_ip: bool,
+    #[serde(default, deserialize_with = "deserialize_lenient_ip_stack")]
+    pub ip_stack: IpStack,
     #[serde(deserialize_with = "deserialize_null_default")]
     pub tcp_fast_open: bool,
     #[serde(deserialize_with = "deserialize_null_default")]
@@ -465,6 +536,7 @@ impl Default for GuiConfig {
             language: lang,
             selected_node_tag: None,
             fake_ip: false,
+            ip_stack: IpStack::default(),
             tcp_fast_open: false,
             tcp_multipath: false,
             close_core_on_exit: true,
@@ -497,6 +569,7 @@ pub struct RuntimeSettingsDraft {
     pub start_on_boot: bool,
     pub tun_mode: bool,
     pub fake_ip: bool,
+    pub ip_stack: IpStack,
     pub tcp_fast_open: bool,
     pub tcp_multipath: bool,
     pub close_core_on_exit: bool,
@@ -519,6 +592,7 @@ impl RuntimeSettingsDraft {
             start_on_boot: config.start_on_boot,
             tun_mode: config.tun_mode,
             fake_ip: config.fake_ip,
+            ip_stack: config.ip_stack,
             tcp_fast_open: config.tcp_fast_open,
             tcp_multipath: config.tcp_multipath,
             close_core_on_exit: config.close_core_on_exit,
@@ -540,6 +614,7 @@ impl RuntimeSettingsDraft {
             || self.start_on_boot != config.start_on_boot
             || self.tun_mode != config.tun_mode
             || self.fake_ip != config.fake_ip
+            || self.ip_stack != config.ip_stack
             || self.tcp_fast_open != config.tcp_fast_open
             || self.tcp_multipath != config.tcp_multipath
             || self.close_core_on_exit != config.close_core_on_exit
@@ -657,6 +732,50 @@ mod tests {
     }
 
     #[test]
+    fn ip_stack_defaults_to_dual_stack_and_never_fails_the_settings_file() {
+        let legacy: GuiConfig = serde_json::from_value(serde_json::json!({
+            "mixed_port": 8080,
+            "subscriptions": [{ "id": "keep", "name": "Keep" }]
+        }))
+        .unwrap();
+        assert_eq!(legacy.ip_stack, IpStack::PreferIpv4);
+
+        for (raw, expected) in [
+            (serde_json::json!("PreferIpv6"), IpStack::PreferIpv6),
+            (serde_json::json!("Ipv4Only"), IpStack::Ipv4Only),
+            (serde_json::json!("ipv4_only"), IpStack::Ipv4Only),
+            (serde_json::json!("ipv6-prefer"), IpStack::PreferIpv6),
+            (serde_json::json!("dual"), IpStack::PreferIpv4),
+            // Unknown or malformed values must not discard the whole file.
+            (serde_json::json!("Ipv6Only"), IpStack::PreferIpv4),
+            (serde_json::json!(6), IpStack::PreferIpv4),
+            (serde_json::Value::Null, IpStack::PreferIpv4),
+        ] {
+            let config: GuiConfig = serde_json::from_value(serde_json::json!({
+                "ip_stack": raw.clone(),
+                "subscriptions": [{ "id": "keep", "name": "Keep" }]
+            }))
+            .unwrap_or_else(|e| panic!("{raw} failed: {e}"));
+            assert_eq!(config.ip_stack, expected, "{raw}");
+            assert_eq!(config.subscriptions[0].id, "keep");
+        }
+
+        // Serialized names round-trip.
+        for stack in IpStack::ALL {
+            let config = GuiConfig {
+                ip_stack: stack,
+                ..GuiConfig::default()
+            };
+            let back: GuiConfig =
+                serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+            assert_eq!(back.ip_stack, stack);
+        }
+        assert!(IpStack::PreferIpv6.ipv6_enabled());
+        assert!(!IpStack::Ipv4Only.ipv6_enabled());
+        assert_eq!(IpStack::Ipv4Only.dns_strategy(), "ipv4_only");
+    }
+
+    #[test]
     fn toast_duration_scales_with_length_and_clamps() {
         // Short message resolves to the minimum (3 seconds).
         assert_eq!(Toast::success("ok").remaining_secs, 3);
@@ -703,6 +822,9 @@ mod tests {
         config = GuiConfig::default();
         draft = RuntimeSettingsDraft::from_config(&config);
         draft.tun_mode = !draft.tun_mode;
+        assert!(draft.has_pending_changes(&config));
+        draft = RuntimeSettingsDraft::from_config(&config);
+        draft.ip_stack = IpStack::Ipv4Only;
         assert!(draft.has_pending_changes(&config));
     }
 

@@ -187,6 +187,11 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "connections_unit",
     "logs_live",
     "logs_paused",
+    "ip_stack_label",
+    "help_ip_stack",
+    "ip_stack_prefer_ipv4",
+    "ip_stack_prefer_ipv6",
+    "ip_stack_ipv4_only",
 ];
 
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
@@ -222,6 +227,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_tcp_fast_open" => "Enable TCP Fast Open on supported outbounds.",
             "help_tcp_multipath" => "Enable Multipath TCP when the OS supports it.",
             "help_fake_ip" => "Resolve remote domains to fake IPs for better routing.",
+            "help_ip_stack" => "Dual-stack also proxies IPv6. Pick IPv4 only if IPv6 sites fail.",
             "disable_proxy_on_stop_label" => "Disable system proxy when core stops",
             "help_disable_proxy_on_stop" => {
                 "Turn off system proxy when the core is stopped. App exit always clears the system proxy for safety."
@@ -409,6 +415,10 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_save_apply" => "Save & Apply",
             "btn_discard_changes" => "Discard",
             "fake_ip_label" => "Fake-IP DNS Mode",
+            "ip_stack_label" => "IP Stack",
+            "ip_stack_prefer_ipv4" => "Dual · IPv4 first",
+            "ip_stack_prefer_ipv6" => "Dual · IPv6 first",
+            "ip_stack_ipv4_only" => "IPv4 only",
             "tcp_fast_open_label" => "TCP Fast Open (TFO)",
             "tcp_multipath_label" => "TCP Multi-Path (MPTCP)",
             "close_core_on_exit_label" => "Auto-close core on exit",
@@ -611,6 +621,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_tcp_fast_open" => "在支持的出站上启用 TCP Fast Open。",
             "help_tcp_multipath" => "在系统支持时启用多径 TCP。",
             "help_fake_ip" => "将远程域名解析为虚假 IP，便于分流。",
+            "help_ip_stack" => "双栈会同时代理 IPv6；IPv6 网站打不开时选仅 IPv4。",
             "disable_proxy_on_stop_label" => "停止内核时关闭系统代理",
             "help_disable_proxy_on_stop" => {
                 "关闭内核时自动关闭系统代理。退出应用时始终清除系统代理（安全策略）。"
@@ -782,6 +793,10 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_save_apply" => "保存并应用",
             "btn_discard_changes" => "放弃更改",
             "fake_ip_label" => "Fake-IP DNS 模式",
+            "ip_stack_label" => "IP 协议栈",
+            "ip_stack_prefer_ipv4" => "双栈 · IPv4 优先",
+            "ip_stack_prefer_ipv6" => "双栈 · IPv6 优先",
+            "ip_stack_ipv4_only" => "仅 IPv4",
             "tcp_fast_open_label" => "TCP 快速打开（TFO）",
             "tcp_multipath_label" => "TCP 多径传输（MPTCP）",
             "close_core_on_exit_label" => "退出时自动关闭内核",

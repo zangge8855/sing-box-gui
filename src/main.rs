@@ -991,6 +991,7 @@ impl App {
             || next.core_path.as_deref().unwrap_or_default() != core_path
             || next.tun_mode != draft.tun_mode
             || next.fake_ip != draft.fake_ip
+            || next.ip_stack != draft.ip_stack
             || next.tcp_fast_open != draft.tcp_fast_open
             || next.tcp_multipath != draft.tcp_multipath;
         let autostart_target =
@@ -1006,6 +1007,7 @@ impl App {
         next.start_on_boot = draft.start_on_boot;
         next.tun_mode = draft.tun_mode;
         next.fake_ip = draft.fake_ip;
+        next.ip_stack = draft.ip_stack;
         next.tcp_fast_open = draft.tcp_fast_open;
         next.tcp_multipath = draft.tcp_multipath;
         next.close_core_on_exit = draft.close_core_on_exit;
@@ -3997,6 +3999,10 @@ impl App {
             }
             Message::ToggleFakeIp => {
                 self.settings_draft.fake_ip = !self.settings_draft.fake_ip;
+                Task::none()
+            }
+            Message::SetIpStack(stack) => {
+                self.settings_draft.ip_stack = stack;
                 Task::none()
             }
             Message::ToggleTcpFastOpen => {

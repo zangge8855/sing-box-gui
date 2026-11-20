@@ -1,6 +1,6 @@
 use crate::message::Message;
 use crate::state::{
-    AppTheme, CoreInstallState, GuiConfig, Language, RuntimeSettingsDraft, UpdateStatus,
+    AppTheme, CoreInstallState, GuiConfig, IpStack, Language, RuntimeSettingsDraft, UpdateStatus,
 };
 use crate::ui::i18n::tr;
 use crate::ui::page_header;
@@ -566,6 +566,21 @@ pub fn render<'a>(
         let dns_remote_error =
             (!crate::is_valid_dns_server_address(draft.dns_server_remote.trim()))
                 .then_some("invalid_dns_server");
+        let ip_stack_options: Vec<IpStackOption> = IpStack::ALL
+            .iter()
+            .map(|&stack| IpStackOption {
+                stack,
+                label: tr(lang, stack.label_key()),
+            })
+            .collect();
+        let selected_ip_stack = ip_stack_options
+            .iter()
+            .find(|o| o.stack == draft.ip_stack)
+            .cloned();
+        let ip_stack_picker =
+            picker_style!(pick_list(ip_stack_options, selected_ip_stack, |opt| {
+                Message::SetIpStack(opt.stack)
+            }));
         let dns = section(
             "dns_servers",
             vec![
@@ -600,6 +615,12 @@ pub fn render<'a>(
                     Some("help_fake_ip"),
                     None,
                     switch(draft.fake_ip, Message::ToggleFakeIp),
+                ),
+                inline(
+                    "ip_stack_label",
+                    Some("help_ip_stack"),
+                    None,
+                    ip_stack_picker.into(),
                 ),
             ],
         );
@@ -1035,6 +1056,18 @@ pub struct IntervalOption {
 }
 
 impl std::fmt::Display for IntervalOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IpStackOption {
+    pub stack: IpStack,
+    pub label: &'static str,
+}
+
+impl std::fmt::Display for IpStackOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.label)
     }

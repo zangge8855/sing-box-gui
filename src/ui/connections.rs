@@ -398,7 +398,9 @@ pub fn render<'a>(
                                         text_muted
                                     }),
                             )
-                            .padding([2, 6])
+                            .width(Length::Fixed(NET_BADGE_W))
+                            .align_x(Alignment::Center)
+                            .padding([2, 0])
                             .style(move |t| {
                                 if is_udp {
                                     theme::badge_colored(theme::INFO, t)
@@ -757,7 +759,9 @@ pub fn render<'a>(
                             })
                             .wrapping(Wrapping::None),
                     )
-                    .padding([1, 5])
+                    .width(Length::Fixed(NET_BADGE_W))
+                    .align_x(Alignment::Center)
+                    .padding([1, 0])
                     .style(move |t| {
                         if is_udp {
                             theme::badge_colored(theme::INFO, t)
@@ -796,9 +800,12 @@ pub fn render<'a>(
                         .padding(ROW_PAD)
                         .into()
                     } else {
-                        // The protocol badge (about 40px) and its gap share the cell.
-                        let rule_short =
-                            fit_width(&conn.rule, (room(5.0) - 46.0).max(20.0), theme::TYPE_BTN_SM);
+                        // The fixed-width protocol badge and its gap share the cell.
+                        let rule_short = fit_width(
+                            &conn.rule,
+                            (room(5.0) - NET_BADGE_W - 6.0).max(20.0),
+                            theme::TYPE_BTN_SM,
+                        );
                         let rule_trunc = rule_short != conn.rule;
                         let rule_el = tip_wrap(
                             text(rule_short)
@@ -1003,6 +1010,9 @@ const ROW_PAD: iced::Padding = iced::Padding {
 
 /// Close-button column: a 28px glyph button plus breathing room.
 const CLOSE_COL_W: f32 = 32.0;
+/// TCP and UDP render at slightly different widths; a fixed, centered badge
+/// keeps the rule text that follows it on one vertical edge.
+const NET_BADGE_W: f32 = 36.0;
 
 /// Right-hand lane the table's floating scrollbar occupies (6px bar plus
 /// 3px margins), kept clear of row content.

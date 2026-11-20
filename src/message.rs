@@ -1,5 +1,5 @@
 use crate::state::{
-    AppTheme, GuiConfig, Language, LogFilter, RoutingMode, RuleField, RuleTarget, Tab,
+    AppTheme, GuiConfig, IpStack, Language, LogFilter, RoutingMode, RuleField, RuleTarget, Tab,
 };
 
 /// Latest GitHub release info for in-app updates.
@@ -201,6 +201,7 @@ pub enum Message {
     EditProfile(String),
     ToggleCloseCoreOnExit,
     ToggleFakeIp,
+    SetIpStack(IpStack),
     ToggleTcpFastOpen,
     ToggleTcpMultipath,
     ToggleAutoStartCore,

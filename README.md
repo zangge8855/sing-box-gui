@@ -2,7 +2,7 @@
 # sing-box GUI
 
 [![Build](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml/badge.svg)](https://github.com/zangge8855/sing-box-gui/actions/workflows/build.yml)
-![Version](https://img.shields.io/badge/version-2026.11.19--1-2E7D6B.svg)
+![Version](https://img.shields.io/badge/version-2026.11.20-2E7D6B.svg)
 
 
 <p align="center">
@@ -20,6 +20,7 @@ A native-style, cross-platform desktop client for [sing-box](https://github.com/
 - Proxy selector groups, node search/sort, active-node state, bounded rendering, and parallel latency tests.
 - Subscription import/update, raw sharing links, Base64 link bundles, Clash YAML conversion, and native sing-box JSON passthrough.
 - Rule, Global, and Direct modes; DNS, TUN, remote rule sets, custom bypass/proxy domains, and Clash API integration.
+- IPv6: dual-stack by default (IPv4 or IPv6 preferred) with an IPv6 TUN address, so IPv6 sites and Fake-IP `fc00::/18` answers are routed instead of dropped; an IPv4-only mode for networks where IPv6 is broken; IPv6 node addresses in every sharing-link scheme; and Mihomo `ip-version` per node.
 - Bounded log/traffic channels and throttled UI updates to prevent long-running sessions from accumulating unbounded work.
 - Draft-based settings, atomic writes, SHA-256 verified official downloads, rollback installation, and recoverable startup/update errors.
 - Windows Registry integration, macOS LaunchAgent integration, and Linux XDG autostart/system-proxy support.
@@ -116,6 +117,7 @@ sing-box GUI 是使用 Rust 与 Iced 编写的跨平台桌面客户端，强调�
 - 支持策略组、节点搜索与排序、当前节点状态、并发测速；大订阅采用有界渲染，避免界面卡顿。
 - 支持订阅更新、分享链接、Base64 链接集合、Clash YAML 转换及原生 sing-box JSON 直通。
 - 支持 Rule / Global / Direct、DNS、TUN、远程规则集、自定义直连/代理域名和 Clash API。
+- 支持 IPv6：默认双栈（可选 IPv4 优先或 IPv6 优先），TUN 同时分配 IPv6 地址，IPv6 网站与 Fake-IP `fc00::/18` 地址都会被正确接管而不是被丢弃；网络 IPv6 不通时可切换为仅 IPv4；所有分享链接格式均支持 IPv6 节点地址，并识别 Mihomo 节点级 `ip-version`。
 - 日志与流量采用有界通道，界面更新限频，长时间运行不会无限堆积消息或渲染任务。
 - 设置采用草稿后统一应用；配置与订阅原子写入；官方内核与应用更新会校验 SHA-256、平台格式并支持失败回滚。
 - 支持 Windows 注册表、macOS LaunchAgent、Linux XDG 自启动和各平台系统代理集成。

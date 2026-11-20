@@ -1001,11 +1001,7 @@ fn render_proxy_card<'a>(
     let mut meta_row = row![type_tag]
         .spacing(crate::ui::SP_8)
         .align_y(Alignment::Center);
-    let server_label = match (server, port) {
-        (Some(s), Some(p)) if !s.is_empty() && p > 0 => Some(format!("{s}:{p}")),
-        (Some(s), _) if !s.is_empty() => Some(s.to_string()),
-        _ => None,
-    };
+    let server_label = server_endpoint_label(server, port);
     let mut server_truncated = false;
     if let Some(ref addr) = server_label {
         let server_px = card_w - pad * 2.0 - chip_w - latency_w - crate::ui::SP_8 * 2.0;
@@ -1337,13 +1333,47 @@ fn empty_nodes_spec(
     }
 }
 
+/// `host:port` for the node card. IPv6 literals are bracketed so the port is
+/// not mistaken for the last address group (`[2001:db8::1]:443`).
+fn server_endpoint_label(server: Option<&str>, port: Option<u16>) -> Option<String> {
+    let host = server.map(str::trim).filter(|s| !s.is_empty())?;
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    Some(match port.filter(|&p| p > 0) {
+        Some(p) if host.parse::<std::net::Ipv6Addr>().is_ok() => format!("[{host}]:{p}"),
+        Some(p) => format!("{host}:{p}"),
+        None => host.to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         EmptyAction, card_columns, card_width, clean_node_display_name, compare_nodes,
-        empty_nodes_spec, render_proxy_card,
+        empty_nodes_spec, render_proxy_card, server_endpoint_label,
     };
     use crate::state::ProxySort;
+
+    #[test]
+    fn server_endpoint_label_brackets_ipv6_literals() {
+        assert_eq!(
+            server_endpoint_label(Some("2001:db8::1"), Some(443)).as_deref(),
+            Some("[2001:db8::1]:443")
+        );
+        assert_eq!(
+            server_endpoint_label(Some("[2001:db8::1]"), Some(443)).as_deref(),
+            Some("[2001:db8::1]:443")
+        );
+        assert_eq!(
+            server_endpoint_label(Some("1.2.3.4"), Some(8388)).as_deref(),
+            Some("1.2.3.4:8388")
+        );
+        assert_eq!(
+            server_endpoint_label(Some("hk.example.com"), Some(0)).as_deref(),
+            Some("hk.example.com")
+        );
+        assert_eq!(server_endpoint_label(Some("  "), Some(443)), None);
+        assert_eq!(server_endpoint_label(None, Some(443)), None);
+    }
 
     #[test]
     fn proxy_sorting_orders_latencies_untested_timeouts_and_names() {

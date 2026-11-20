@@ -1,4 +1,4 @@
-use crate::state::{GuiConfig, ProxyNode};
+use crate::state::{GuiConfig, IpStack, ProxyNode};
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::fs;
@@ -4529,6 +4529,10 @@ pub fn convert_clash_to_singbox(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
+        let ip_version_strategy = yaml_scalar_string_any(map, &["ip-version", "ip_version"])
+            .and_then(|v| clash_ip_version_strategy(&v))
+            .filter(|_| server.parse::<std::net::IpAddr>().is_err());
+
         let (is_endpoint, mut obj) = if let Some(ep) = wireguard_endpoint {
             (true, ep)
         } else {
@@ -4540,6 +4544,12 @@ pub fn convert_clash_to_singbox(
             }
             (false, outbound)
         };
+        if let Some(strategy) = ip_version_strategy {
+            obj.insert(
+                "domain_resolver".to_string(),
+                json!({ "server": "dns_local", "strategy": strategy }),
+            );
+        }
         obj.insert("tag".to_string(), json!(tag));
 
         converted_proxies.push(ConvertedProxy {
@@ -4996,7 +5006,8 @@ pub fn convert_clash_to_singbox(
     let dns = json!({
         "servers": dns_servers,
         "rules": dns_rules,
-        "final": "dns_remote"
+        "final": "dns_remote",
+        "strategy": gui_config.ip_stack.dns_strategy()
     });
 
     // Build Inbounds
@@ -5008,7 +5019,7 @@ pub fn convert_clash_to_singbox(
     })];
 
     if gui_config.tun_mode {
-        inbounds.push(default_tun_inbound());
+        inbounds.push(default_tun_inbound(gui_config.ip_stack));
     }
 
     // Build Rules — custom explicit bypass/proxy rules and LAN (`ip_is_private`) stay
@@ -5219,7 +5230,7 @@ pub fn convert_clash_to_singbox(
             }
         ],
         "auto_detect_interface": true,
-        "default_domain_resolver": "dns_local",
+        "default_domain_resolver": default_domain_resolver(gui_config.ip_stack),
         "final": clash_match_final.unwrap_or_else(|| "Proxy".to_string())
     });
 
@@ -6001,10 +6012,42 @@ pub fn mitigate_run_config(config: &mut serde_json::Value) {
     }
 }
 
-fn default_tun_inbound() -> serde_json::Value {
+/// IPv6 ULA prefix for the generated TUN interface (from sing-box's dual-stack
+/// examples). Without an IPv6 address `auto_route` installs no IPv6 routes and
+/// `strict_route` leaves IPv6 destinations — including Fake-IP `fc00::/18`
+/// answers — unreachable.
+const TUN_INET6_ADDRESS: &str = "fdfe:dcba:9876::1/126";
+
+/// Resolver for outbound server domains. In IPv4-only mode clients never see
+/// `AAAA` answers, but a node that only publishes an IPv6 address must still be
+/// dialable, so node lookups keep a dual-stack fallback.
+fn default_domain_resolver(ip_stack: IpStack) -> serde_json::Value {
+    match ip_stack {
+        IpStack::Ipv4Only => json!({ "server": "dns_local", "strategy": "prefer_ipv4" }),
+        _ => json!("dns_local"),
+    }
+}
+
+/// Maps a Mihomo per-proxy `ip-version` to a sing-box domain strategy.
+/// `dual` (the Mihomo default) keeps the global setting.
+fn clash_ip_version_strategy(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+        "ipv4" => Some("ipv4_only"),
+        "ipv6" => Some("ipv6_only"),
+        "ipv4-prefer" | "prefer-ipv4" => Some("prefer_ipv4"),
+        "ipv6-prefer" | "prefer-ipv6" => Some("prefer_ipv6"),
+        _ => None,
+    }
+}
+
+fn default_tun_inbound(ip_stack: IpStack) -> serde_json::Value {
+    let mut address = vec![json!("172.19.0.1/30")];
+    if ip_stack.ipv6_enabled() {
+        address.push(json!(TUN_INET6_ADDRESS));
+    }
     #[allow(unused_mut)]
     let mut inbound = json!({
-        "type": "tun", "tag": "tun-in", "address": ["172.19.0.1/30"],
+        "type": "tun", "tag": "tun-in", "address": address,
         "auto_route": true, "strict_route": true, "stack": "system"
     });
     #[cfg(not(target_os = "macos"))]
@@ -6036,6 +6079,7 @@ pub fn native_json_ignored_settings(raw: &str, config: &GuiConfig) -> Vec<&'stat
         ignored.push("ignored_custom_rules");
     }
     if config.fake_ip
+        || config.ip_stack != defaults.ip_stack
         || config.dns_server_remote != defaults.dns_server_remote
         || config.dns_server_local != defaults.dns_server_local
     {
@@ -6089,11 +6133,12 @@ pub fn merge_native_json_profile(
             {
                 if t == "mixed" && !mixed_found {
                     // System proxy / local clients connect via 127.0.0.1; ensure
-                    // the mixed inbound listens on an IPv4 loopback-reachable address.
+                    // the mixed inbound listens on an IPv4 loopback-reachable
+                    // address. `::` is a dual-stack wildcard socket and qualifies.
                     let listen_ok = obj
                         .get("listen")
                         .and_then(|v| v.as_str())
-                        .is_some_and(|addr| addr == "127.0.0.1" || addr == "0.0.0.0");
+                        .is_some_and(|addr| matches!(addr, "127.0.0.1" | "0.0.0.0" | "::"));
                     if !listen_ok {
                         obj.insert("listen".to_string(), json!("127.0.0.1"));
                     }
@@ -6121,7 +6166,7 @@ pub fn merge_native_json_profile(
             }));
         }
         if gui_config.tun_mode && !tun_found {
-            arr.push(default_tun_inbound());
+            arr.push(default_tun_inbound(gui_config.ip_stack));
         } else if !gui_config.tun_mode && tun_found {
             arr.retain(|val| val.get("type").and_then(|t| t.as_str()) != Some("tun"));
         }
@@ -6133,7 +6178,7 @@ pub fn merge_native_json_profile(
             "listen_port": gui_config.mixed_port
         })];
         if gui_config.tun_mode {
-            arr.push(default_tun_inbound());
+            arr.push(default_tun_inbound(gui_config.ip_stack));
         }
         config_obj.insert("inbounds".to_string(), serde_json::Value::Array(arr));
     }
@@ -7945,8 +7990,20 @@ proxies:
         let lan_native = raw_native.replace("::1", "0.0.0.0");
         let merged_lan = merge_native_json_profile(&lan_native, &GuiConfig::default()).unwrap();
         assert_eq!(merged_lan["inbounds"][0]["listen"], "0.0.0.0");
+        // `::` is a dual-stack wildcard socket, so IPv4 loopback reaches it too.
+        let dual_native = raw_native.replace("::1", "::");
+        let merged_dual = merge_native_json_profile(&dual_native, &GuiConfig::default()).unwrap();
+        assert_eq!(merged_dual["inbounds"][0]["listen"], "::");
 
         assert!(native_json_ignored_settings(raw_native, &GuiConfig::default()).is_empty());
+        let ipv4_only = GuiConfig {
+            ip_stack: IpStack::Ipv4Only,
+            ..GuiConfig::default()
+        };
+        assert_eq!(
+            native_json_ignored_settings(raw_native, &ipv4_only),
+            vec!["ignored_dns_fake_ip"]
+        );
 
         let customized = GuiConfig {
             fake_ip: true,
@@ -8242,6 +8299,131 @@ proxies:
             parse_share_link("vless://00000000-0000-0000-0000-000000000000@:443#Bad").is_none()
         );
         assert!(parse_share_link("ss://not-valid-base64").is_none());
+    }
+
+    #[test]
+    fn ip_stack_controls_tun_address_dns_strategy_and_node_resolution() {
+        let yaml = r#"
+proxies:
+  - { name: N, type: ss, server: n.example.com, port: 8388, cipher: aes-128-gcm, password: pw }
+"#;
+        let tun_of = |config: &serde_json::Value| {
+            config["inbounds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["type"] == "tun")
+                .cloned()
+                .unwrap()
+        };
+
+        // Default: dual stack, IPv4 preferred. TUN must carry an IPv6 address or
+        // strict_route leaves IPv6 (and Fake-IP fc00::/18) unreachable.
+        let dual = GuiConfig {
+            tun_mode: true,
+            ..GuiConfig::default()
+        };
+        let config = convert_clash_to_singbox(yaml, &dual).unwrap();
+        assert_eq!(config["dns"]["strategy"], "prefer_ipv4");
+        assert_eq!(
+            tun_of(&config)["address"],
+            json!(["172.19.0.1/30", "fdfe:dcba:9876::1/126"])
+        );
+        assert_eq!(config["route"]["default_domain_resolver"], "dns_local");
+        let native =
+            merge_native_json_profile(r#"{"outbounds":[{"type":"direct","tag":"direct"}]}"#, &dual)
+                .unwrap();
+        assert_eq!(tun_of(&native)["address"][1], TUN_INET6_ADDRESS);
+
+        let v6 = GuiConfig {
+            ip_stack: IpStack::PreferIpv6,
+            ..dual.clone()
+        };
+        let config = convert_clash_to_singbox(yaml, &v6).unwrap();
+        assert_eq!(config["dns"]["strategy"], "prefer_ipv6");
+        assert_eq!(tun_of(&config)["address"].as_array().unwrap().len(), 2);
+
+        // IPv4 only: clients get no AAAA and TUN stays IPv4, but node domains
+        // keep a dual-stack fallback so IPv6-only servers still dial.
+        let v4 = GuiConfig {
+            ip_stack: IpStack::Ipv4Only,
+            ..dual.clone()
+        };
+        let config = convert_clash_to_singbox(yaml, &v4).unwrap();
+        assert_eq!(config["dns"]["strategy"], "ipv4_only");
+        assert_eq!(tun_of(&config)["address"], json!(["172.19.0.1/30"]));
+        assert_eq!(
+            config["route"]["default_domain_resolver"],
+            json!({ "server": "dns_local", "strategy": "prefer_ipv4" })
+        );
+    }
+
+    #[test]
+    fn clash_ip_version_maps_to_outbound_domain_resolver() {
+        let yaml = r#"
+proxies:
+  - { name: V4, type: ss, server: a.example.com, port: 1, cipher: aes-128-gcm, password: pw, ip-version: ipv4 }
+  - { name: V6, type: trojan, server: b.example.com, port: 443, password: pw, ip-version: ipv6 }
+  - { name: P6, type: vless, server: c.example.com, port: 443, uuid: 00000000-0000-0000-0000-000000000000, ip-version: ipv6-prefer }
+  - { name: P4, type: vmess, server: d.example.com, port: 443, uuid: 00000000-0000-0000-0000-000000000000, alterId: 0, cipher: auto, ip-version: IPv4-Prefer }
+  - { name: Dual, type: ss, server: e.example.com, port: 1, cipher: aes-128-gcm, password: pw, ip-version: dual }
+  - { name: Literal, type: ss, server: "2001:db8::5", port: 1, cipher: aes-128-gcm, password: pw, ip-version: ipv6 }
+"#;
+        let config = convert_clash_to_singbox(yaml, &GuiConfig::default()).unwrap();
+        let ob = |tag: &str| {
+            config["outbounds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|o| o["tag"] == tag)
+                .unwrap_or_else(|| panic!("missing {tag}"))
+                .clone()
+        };
+        let strategy = |tag: &str| ob(tag)["domain_resolver"]["strategy"].clone();
+        assert_eq!(strategy("V4"), "ipv4_only");
+        assert_eq!(strategy("V6"), "ipv6_only");
+        assert_eq!(strategy("P6"), "prefer_ipv6");
+        assert_eq!(strategy("P4"), "prefer_ipv4");
+        assert_eq!(ob("V4")["domain_resolver"]["server"], "dns_local");
+        // `dual` keeps the global default; IP literals need no resolver.
+        assert!(ob("Dual").get("domain_resolver").is_none());
+        assert!(ob("Literal").get("domain_resolver").is_none());
+        assert_eq!(ob("Literal")["server"], "2001:db8::5");
+    }
+
+    #[test]
+    fn every_share_link_scheme_accepts_bracketed_ipv6_hosts() {
+        let links = [
+            ("trojan://pw@[2001:db8::11]:443?sni=t.example#T6", 443),
+            ("hysteria://[2001:db8::11]:8443?auth=a#H16", 8443),
+            ("hy2://pw@[2001:db8::11]:8443?sni=h.example#H26", 8443),
+            ("hysteria2://pw@[2001:db8::11]#H26b", 443),
+            (
+                "tuic://00000000-0000-0000-0000-000000000000:pw@[2001:db8::11]:443#TU6",
+                443,
+            ),
+            ("anytls://pw@[2001:db8::11]:443#AT6", 443),
+            ("naive+https://u:p@[2001:db8::11]:443#NV6", 443),
+            ("ssh://root:pw@[2001:db8::11]:22#SSH6", 22),
+            ("socks5://u:p@[2001:db8::11]:1080#SK6", 1080),
+            ("http://u:p@[2001:db8::11]:8080#HT6", 8080),
+            ("ss://YWVzLTEyOC1nY206cHc@[2001:db8::11]:8388#SS6", 8388),
+            (
+                "wg://cHJpdg@[2001:db8::11]:51820?publickey=cHVi&address=10.0.0.2/32#WG6b",
+                51820,
+            ),
+        ];
+        for (link, port) in links {
+            let map = parse_share_link(link).unwrap_or_else(|| panic!("rejected {link}"));
+            let server = map
+                .get(serde_yaml::Value::String("server".into()))
+                .and_then(|v| v.as_str());
+            assert_eq!(server, Some("2001:db8::11"), "{link}");
+            let parsed_port = map
+                .get(serde_yaml::Value::String("port".into()))
+                .and_then(|v| v.as_u64());
+            assert_eq!(parsed_port, Some(port), "{link}");
+        }
     }
 
     #[test]
