@@ -1101,7 +1101,7 @@ fn profile_strip<'a>(
     // a row with the Update button only.
     let ident_w = (content_w * 0.27).clamp(200.0, 300.0);
     let name_room = if is_compact {
-        content_w - theme::CARD_PAD_DENSE * 2.0 - 120.0
+        content_w - theme::CARD_PAD * 2.0 - 120.0
     } else {
         ident_w
     } - 16.0
@@ -1217,13 +1217,13 @@ fn profile_strip<'a>(
         }
     }
     let usage_w = if is_compact {
-        content_w - theme::CARD_PAD_DENSE * 2.0
+        content_w - theme::CARD_PAD * 2.0
     } else {
         content_w
             - ident_w
             - if profile.is_subscription { 104.0 } else { 0.0 }
             - crate::ui::SP_20 * 2.0
-            - theme::CARD_PAD_DENSE * 2.0
+            - theme::CARD_PAD * 2.0
     };
     let wrap_labels = !is_compact && expiry.is_some() && usage_w < 360.0;
     let labels: Element<'a, Message> = if wrap_labels {
@@ -1295,10 +1295,14 @@ fn profile_strip<'a>(
         line.into()
     };
 
+    // Dense vertically, but the same side insets as the cards above so the
+    // label and the Update button share their content edges.
     container(body)
         .padding(iced::Padding {
-            left: theme::CARD_PAD_DENSE - GHOST_INSET,
-            ..iced::Padding::new(theme::CARD_PAD_DENSE)
+            top: theme::CARD_PAD_DENSE,
+            right: theme::CARD_PAD,
+            bottom: theme::CARD_PAD_DENSE,
+            left: theme::CARD_PAD - GHOST_INSET,
         })
         .width(Length::Fill)
         .style(theme::card_bg)
@@ -1345,7 +1349,9 @@ fn traffic_waveform<'a>(
     let text_muted = theme::text_muted(theme);
     let text_tertiary = theme::text_tertiary(theme);
 
-    // Reserved Y-axis rail width so peak labels fit beside scale ticks on one line.
+    // Reserved Y-axis rail for the peak labels. They start on the card's left
+    // margin, in line with the rate figures above, rather than floating
+    // right-aligned in the middle of the rail.
     const Y_AXIS_W: f32 = 80.0;
     let plot_width = (chart_width - Y_AXIS_W - crate::ui::SP_8).max(80.0);
     let n = history.len().max(1);
@@ -1519,7 +1525,7 @@ fn traffic_waveform<'a>(
         )
         .height(LABEL_H)
         .width(Length::Fill)
-        .align_x(Alignment::End)
+        .align_x(Alignment::Start)
         .align_y(Alignment::Center)
     };
     let peak_label = |arrow: &str, peak: u64| {

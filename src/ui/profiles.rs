@@ -2,7 +2,8 @@ use crate::message::Message;
 use crate::state::GuiConfig;
 use crate::ui::theme;
 use crate::ui::util::{
-    SEMIBOLD_WIDTH, fit_mono, fit_width, format_size, labelled_size, traffic_usage_ratio,
+    SEMIBOLD_WIDTH, fit_mono, fit_width, format_size, labelled_size, text_width,
+    traffic_usage_ratio,
 };
 use crate::ui::{PAGE_COMPACT_W, page_header};
 use iced::widget::{
@@ -40,8 +41,6 @@ pub fn render<'a>(
         // Room for a card's name and URL: the card's inner width, less the
         // action buttons that share the row on wide layouts.
         let card_inner = (crate::ui::page_content_width(size.width, is_compact)
-            - crate::ui::SCROLL_GUTTER
-            - 4.0
             - theme::CARD_PAD * 2.0)
             .max(60.0);
         let text_primary = theme::text_primary(theme);
@@ -168,6 +167,21 @@ pub fn render<'a>(
         } else {
             let mut card_elements: Vec<Element<'a, Message>> = Vec::new();
 
+            // Each action owns a fixed-width slot so Use / Update / More sit
+            // in the same columns on every card, whichever buttons a card has.
+            let btn_pad_x = f32::from(theme::BTN_PAD_SM[1]) * 2.0;
+            let label_w = |keys: &[&'static str]| {
+                keys.iter()
+                    .map(|k| text_width(tr(lang, k), theme::TYPE_BTN_SM) * SEMIBOLD_WIDTH)
+                    .fold(0.0_f32, f32::max)
+                    .ceil()
+            };
+            let use_slot_w = label_w(&["btn_select"]) + btn_pad_x + 4.0;
+            let update_slot_w = label_w(&["btn_update", "btn_updating"]) + btn_pad_x + 4.0;
+            let more_slot_w =
+                label_w(&["btn_more", "btn_less"]) + crate::ui::ICON_SIZE + 2.0 + btn_pad_x + 4.0;
+            let actions_w = use_slot_w + update_slot_w + more_slot_w + crate::ui::SP_8 * 2.0;
+
             for profile in &gui_config.subscriptions {
                 let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
 
@@ -184,8 +198,11 @@ pub fn render<'a>(
                                 "btn_update"
                             },
                         ))
-                        .size(theme::TYPE_BTN_SM),
+                        .size(theme::TYPE_BTN_SM)
+                        .width(Length::Fill)
+                        .align_x(Alignment::Center),
                     )
+                    .width(Length::Fixed(update_slot_w))
                     .padding(theme::BTN_PAD_SM)
                     .style(theme::button_secondary);
                     if !downloading {
@@ -212,24 +229,38 @@ pub fn render<'a>(
                     .spacing(2)
                     .align_y(Alignment::Center),
                 )
+                .width(Length::Fixed(more_slot_w))
                 .padding(theme::BTN_PAD_SM)
-                .style(theme::button_ghost)
+                .style(theme::button_secondary)
                 .on_press(Message::ToggleProfileMore(profile.id.clone()));
 
                 // At most one primary per card: switching profiles is the real
                 // decision, refreshing is routine, and edit/delete are rare
                 // enough to live behind More.
+                // Wide cards keep empty slots so the columns line up; compact
+                // cards pack their buttons from the left edge instead.
+                let slot = |w: f32| Space::new().width(Length::Fixed(w));
                 let mut actions_row = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
                 if !is_active {
                     actions_row = actions_row.push(
-                        button(text(tr(lang, "btn_select")).size(theme::TYPE_BTN_SM))
-                            .padding(theme::BTN_PAD_SM)
-                            .style(theme::button_primary)
-                            .on_press(Message::SelectProfile(profile.id.clone())),
+                        button(
+                            text(tr(lang, "btn_select"))
+                                .size(theme::TYPE_BTN_SM)
+                                .width(Length::Fill)
+                                .align_x(Alignment::Center),
+                        )
+                        .width(Length::Fixed(use_slot_w))
+                        .padding(theme::BTN_PAD_SM)
+                        .style(theme::button_primary)
+                        .on_press(Message::SelectProfile(profile.id.clone())),
                     );
+                } else if !is_compact {
+                    actions_row = actions_row.push(slot(use_slot_w));
                 }
                 if let Some(b) = update_btn {
                     actions_row = actions_row.push(b);
+                } else if !is_compact {
+                    actions_row = actions_row.push(slot(update_slot_w));
                 }
                 actions_row = actions_row.push(more_btn);
 
@@ -294,7 +325,8 @@ pub fn render<'a>(
                 let info_w = if is_compact {
                     card_inner
                 } else {
-                    (card_inner - if is_active { 200.0 } else { 260.0 }).max(60.0)
+                    // Every wide card reserves the same three action slots.
+                    (card_inner - actions_w - crate::ui::SP_12).max(60.0)
                 };
                 let display_url = fit_mono(&masked_url, info_w, theme::TYPE_CAPTION);
                 let url_truncated = display_url != masked_url;
@@ -614,17 +646,11 @@ pub fn render<'a>(
             false,
         );
 
-        // Scroll the import form with the records, leaving a slight right margin
-        // so selected card borders never graze the scrollbar lane.
+        // Scroll the import form with the records. The shell keeps the
+        // scrollbar in its own lane, so cards end flush with the header action.
         crate::ui::page_shell_with_pad(
             header,
-            container(main_layout_col)
-                .padding(iced::Padding {
-                    right: 4.0,
-                    ..Default::default()
-                })
-                .width(Length::Fill)
-                .into(),
+            container(main_layout_col).width(Length::Fill).into(),
             is_compact,
         )
     });

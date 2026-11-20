@@ -16,8 +16,9 @@ pub fn get_logs_scrollable_id() -> &'static iced::widget::Id {
     ID.get_or_init(iced::widget::Id::unique)
 }
 
-/// Below this page width the toolbar stacks under the title.
-const LOGS_TOOLBAR_INLINE_W: f32 = 870.0;
+/// Below this page width the toolbar stacks under the title: one row only
+/// once the search field can be a usable width beside the filters and actions.
+const LOGS_TOOLBAR_INLINE_W: f32 = 1000.0;
 /// Below this the second toolbar row wraps instead of pushing the actions right.
 const LOGS_TOOLBAR_SPREAD_W: f32 = 640.0;
 
@@ -155,7 +156,7 @@ pub fn render<'a>(
             .width(if stacked {
                 Length::Fill
             } else {
-                Length::Fixed(136.0)
+                Length::Fixed(200.0)
             })
             .size(theme::TYPE_BODY)
             .style(theme::input_field);

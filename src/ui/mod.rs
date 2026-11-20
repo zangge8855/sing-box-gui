@@ -367,6 +367,39 @@ pub fn page_body_fixed_with_pad<'a>(
         .into()
 }
 
+/// Fixed shell for pages that scroll an inner pane (the Proxies grid). Like
+/// `page_shell_with_pad`, the pane's scrollbar lane lives in the page's right
+/// inset, so its cards end on the same edge as every other tab's cards.
+/// Rows that do not scroll go through [`lane_aligned`].
+pub fn page_body_lane_with_pad<'a>(
+    body: Element<'a, Message>,
+    is_compact: bool,
+) -> Element<'a, Message> {
+    let pad = page_pad(is_compact);
+    container(body)
+        .width(Length::Fill)
+        .max_width(PAGE_MAX_WIDTH)
+        .center_x(Length::Fill)
+        .height(Length::Fill)
+        .padding(iced::Padding {
+            right: pad.right - SCROLL_GUTTER,
+            ..pad
+        })
+        .into()
+}
+
+/// Insets a non-scrolling row by the scrollbar lane, aligning it with the
+/// cards of a pane laid out by [`page_body_lane_with_pad`].
+pub fn lane_aligned<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .width(Length::Fill)
+        .padding(iced::Padding {
+            right: SCROLL_GUTTER,
+            ..Default::default()
+        })
+        .into()
+}
+
 /// Shared empty-state block: title + description + optional primary CTA.
 #[allow(dead_code)]
 pub fn empty_state<'a>(

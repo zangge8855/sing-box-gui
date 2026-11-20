@@ -12,10 +12,9 @@ use iced::widget::{
 use iced::{Alignment, Element, Length};
 
 /// Inline pickers and text fields share one width so their edges line up
-/// down a card; ports and timeouts take the narrow one. Sized at 168px so
+/// down a card, ports and timeouts included. Sized at 168px so
 /// longer labels ("Subscription Auto-Update") stay single-line in 2-col 1080px.
 const CONTROL_W: f32 = 168.0;
-const NARROW_CONTROL_W: f32 = 110.0;
 
 fn field<'a>(
     placeholder: &'a str,
@@ -541,7 +540,7 @@ pub fn render<'a>(
                         Message::MixedPortChanged,
                         mixed_port_error.is_some(),
                     )
-                    .width(Length::Fixed(NARROW_CONTROL_W))
+                    .width(Length::Fixed(CONTROL_W))
                     .into(),
                 ),
                 inline(
@@ -554,7 +553,7 @@ pub fn render<'a>(
                         Message::ApiPortChanged,
                         api_port_error.is_some(),
                     )
-                    .width(Length::Fixed(NARROW_CONTROL_W))
+                    .width(Length::Fixed(CONTROL_W))
                     .into(),
                 ),
             ],
@@ -670,7 +669,7 @@ pub fn render<'a>(
                         Message::LatencyTestTimeoutChanged,
                         latency_timeout_error.is_some(),
                     )
-                    .width(Length::Fixed(NARROW_CONTROL_W))
+                    .width(Length::Fixed(CONTROL_W))
                     .into(),
                 ),
             ],

@@ -208,6 +208,15 @@ fn rule_card<'a>(
         add_btn = add_btn.on_press(Message::AddRule { target });
     }
 
+    // One pill width for both kinds, so the item text and the delete glyphs
+    // form straight columns no matter which tags a list mixes.
+    let tag_w = ["rule_tag_ip", "rule_tag_domain"]
+        .iter()
+        .map(|k| crate::ui::util::text_width(tr(lang, k), theme::TYPE_MICRO))
+        .fold(0.0_f32, f32::max)
+        .ceil()
+        + 14.0;
+
     let mut list = Column::new().spacing(0).width(Length::Fill);
     let mut rendered_rows = 0usize;
     for (field, items) in lists {
@@ -239,7 +248,7 @@ fn rule_card<'a>(
             .style(theme::button_dismiss)
             .padding(3)
             .on_press(Message::RemoveRule { field, index });
-            let room = item_px - crate::ui::util::text_width(tag, theme::TYPE_MICRO) - 16.0;
+            let room = item_px - tag_w - 4.0;
             let short_item = crate::ui::util::fit_mono(item, room.max(60.0), theme::TYPE_BTN_SM);
             let is_truncated = short_item != *item;
             let item_text = container(
@@ -277,9 +286,12 @@ fn rule_card<'a>(
                         theme::badge_text(theme::INFO, theme)
                     } else {
                         text_muted
-                    }),
+                    })
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
             )
-            .padding([1, 6])
+            .width(Length::Fixed(tag_w))
+            .padding([1, 0])
             .style(move |t| {
                 if is_ip {
                     theme::badge_colored(theme::INFO, t)

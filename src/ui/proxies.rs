@@ -469,8 +469,9 @@ pub fn render<'a>(
                 .height(Length::Fill)
             };
 
+            // The grid's scrollbar lane sits in the page inset, so cards get
+            // the full content width.
             let grid_width = (crate::ui::page_content_width(size.width, pad_compact)
-                - SCROLL_GUTTER
                 - if is_compact { 0.0 } else { 221.0 })
             .max(PROXY_CARD_MIN_W);
             let cols = card_columns(grid_width);
@@ -584,14 +585,19 @@ pub fn render<'a>(
                 theme,
                 lang,
             );
-            let heading = column![header, summary].spacing(crate::ui::SP_8);
+            let heading =
+                crate::ui::lane_aligned(column![header, summary].spacing(crate::ui::SP_8));
 
             let body: Element<'a, Message> = if is_compact {
-                column![heading, group_selector, right_pane_content]
-                    .spacing(crate::ui::SP_20)
-                    .height(Length::Fill)
-                    .width(Length::Fill)
-                    .into()
+                column![
+                    heading,
+                    crate::ui::lane_aligned(group_selector),
+                    right_pane_content
+                ]
+                .spacing(crate::ui::SP_20)
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .into()
             } else {
                 let divider = container(iced::widget::Space::new())
                     .width(1)
@@ -620,7 +626,7 @@ pub fn render<'a>(
                     .into()
             };
 
-            crate::ui::page_body_fixed_with_pad(body, pad_compact)
+            crate::ui::page_body_lane_with_pad(body, pad_compact)
         });
 
         main_content.into()
@@ -738,9 +744,8 @@ pub fn render<'a>(
                 &filtered_nodes[..]
             };
 
-            let grid_width = (crate::ui::page_content_width(size.width, pad_compact)
-                - SCROLL_GUTTER)
-                .max(PROXY_CARD_MIN_W);
+            let grid_width =
+                crate::ui::page_content_width(size.width, pad_compact).max(PROXY_CARD_MIN_W);
             let cols = card_columns(grid_width);
             let card_w = card_width(grid_width, cols);
             let mut card_elements: Vec<Element<'_, Message>> = Vec::new();
@@ -779,13 +784,14 @@ pub fn render<'a>(
             let summary =
                 render_proxy_summary(total_nodes, protocol_count, 0, core_running, theme, lang);
 
-            let heading = column![header, summary].spacing(crate::ui::SP_8);
+            let heading =
+                crate::ui::lane_aligned(column![header, summary].spacing(crate::ui::SP_8));
             let col = column![heading, grid_content]
                 .spacing(crate::ui::SP_20)
                 .width(Length::Fill)
                 .height(Length::Fill);
 
-            crate::ui::page_body_fixed_with_pad(col.into(), pad_compact)
+            crate::ui::page_body_lane_with_pad(col.into(), pad_compact)
         });
 
         content.into()
