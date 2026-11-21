@@ -914,6 +914,30 @@ fn clean_node_display_name(node_name: &str, fallback_code: Option<&str>) -> Stri
     }
 }
 
+/// Line boxes for the card's name and address. Each holds one line of its
+/// text size at Iced's default 1.3 line height.
+const NAME_LINE_H: f32 = 20.0;
+const SERVER_LINE_H: f32 = 18.0;
+
+/// One line of text that fills the rest of its row and is ellipsized to the
+/// width that row actually leaves it, rather than to an estimate of what its
+/// neighbours take. Clipped as a last guard against font metric drift.
+fn fitted_line<'a>(
+    height: f32,
+    view: impl Fn(f32) -> Element<'a, Message> + 'a,
+) -> Element<'a, Message> {
+    container(responsive(move |size| {
+        container(view(size.width))
+            .height(Length::Fill)
+            .align_y(Alignment::Center)
+            .into()
+    }))
+    .width(Length::Fill)
+    .height(Length::Fixed(height))
+    .clip(true)
+    .into()
+}
+
 /// Width of one grid card for `cols` columns spread across `grid_width`.
 fn card_width(grid_width: f32, cols: usize) -> f32 {
     let cols = cols.max(1) as f32;
@@ -1010,16 +1034,19 @@ fn render_proxy_card<'a>(
     let server_label = server_endpoint_label(server, port);
     let mut server_truncated = false;
     if let Some(ref addr) = server_label {
+        // The chip and latency widths are estimates, so this budget is only
+        // used to decide whether the hover card repeats the address.
         let server_px = card_w - pad * 2.0 - chip_w - latency_w - crate::ui::SP_8 * 2.0;
-        let short_addr = fit_width(addr, server_px.max(20.0), theme::TYPE_CAPTION);
-        server_truncated = short_addr != *addr;
-        meta_row = meta_row.push(
-            text(short_addr)
-                .color(theme::text_tertiary(theme))
+        server_truncated = fit_width(addr, server_px.max(20.0), theme::TYPE_CAPTION) != *addr;
+        let addr = addr.clone();
+        let color = theme::text_tertiary(theme);
+        meta_row = meta_row.push(fitted_line(SERVER_LINE_H, move |w| {
+            text(fit_width(&addr, w.max(20.0), theme::TYPE_CAPTION))
+                .color(color)
                 .size(theme::TYPE_CAPTION)
                 .wrapping(text::Wrapping::None)
-                .width(Length::Fill),
-        );
+                .into()
+        }));
     } else {
         meta_row = meta_row.push(Space::new().width(Length::Fill));
     }
@@ -1041,21 +1068,29 @@ fn render_proxy_card<'a>(
         theme::TYPE_SECTION * SEMIBOLD_WIDTH,
     );
     let name_truncated = display_name != clean_name;
-    let name_text = text(display_name)
+    let name_color = if is_selected {
+        theme::accent_text(theme)
+    } else {
+        text_primary
+    };
+    let name_font = theme::ui_font(if is_selected {
+        iced::font::Weight::Semibold
+    } else {
+        iced::font::Weight::Medium
+    });
+    let name_text = fitted_line(NAME_LINE_H, move |w| {
+        text(fit_width(
+            &clean_name,
+            w.max(48.0),
+            theme::TYPE_SECTION * SEMIBOLD_WIDTH,
+        ))
         .shaping(text::Shaping::Advanced)
         .wrapping(text::Wrapping::None)
-        .color(if is_selected {
-            theme::accent_text(theme)
-        } else {
-            text_primary
-        })
+        .color(name_color)
         .size(theme::TYPE_SECTION)
-        .font(theme::ui_font(if is_selected {
-            iced::font::Weight::Semibold
-        } else {
-            iced::font::Weight::Medium
-        }))
-        .width(Length::Fill);
+        .font(name_font)
+        .into()
+    });
 
     let mut title_row = row![].spacing(8).align_y(Alignment::Center);
     if let Some(code) = flag_opt {

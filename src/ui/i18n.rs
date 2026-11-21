@@ -534,10 +534,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "settings_proxy" => "Proxy",
             "settings_advanced" => "Advanced",
             "settings_core" => "Core",
-            "help_mixed_port" => "Local port shared by HTTP and SOCKS5.",
-            "help_api_port" => {
-                "Local controller used for node switching, latency tests and traffic stats."
-            }
+            "help_mixed_port" => "Shared HTTP and SOCKS5 port.",
+            "help_api_port" => "Used for node switching, latency tests and stats.",
             "help_dns_local" => "Resolves China and direct domains.",
             "help_dns_remote" => "Resolves everything else through the proxy.",
             "data_dir_label" => "Data folder",
@@ -906,8 +904,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "settings_proxy" => "代理",
             "settings_advanced" => "高级",
             "settings_core" => "内核",
-            "help_mixed_port" => "本机 HTTP 与 SOCKS5 共用的监听端口。",
-            "help_api_port" => "用于切换节点、测速与流量统计的本机接口。",
+            "help_mixed_port" => "HTTP 与 SOCKS5 共用端口。",
+            "help_api_port" => "供切换节点、测速与统计使用。",
             "help_dns_local" => "解析国内及直连域名。",
             "help_dns_remote" => "经代理解析其他域名。",
             "data_dir_label" => "数据目录",
