@@ -420,7 +420,7 @@ pub fn empty_state_with_icon<'a>(
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     container(empty_state_inner(icon, title, description, cta, theme))
-        .padding(theme::SP_40)
+        .padding([24, 28])
         .width(Length::Fill)
         .center_x(Length::Fill)
         .style(ui_theme::status_card)
@@ -436,7 +436,7 @@ pub fn empty_state_plain<'a>(
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     container(empty_state_inner(icon, title, description, cta, theme))
-        .padding(theme::SP_40)
+        .padding([16, 24])
         .width(Length::Fill)
         .center_x(Length::Fill)
         .into()
@@ -467,14 +467,15 @@ fn empty_state_inner<'a>(
             s.border.radius = 22.0.into();
             s
         });
-        col = col.push(badge).push(Space::new().height(4));
+        col = col.push(badge).push(Space::new().height(2));
     }
 
     col = col.push(
         text(title)
             .size(ui_theme::TYPE_HEADING)
             .color(ui_theme::text_primary(theme))
-            .font(ui_theme::ui_font(iced::font::Weight::Medium)),
+            .font(ui_theme::ui_font(iced::font::Weight::Medium))
+            .align_x(Alignment::Center),
     );
 
     if let Some(desc) = description {
@@ -486,10 +487,10 @@ fn empty_state_inner<'a>(
         );
     }
     if let Some(btn) = cta {
-        col = col.push(Space::new().height(SP_8)).push(btn);
+        col = col.push(Space::new().height(4)).push(btn);
     }
 
-    col.max_width(420).into()
+    col.max_width(440).into()
 }
 
 /// Animated dual-tone busy indicator; `phase` advances on UI ticks.
@@ -657,8 +658,14 @@ pub fn status_dot<'a, Message: Clone + 'a>(
         container(dot).padding(4)
     };
 
-    row![dot_wrapper, text(label).color(text_color).size(text_size)]
-        .spacing(theme::SP_8)
-        .align_y(Alignment::Center)
-        .into()
+    row![
+        dot_wrapper,
+        text(label)
+            .color(text_color)
+            .size(text_size)
+            .wrapping(text::Wrapping::None)
+    ]
+    .spacing(theme::SP_8)
+    .align_y(Alignment::Center)
+    .into()
 }

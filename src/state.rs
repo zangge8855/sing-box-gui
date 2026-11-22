@@ -230,6 +230,53 @@ impl RuleTarget {
     }
 }
 
+/// Locates the severity word sing-box prints near the start of a line
+/// (`+0800 2026-10-27 14:30:00 INFO [..] ...`) so rendering, badge counts,
+/// filtering, and clipboard export all agree on the same severity.
+pub fn log_level_token(line: &str) -> Option<(std::ops::Range<usize>, u8)> {
+    let mut offset = 0;
+    for word in line.split(' ').take(5) {
+        let severity = match word {
+            "ERROR" | "FATAL" | "PANIC" => Some(3),
+            "WARN" | "WARNING" => Some(2),
+            "INFO" => Some(1),
+            "DEBUG" | "TRACE" => Some(0),
+            _ => None,
+        };
+        if let Some(severity) = severity {
+            return Some((offset..offset + word.len(), severity));
+        }
+        offset += word.len() + 1;
+    }
+    None
+}
+
+/// Lines without a structured level tag (GUI notices, panics) fall back to keywords.
+pub fn log_keyword_severity(uppercase: &str) -> u8 {
+    if uppercase.contains("ERROR")
+        || uppercase.contains("FATAL")
+        || uppercase.contains("PANIC")
+        || uppercase.contains("FAILED")
+    {
+        3
+    } else if uppercase.contains("WARN") {
+        2
+    } else if uppercase.contains("INFO") {
+        1
+    } else {
+        0
+    }
+}
+
+/// Unified severity (`0=debug/trace, 1=info, 2=warn, 3=error/fatal/panic`)
+/// where an explicit structured level token beats keywords in the message body.
+pub fn log_line_severity(line: &str, uppercase: &str) -> u8 {
+    match log_level_token(line) {
+        Some((_, severity)) => severity,
+        None => log_keyword_severity(uppercase),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LogFilter {
     #[default]
@@ -242,30 +289,25 @@ pub enum LogFilter {
 impl LogFilter {
     #[allow(dead_code)]
     pub fn matches(self, line: &str) -> bool {
-        self.matches_upper(&line.to_uppercase())
+        self.matches_line(line, &line.to_uppercase())
     }
 
-    pub fn matches_upper(self, uppercase_line: &str) -> bool {
-        let u = uppercase_line;
+    pub fn matches_severity(self, severity: u8) -> bool {
         match self {
             LogFilter::All => true,
-            LogFilter::Error => u.contains("ERROR") || u.contains("FATAL") || u.contains("FAILED"),
-            LogFilter::Warn => {
-                u.contains("WARN")
-                    || u.contains("WARNING")
-                    || u.contains("ERROR")
-                    || u.contains("FATAL")
-                    || u.contains("FAILED")
-            }
-            LogFilter::Info => {
-                u.contains("INFO")
-                    || u.contains("WARN")
-                    || u.contains("WARNING")
-                    || u.contains("ERROR")
-                    || u.contains("FATAL")
-                    || u.contains("FAILED")
-            }
+            LogFilter::Info => severity >= 1,
+            LogFilter::Warn => severity >= 2,
+            LogFilter::Error => severity >= 3,
         }
+    }
+
+    pub fn matches_line(self, line: &str, uppercase_line: &str) -> bool {
+        self.matches_severity(log_line_severity(line, uppercase_line))
+    }
+
+    #[allow(dead_code)]
+    pub fn matches_upper(self, uppercase_line: &str) -> bool {
+        self.matches_severity(log_keyword_severity(uppercase_line))
     }
 }
 
@@ -804,6 +846,36 @@ mod tests {
         assert_eq!(RoutingMode::Rule.as_clash_mode(), "Rule");
         assert_eq!(RoutingMode::Global.as_clash_mode(), "Global");
         assert_eq!(RoutingMode::Direct.as_clash_mode(), "Direct");
+    }
+
+    #[test]
+    fn log_filter_respects_level_token_precedence_and_panics() {
+        let info_mentioning_error = "14:30:00 INFO retry after error on upstream";
+        assert_eq!(
+            log_line_severity(info_mentioning_error, &info_mentioning_error.to_uppercase()),
+            1
+        );
+        assert!(LogFilter::All.matches(info_mentioning_error));
+        assert!(LogFilter::Info.matches(info_mentioning_error));
+        assert!(!LogFilter::Warn.matches(info_mentioning_error));
+        assert!(!LogFilter::Error.matches(info_mentioning_error));
+
+        let panic_line = "14:30:01 PANIC worker thread crashed";
+        assert_eq!(log_line_severity(panic_line, &panic_line.to_uppercase()), 3);
+        assert!(LogFilter::Error.matches(panic_line));
+        assert!(LogFilter::Warn.matches(panic_line));
+
+        let gui_failed = "[GUI] Failed to bind port 2080";
+        assert!(LogFilter::Error.matches(gui_failed));
+
+        let debug_mentioning_warn = "14:30:02 DEBUG warn cache miss";
+        assert_eq!(
+            log_line_severity(debug_mentioning_warn, &debug_mentioning_warn.to_uppercase()),
+            0
+        );
+        assert!(!LogFilter::Info.matches(debug_mentioning_warn));
+        assert!(!LogFilter::Warn.matches(debug_mentioning_warn));
+        assert!(LogFilter::All.matches(debug_mentioning_warn));
     }
 
     #[test]

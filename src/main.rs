@@ -141,6 +141,8 @@ struct App {
 
     // Redundant updates prevention
     last_core_running: bool,
+    last_core_starting: bool,
+    last_core_stopping: bool,
     last_sys_proxy_enabled: bool,
     last_routing_mode: state::RoutingMode,
 
@@ -377,6 +379,8 @@ impl App {
             editing_profile_url: String::new(),
 
             last_core_running: false,
+            last_core_starting: false,
+            last_core_stopping: false,
             last_sys_proxy_enabled: false,
             last_routing_mode: initial_routing_mode,
             toasts: Vec::new(),
@@ -575,6 +579,8 @@ impl App {
         tray::TrayState {
             language: self.gui_config.language,
             core_running: self.core_running,
+            core_starting: self.core_starting,
+            core_stopping: self.core_stopping,
             system_proxy_enabled: self.sys_proxy_enabled,
             routing_mode: self.gui_config.routing_mode,
         }
@@ -1583,6 +1589,8 @@ impl App {
         let task = self.handle_update(message);
         if self.pending_tray_check_sync
             || self.core_running != self.last_core_running
+            || self.core_starting != self.last_core_starting
+            || self.core_stopping != self.last_core_stopping
             || self.sys_proxy_enabled != self.last_sys_proxy_enabled
             || self.gui_config.routing_mode != self.last_routing_mode
         {
@@ -1593,6 +1601,8 @@ impl App {
                 self.update_tray_menu();
             }
             self.last_core_running = self.core_running;
+            self.last_core_starting = self.core_starting;
+            self.last_core_stopping = self.core_stopping;
             self.last_sys_proxy_enabled = self.sys_proxy_enabled;
             self.last_routing_mode = self.gui_config.routing_mode;
         }
@@ -1902,6 +1912,19 @@ impl App {
                         }
                         if self.confirm_delete_profile_id.is_some() {
                             return Task::done(Message::CancelDeleteProfile);
+                        }
+                        if self.profile_more_id.is_some() {
+                            self.profile_more_id = None;
+                            return Task::none();
+                        }
+                        if self.profile_error.is_some()
+                            && matches!(
+                                self.current_tab,
+                                state::Tab::Profiles | state::Tab::Dashboard
+                            )
+                        {
+                            self.profile_error = None;
+                            return Task::none();
                         }
                         self.toasts.pop();
                     }
@@ -2366,7 +2389,7 @@ impl App {
                     .iter()
                     .filter(|line| {
                         let uppercase = line.to_uppercase();
-                        self.log_filter.matches_upper(&uppercase)
+                        self.log_filter.matches_line(line, &uppercase)
                             && (q_upper.is_empty() || uppercase.contains(&q_upper))
                     })
                     .map(String::as_str)
@@ -3703,6 +3726,10 @@ impl App {
                 }
                 Task::none()
             }
+            Message::DismissProfileError => {
+                self.profile_error = None;
+                Task::none()
+            }
 
             // New type-safe configuration messages
             Message::MixedPortChanged(val) => {
@@ -4421,6 +4448,7 @@ impl App {
                 Tab::Connections => ui::connections::render(
                     gui_config_ref,
                     active_connections_ref,
+                    core_installed,
                     core_running,
                     connections_search_ref,
                     self.connections_sort,
@@ -4433,6 +4461,7 @@ impl App {
                     log_filter,
                     log_search_ref,
                     logs_follow,
+                    core_installed,
                     core_running,
                     theme,
                 ),
@@ -4516,7 +4545,7 @@ impl App {
                             .align_x(Alignment::Start)
                             .align_y(Alignment::Center)
                             .padding(iced::Padding {
-                                left: 3.0,
+                                left: 1.0,
                                 ..Default::default()
                             })
                             .into(),
@@ -4827,11 +4856,12 @@ impl App {
                         text(format!("v{}", env!("CARGO_PKG_VERSION")))
                             .size(ui::theme::TYPE_MICRO)
                             .font(ui::theme::metric_font())
+                            .wrapping(iced::widget::text::Wrapping::None)
                             .color(ui::theme::text_tertiary(theme))
                     ]
-                    .spacing(8)
+                    .spacing(4)
                     .align_y(Alignment::Center)
-                    .padding([12, 6])
+                    .padding([10, 4])
                     .width(Length::Fill),
                 ]
                 .width(Length::Fill);
@@ -7616,6 +7646,56 @@ mod tests {
         app.pending_exit = true;
         let _ = app.update(Message::WindowCloseRequested(active));
         assert_eq!(app.window_id, Some(active));
+    }
+
+    #[test]
+    fn escape_collapses_profile_more_dismisses_error_and_pops_toasts_in_order() {
+        let (mut app, _) = App::new_with_config(GuiConfig::default());
+        app.current_tab = state::Tab::Profiles;
+        app.profile_more_id = Some("p1".into());
+        app.profile_error = Some("import failed".into());
+        app.toasts.push(Toast::info("notice"));
+
+        let esc = || {
+            Message::KeyboardEvent(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                physical_key: iced::keyboard::key::Physical::Code(
+                    iced::keyboard::key::Code::Escape,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::empty(),
+                text: None,
+                repeat: false,
+            })
+        };
+
+        // 1st Escape collapses the expanded More drawer.
+        drop(app.update(esc()));
+        assert!(app.profile_more_id.is_none());
+        assert!(app.profile_error.is_some());
+        assert_eq!(app.toasts.len(), 1);
+
+        // 2nd Escape dismisses the inline profile error banner.
+        drop(app.update(esc()));
+        assert!(app.profile_error.is_none());
+        assert_eq!(app.toasts.len(), 1);
+
+        // 3rd Escape pops the toast.
+        drop(app.update(esc()));
+        assert!(app.toasts.is_empty());
+
+        // Explicit DismissProfileError message works from any tab.
+        app.profile_error = Some("another error".into());
+        drop(app.update(Message::DismissProfileError));
+        assert!(app.profile_error.is_none());
+
+        // Tray state tracks transient start/stop flags.
+        app.core_starting = true;
+        assert!(app.tray_state().core_starting);
+        app.core_starting = false;
+        app.core_stopping = true;
+        assert!(app.tray_state().core_stopping);
     }
 }
 

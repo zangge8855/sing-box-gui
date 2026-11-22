@@ -192,6 +192,12 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "ip_stack_prefer_ipv4",
     "ip_stack_prefer_ipv6",
     "ip_stack_ipv4_only",
+    "no_logs_running_title",
+    "no_logs_running_hint",
+    "empty_connections_no_profile_hint",
+    "col_traffic",
+    "sort_asc_tooltip",
+    "sort_desc_tooltip",
 ];
 
 pub fn tr(lang: Language, key: &'static str) -> &'static str {
@@ -228,7 +234,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_tcp_multipath" => "Enable Multipath TCP when the OS supports it.",
             "help_fake_ip" => "Resolve remote domains to fake IPs for better routing.",
             "help_ip_stack" => "Dual-stack also proxies IPv6. Pick IPv4 only if IPv6 sites fail.",
-            "disable_proxy_on_stop_label" => "Disable system proxy when core stops",
+            "disable_proxy_on_stop_label" => "Disable System Proxy on Core Stop",
             "help_disable_proxy_on_stop" => {
                 "Turn off system proxy when the core is stopped. App exit always clears the system proxy for safety."
             }
@@ -302,7 +308,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "protocols_unit" => "protocols",
             "groups_unit" => "groups",
             "invalid_domain_rule" => {
-                "Enter a valid domain suffix, for example example.com or *.example.com."
+                "Enter a valid domain (example.com, *.example.com) or IP/CIDR (10.0.0.0/8)."
             }
             "invalid_ip_rule" => "Enter a valid IPv4/IPv6 address or CIDR range.",
             "duplicate_rule" => "This rule already exists.",
@@ -394,7 +400,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
 
             // Logs
             "clear_logs" => "Clear",
-            "no_logs" => "Log buffer is empty. Start the sing-box core to view live logs.",
+            "no_logs" => "No logs yet",
+            "no_logs_running_title" => "Log buffer is empty",
+            "no_logs_running_hint" => "Core is running — new log lines will appear here.",
 
             // Settings
             "mixed_port" => "Mixed Port",
@@ -421,9 +429,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "ip_stack_ipv4_only" => "IPv4 only",
             "tcp_fast_open_label" => "TCP Fast Open (TFO)",
             "tcp_multipath_label" => "TCP Multi-Path (MPTCP)",
-            "close_core_on_exit_label" => "Auto-close core on exit",
-            "auto_start_core_label" => "Auto-start core on launch",
-            "auto_sys_proxy_label" => "Auto-enable system proxy on start",
+            "close_core_on_exit_label" => "Auto-Close Core on Exit",
+            "auto_start_core_label" => "Auto-Start Core on Launch",
+            "auto_sys_proxy_label" => "Auto-Enable System Proxy on Start",
             "mode_rules" => "Rules",
             "mode_global" => "Global",
             "mode_direct" => "Direct",
@@ -457,17 +465,21 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "chart_seconds_ago" => "{}s ago",
             "sys_proxy_desc" => "Point system HTTP/HTTPS traffic at the local mixed port.",
             "btn_start_core_short" => "Start Core",
-            "btn_clear_search" => "Clear search",
+            "btn_clear_search" => "Clear Search",
             "btn_reinstall_core" => "Reinstall Core",
-            "latency_test_url_label" => "Latency test URL",
-            "latency_test_timeout_label" => "Latency timeout (ms)",
+            "latency_test_url_label" => "Latency Test URL",
+            "latency_test_timeout_label" => "Latency Timeout (ms)",
             "help_latency_test" => {
                 "Requested when testing node latency; a lightweight 204 page works best."
             }
             "col_process" => "Process",
+            "col_traffic" => "Down / Up",
             "process_unknown" => "—",
             "empty_connections_hint" => "Start the core to see live connections.",
-            "empty_logs_start_hint" => "Start the core to stream logs here.",
+            "empty_connections_no_profile_hint" => {
+                "Import and select a profile first, then start the core to see live connections."
+            }
+            "empty_logs_start_hint" => "Start the sing-box core to stream live logs here.",
             "tun_admin_banner" => {
                 "TUN mode requires running as Administrator. Without elevation, the core may fail to start."
             }
@@ -518,6 +530,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "sort_rule" => "Rule",
             "sort_download" => "Download",
             "sort_upload" => "Upload",
+            "sort_asc_tooltip" => "Ascending — click to sort descending",
+            "sort_desc_tooltip" => "Descending — click to sort ascending",
 
             // Layout redesign
             "dash_current_profile" => "Active Profile",
@@ -538,7 +552,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_api_port" => "Used for node switching, latency tests and stats.",
             "help_dns_local" => "Resolves China and direct domains.",
             "help_dns_remote" => "Resolves everything else through the proxy.",
-            "data_dir_label" => "Data folder",
+            "data_dir_label" => "Data Folder",
             "help_data_dir" => "Profiles, settings, logs and the core live here.",
             "btn_open" => "Open",
             "core_status_installed" => "Installed",
@@ -685,7 +699,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "nodes_unit" => "个节点",
             "protocols_unit" => "种协议",
             "groups_unit" => "个策略组",
-            "invalid_domain_rule" => "请输入有效的域名后缀，例如 example.com 或 *.example.com。",
+            "invalid_domain_rule" => {
+                "请输入有效的域名（如 example.com、*.example.com）或 IP / CIDR（如 10.0.0.0/8）。"
+            }
             "invalid_ip_rule" => "请输入有效的 IPv4/IPv6 地址或 CIDR 网段。",
             "duplicate_rule" => "该规则已经存在。",
             "invalid_dns_server" => "请输入有效的 DNS 服务器 IP、主机名或 DNS URL。",
@@ -721,7 +737,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "core_start_failed" => "内核启动失败",
             "tray_show_window" => "显示主界面",
             "tray_start_core" => "启动内核",
-            "tray_stop_core" => "关闭内核",
+            "tray_stop_core" => "停止内核",
             "tray_rules" => "规则分流",
             "tray_global" => "全局代理",
             "tray_direct" => "直接连接",
@@ -769,8 +785,10 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "no_custom_rules" => "暂无自定义规则",
 
             // Logs
-            "clear_logs" => "清空日志",
-            "no_logs" => "日志缓冲区为空。启动 sing-box 内核即可查看实时运行日志。",
+            "clear_logs" => "清空",
+            "no_logs" => "暂无日志",
+            "no_logs_running_title" => "日志缓冲区为空",
+            "no_logs_running_hint" => "内核正在运行，新的实时日志将显示在此处。",
 
             // Settings
             "mixed_port" => "混合代理端口",
@@ -839,9 +857,13 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "latency_test_timeout_label" => "测速超时（毫秒）",
             "help_latency_test" => "节点测速时请求的地址，返回 204 的轻量页面最佳。",
             "col_process" => "进程",
+            "col_traffic" => "下载 / 上传",
             "process_unknown" => "—",
             "empty_connections_hint" => "启动内核后可查看活动连接。",
-            "empty_logs_start_hint" => "启动内核后将在此显示实时日志。",
+            "empty_connections_no_profile_hint" => {
+                "请先导入并选择配置，启动内核后即可查看活动连接。"
+            }
+            "empty_logs_start_hint" => "启动 sing-box 内核后将在此显示实时日志。",
             "tun_admin_banner" => "TUN 模式需要以管理员身份运行。未提权时内核可能启动失败。",
             "core_not_running_hint" => "请先启动内核以加载策略组并测速。",
             "no_proxy_groups" => "内核未返回可用的选择器策略组。",
@@ -888,6 +910,8 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "sort_rule" => "分流规则",
             "sort_download" => "下载流量",
             "sort_upload" => "上传流量",
+            "sort_asc_tooltip" => "当前升序，点击切换降序",
+            "sort_desc_tooltip" => "当前降序，点击切换升序",
 
             // Layout redesign
             "dash_current_profile" => "当前配置",

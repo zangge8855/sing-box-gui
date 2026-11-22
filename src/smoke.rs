@@ -657,11 +657,15 @@ fn seed(app: &mut App, case: &Case) {
             app.core_running = false;
             app.core_starting = true;
             app.sys_proxy_enabled = false;
+            app.active_connections.clear();
+            app.current_speed = Bandwidth::default();
         }
         "stopping" => {
             app.core_running = false;
             app.core_stopping = true;
             app.sys_proxy_enabled = false;
+            app.active_connections.clear();
+            app.current_speed = Bandwidth::default();
         }
         "mode-switching" => {
             app.pending_routing_mode = Some(RoutingMode::Global);
@@ -671,11 +675,15 @@ fn seed(app: &mut App, case: &Case) {
             app.core_installed = false;
             app.core_version = None;
             app.sys_proxy_enabled = false;
+            app.active_connections.clear();
+            app.current_speed = Bandwidth::default();
             app.core_install_state = CoreInstallState::Downloading;
         }
         "core-error" => {
             app.core_running = false;
             app.sys_proxy_enabled = false;
+            app.active_connections.clear();
+            app.current_speed = Bandwidth::default();
             app.toasts.push(Toast::error(app.tr_detail(
                 "core_unexpected_exit",
                 crate::ui::i18n::localize_error(

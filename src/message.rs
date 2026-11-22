@@ -236,6 +236,7 @@ pub enum Message {
     CancelProfileEdit,
     DismissToast,
     DismissToastAt(usize),
+    DismissProfileError,
     ImportFromClipboard,
     ClipboardContent(Option<String>),
     ImportLocalFile,

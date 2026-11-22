@@ -12,9 +12,10 @@ use iced::widget::{
 use iced::{Alignment, Element, Length};
 
 /// Inline pickers and text fields share one width so their edges line up
-/// down a card, ports and timeouts included. Sized at 168px so
-/// longer labels ("Subscription Auto-Update") stay single-line in 2-col 1080px.
-const CONTROL_W: f32 = 168.0;
+/// down a card, ports and timeouts included. Sized at 176px so longer options
+/// ("双栈 · IPv4 优先", "Every 24 hours") breathe comfortably while labels stay
+/// single-line in 2-col 1080px.
+const CONTROL_W: f32 = 176.0;
 
 fn field<'a>(
     placeholder: &'a str,
@@ -987,6 +988,13 @@ pub fn render<'a>(
             .style(theme::card_bg);
 
         let has_pending_changes = draft.has_pending_changes(gui_config);
+        let has_validation_errors = mixed_port_error.is_some()
+            || api_port_error.is_some()
+            || dns_local_error.is_some()
+            || dns_remote_error.is_some()
+            || latency_url_error.is_some()
+            || latency_timeout_error.is_some()
+            || !errors.is_empty();
         let content_col = column![sections, preview_card]
             .spacing(theme::GRID_GAP)
             .width(Length::Fill);
@@ -996,14 +1004,30 @@ pub fn render<'a>(
         let pad_compact = crate::ui::is_pad_compact(size.width);
         let header = page_header("tab_settings", lang, None, theme, pad_compact);
         let pinned_header: Element<'_, Message> = if has_pending_changes {
+            let (banner_icon, banner_key, banner_accent, banner_text_color) =
+                if has_validation_errors {
+                    (
+                        crate::ui::icons::ICON_WARNING,
+                        "settings_invalid",
+                        theme::DANGER,
+                        theme::danger_text(theme),
+                    )
+                } else {
+                    (
+                        crate::ui::icons::ICON_INFO,
+                        "settings_pending",
+                        theme::WARNING,
+                        theme::warning_text(theme),
+                    )
+                };
             let dirty_bar = container(
                 row![
-                    crate::ui::material_icon(crate::ui::icons::ICON_INFO)
+                    crate::ui::material_icon(banner_icon)
                         .size(crate::ui::ICON_SIZE)
-                        .color(theme::warning_text(theme)),
-                    text(tr(lang, "settings_pending"))
+                        .color(banner_text_color),
+                    text(tr(lang, banner_key))
                         .size(theme::TYPE_CAPTION)
-                        .color(theme::warning_text(theme))
+                        .color(banner_text_color)
                         .width(Length::Fill),
                     small_btn("btn_discard_changes", Some(Message::DiscardSettings), false),
                     small_btn("btn_save_apply", Some(Message::SaveSettings), true),
@@ -1013,7 +1037,7 @@ pub fn render<'a>(
             )
             .padding([8, 12])
             .width(Length::Fill)
-            .style(|t| theme::tinted_banner(t, theme::WARNING));
+            .style(move |t| theme::tinted_banner(t, banner_accent));
             column![header, dirty_bar].spacing(crate::ui::SP_12).into()
         } else {
             header

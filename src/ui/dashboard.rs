@@ -332,10 +332,11 @@ pub fn render<'a>(
                     .into(),
             );
         } else {
+            let shown_connections = if core_running { active_connections } else { 0 };
             fact_items.push(
                 button(
                     row![
-                        fact("dash_connections", active_connections.to_string()),
+                        fact("dash_connections", shown_connections.to_string()),
                         icon(crate::ui::icons::ICON_CHEVRON_RIGHT, 14.0).color(text_tertiary),
                     ]
                     .spacing(2)
@@ -551,6 +552,8 @@ pub fn render<'a>(
 
         // ── Traffic: two large figures over a live chart ──────────────────
         let (down_color, up_color) = theme::chart_series(theme);
+        let live_down = if core_running { speed.down } else { 0 };
+        let live_up = if core_running { speed.up } else { 0 };
         let figure_block =
             |label_key: &'static str, arrow: char, series: Color, rate: u64, total: u64| {
                 let (value, unit) = split_figure(&format_speed(rate));
@@ -598,14 +601,14 @@ pub fn render<'a>(
                     "download",
                     crate::ui::icons::ICON_DOWN,
                     down_color,
-                    speed.down,
+                    live_down,
                     total_downloaded,
                 ),
                 figure_block(
                     "upload",
                     crate::ui::icons::ICON_UP,
                     up_color,
-                    speed.up,
+                    live_up,
                     total_uploaded,
                 ),
             ]
@@ -617,7 +620,7 @@ pub fn render<'a>(
                     "download",
                     crate::ui::icons::ICON_DOWN,
                     down_color,
-                    speed.down,
+                    live_down,
                     total_downloaded,
                 ),
                 container(Space::new())
@@ -628,7 +631,7 @@ pub fn render<'a>(
                     "upload",
                     crate::ui::icons::ICON_UP,
                     up_color,
-                    speed.up,
+                    live_up,
                     total_uploaded,
                 ),
             ]
@@ -934,10 +937,10 @@ fn onboarding_card<'a>(
             .size(theme::TYPE_BTN_SM),
         )
         .padding(theme::BTN_PAD_SM)
-        .style(if downloading {
-            theme::button_secondary
-        } else {
+        .style(if can_import {
             theme::button_primary
+        } else {
+            theme::button_secondary
         });
         if can_import {
             import_btn = import_btn.on_press(Message::DownloadSubscription);
@@ -965,10 +968,24 @@ fn onboarding_card<'a>(
         ]
         .spacing(crate::ui::SP_8);
         if let Some(err) = profile_error {
+            let dismiss_btn = button(
+                text(crate::ui::icons::ICON_CLOSE)
+                    .font(iced::Font::with_name("Material Icons"))
+                    .size(14.0),
+            )
+            .padding(2)
+            .style(theme::button_dismiss)
+            .on_press(Message::DismissProfileError);
             col = col.push(
-                text(err)
-                    .size(theme::TYPE_CAPTION)
-                    .color(theme::danger_text(theme)),
+                row![
+                    text(err)
+                        .size(theme::TYPE_CAPTION)
+                        .color(theme::danger_text(theme))
+                        .width(Length::Fill),
+                    dismiss_btn,
+                ]
+                .spacing(crate::ui::SP_8)
+                .align_y(Alignment::Center),
             );
         }
         col.into()

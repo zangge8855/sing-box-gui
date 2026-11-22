@@ -72,10 +72,10 @@ pub fn render<'a>(
             .align_x(Alignment::Center),
         )
         .padding(theme::BTN_PAD_LG)
-        .style(if downloading {
-            theme::button_secondary
-        } else {
+        .style(if can_import {
             theme::button_primary
+        } else {
+            theme::button_secondary
         });
         if can_import {
             import_btn = import_btn.on_press(Message::DownloadSubscription);
@@ -137,6 +137,14 @@ pub fn render<'a>(
         .style(theme::card_bg);
 
         let error_banner = profile_error.map(|err| {
+            let dismiss_btn = button(
+                text(crate::ui::icons::ICON_CLOSE)
+                    .font(iced::Font::with_name("Material Icons"))
+                    .size(crate::ui::ICON_SIZE),
+            )
+            .padding(4)
+            .style(theme::button_dismiss)
+            .on_press(Message::DismissProfileError);
             container(
                 row![
                     crate::ui::material_icon(crate::ui::icons::ICON_WARNING)
@@ -145,7 +153,8 @@ pub fn render<'a>(
                     text(err)
                         .size(theme::TYPE_SECTION)
                         .color(theme::danger_text(theme))
-                        .width(Length::Fill)
+                        .width(Length::Fill),
+                    dismiss_btn,
                 ]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center),
@@ -167,8 +176,9 @@ pub fn render<'a>(
         } else {
             let mut card_elements: Vec<Element<'a, Message>> = Vec::new();
 
-            // Each action owns a fixed-width slot so Use / Update / More sit
-            // in the same columns on every card, whichever buttons a card has.
+            // Fixed widths per button type prevent label changes ("Update" →
+            // "Updating…", "More" → "Less") from shifting neighbors; buttons
+            // pack tightly to the right without leaving blank holes between them.
             let btn_pad_x = f32::from(theme::BTN_PAD_SM[1]) * 2.0;
             let label_w = |keys: &[&'static str]| {
                 keys.iter()
@@ -180,7 +190,6 @@ pub fn render<'a>(
             let update_slot_w = label_w(&["btn_update", "btn_updating"]) + btn_pad_x + 4.0;
             let more_slot_w =
                 label_w(&["btn_more", "btn_less"]) + crate::ui::ICON_SIZE + 2.0 + btn_pad_x + 4.0;
-            let actions_w = use_slot_w + update_slot_w + more_slot_w + crate::ui::SP_8 * 2.0;
 
             for profile in &gui_config.subscriptions {
                 let is_active = Some(&profile.id) == gui_config.active_profile_id.as_ref();
@@ -236,12 +245,13 @@ pub fn render<'a>(
 
                 // At most one primary per card: switching profiles is the real
                 // decision, refreshing is routine, and edit/delete are rare
-                // enough to live behind More.
-                // Wide cards keep empty slots so the columns line up; compact
-                // cards pack their buttons from the left edge instead.
-                let slot = |w: f32| Space::new().width(Length::Fixed(w));
+                // enough to live behind More. Pack only the buttons present on
+                // this card so local profiles never show an empty hole between
+                // Use and More while More still stays flush-right.
                 let mut actions_row = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
+                let mut card_actions_w = more_slot_w;
                 if !is_active {
+                    card_actions_w += use_slot_w + crate::ui::SP_8;
                     actions_row = actions_row.push(
                         button(
                             text(tr(lang, "btn_select"))
@@ -254,13 +264,10 @@ pub fn render<'a>(
                         .style(theme::button_primary)
                         .on_press(Message::SelectProfile(profile.id.clone())),
                     );
-                } else if !is_compact {
-                    actions_row = actions_row.push(slot(use_slot_w));
                 }
                 if let Some(b) = update_btn {
+                    card_actions_w += update_slot_w + crate::ui::SP_8;
                     actions_row = actions_row.push(b);
-                } else if !is_compact {
-                    actions_row = actions_row.push(slot(update_slot_w));
                 }
                 actions_row = actions_row.push(more_btn);
 
@@ -325,8 +332,7 @@ pub fn render<'a>(
                 let info_w = if is_compact {
                     card_inner
                 } else {
-                    // Every wide card reserves the same three action slots.
-                    (card_inner - actions_w - crate::ui::SP_12).max(60.0)
+                    (card_inner - card_actions_w - crate::ui::SP_12).max(60.0)
                 };
                 let display_url = fit_mono(&masked_url, info_w, theme::TYPE_CAPTION);
                 let url_truncated = display_url != masked_url;

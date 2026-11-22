@@ -1,5 +1,5 @@
 use crate::message::Message;
-use crate::state::LogFilter;
+use crate::state::{LogFilter, log_keyword_severity, log_level_token};
 use crate::ui::page_header;
 use crate::ui::theme;
 use iced::widget::text::Span;
@@ -22,54 +22,19 @@ const LOGS_TOOLBAR_INLINE_W: f32 = 1000.0;
 /// Below this the second toolbar row wraps instead of pushing the actions right.
 const LOGS_TOOLBAR_SPREAD_W: f32 = 640.0;
 
-/// Locates the severity word sing-box prints near the start of a line
-/// (`+0800 2026-10-27 14:30:00 INFO [..] ...`) so the line can be set as
-/// timestamp / level / message rather than painted in a single colour.
-fn level_token(line: &str) -> Option<(Range<usize>, u8)> {
-    let mut offset = 0;
-    for word in line.split(' ').take(5) {
-        let severity = match word {
-            "ERROR" | "FATAL" | "PANIC" => Some(3),
-            "WARN" | "WARNING" => Some(2),
-            "INFO" => Some(1),
-            "DEBUG" | "TRACE" => Some(0),
-            _ => None,
-        };
-        if let Some(severity) = severity {
-            return Some((offset..offset + word.len(), severity));
-        }
-        offset += word.len() + 1;
-    }
-    None
-}
-
-/// Lines without a level tag (GUI notices, panics) fall back to keywords.
-fn keyword_severity(uppercase: &str) -> u8 {
-    if uppercase.contains("ERROR")
-        || uppercase.contains("FATAL")
-        || uppercase.contains("PANIC")
-        || uppercase.contains("FAILED")
-    {
-        3
-    } else if uppercase.contains("WARN") {
-        2
-    } else if uppercase.contains("INFO") {
-        1
-    } else {
-        0
-    }
-}
-
+#[allow(clippy::too_many_arguments)]
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
     log_lines: &'a std::collections::VecDeque<String>,
     log_filter: LogFilter,
     log_search: &'a str,
     logs_follow: bool,
+    core_installed: bool,
     core_running: bool,
     theme: &iced::Theme,
 ) -> Element<'a, Message> {
     let lang = gui_config.language;
+    let has_active_profile = gui_config.active_profile_id.is_some();
     use crate::ui::i18n::tr;
 
     let theme_cloned = theme.clone();
@@ -87,17 +52,17 @@ pub fn render<'a>(
         .filter_map(|line| {
             let uppercase = line.to_uppercase();
             // The level tag wins over keywords, so an INFO line that merely
-            // mentions "error" is not painted as a failure.
-            let (severity, range) = match level_token(line) {
+            // mentions "error" is neither painted nor filtered as a failure.
+            let (severity, range) = match log_level_token(line) {
                 Some((range, severity)) => (severity, Some(range)),
-                None => (keyword_severity(&uppercase), None),
+                None => (log_keyword_severity(&uppercase), None),
             };
             match severity {
                 2 => warn_count += 1,
                 3 => error_count += 1,
                 _ => {}
             }
-            if !log_filter.matches_upper(&uppercase) {
+            if !log_filter.matches_severity(severity) {
                 return None;
             }
             if !q_upper.is_empty() && !uppercase.contains(&q_upper) {
@@ -293,23 +258,52 @@ pub fn render<'a>(
         }
 
         let log_terminal = if total_lines == 0 {
-            // ToggleCore *stops* a running core — only offer "Start Core"
-            // when it is actually stopped (e.g. right after Clear it isn't).
-            let cta: Option<Element<'_, Message>> = if core_running {
-                None
-            } else {
-                Some(
-                    button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
-                        .padding(theme::BTN_PAD_MD)
-                        .style(theme::button_primary)
-                        .on_press(Message::ToggleCore)
-                        .into(),
-                )
-            };
+            // Distinguish a cleared buffer while the core is running from an
+            // idle stopped state, and guide setup when profile/core is missing.
+            let (title_key, hint_key, cta): (&str, &str, Option<Element<'_, Message>>) =
+                if core_running {
+                    ("no_logs_running_title", "no_logs_running_hint", None)
+                } else if !has_active_profile {
+                    (
+                        "no_logs",
+                        "empty_logs_start_hint",
+                        Some(
+                            button(text(tr(lang, "btn_goto_profiles")).size(theme::TYPE_BTN_MD))
+                                .padding(theme::BTN_PAD_MD)
+                                .style(theme::button_primary)
+                                .on_press(Message::TabChanged(crate::state::Tab::Profiles))
+                                .into(),
+                        ),
+                    )
+                } else if !core_installed {
+                    (
+                        "no_logs",
+                        "proxies_no_core_hint",
+                        Some(
+                            button(text(tr(lang, "btn_goto_settings")).size(theme::TYPE_BTN_MD))
+                                .padding(theme::BTN_PAD_MD)
+                                .style(theme::button_primary)
+                                .on_press(Message::TabChanged(crate::state::Tab::Settings))
+                                .into(),
+                        ),
+                    )
+                } else {
+                    (
+                        "no_logs",
+                        "empty_logs_start_hint",
+                        Some(
+                            button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
+                                .padding(theme::BTN_PAD_MD)
+                                .style(theme::button_primary)
+                                .on_press(Message::ToggleCore)
+                                .into(),
+                        ),
+                    )
+                };
             container(crate::ui::empty_state_plain(
                 Some(crate::ui::icons::ICON_LOGS),
-                tr(lang, "no_logs"),
-                Some(tr(lang, "empty_logs_start_hint")),
+                tr(lang, title_key),
+                Some(tr(lang, hint_key)),
                 cta,
                 theme,
             ))
@@ -497,30 +491,33 @@ mod tests {
     #[test]
     fn level_token_splits_sing_box_lines() {
         let line = "+0800 2026-10-27 14:30:00 WARN [12 0ms] dns: timeout";
-        let (range, severity) = level_token(line).unwrap();
+        let (range, severity) = log_level_token(line).unwrap();
         assert_eq!(&line[range.clone()], "WARN");
         assert_eq!(severity, 2);
         assert_eq!(&line[..range.start], "+0800 2026-10-27 14:30:00 ");
 
         // Untimestamped output and multibyte text before the message.
-        let (range, severity) = level_token("ERROR 香港: refused").unwrap();
+        let (range, severity) = log_level_token("ERROR 香港: refused").unwrap();
         assert_eq!(range, 0..5);
         assert_eq!(severity, 3);
 
         // The level tag beats message keywords, and GUI notices have none.
-        assert_eq!(level_token("14:30 INFO retry after error").unwrap().1, 1);
-        assert!(level_token("[GUI] Failed to remove staged update").is_none());
+        assert_eq!(
+            log_level_token("14:30 INFO retry after error").unwrap().1,
+            1
+        );
+        assert!(log_level_token("[GUI] Failed to remove staged update").is_none());
 
         // Consecutive spaces keep byte indices UTF-8 aligned.
         let spaced = "2026  ERROR 香港超时";
-        let (range, severity) = level_token(spaced).unwrap();
+        let (range, severity) = log_level_token(spaced).unwrap();
         assert_eq!(&spaced[range], "ERROR");
         assert_eq!(severity, 3);
-        assert_eq!(keyword_severity("FAILED TO CONNECT"), 3);
-        assert_eq!(keyword_severity("PANIC: WORKER CRASHED"), 3);
-        assert_eq!(keyword_severity("WARNING: SLOW"), 2);
-        assert_eq!(keyword_severity("INFO: OK"), 1);
-        assert_eq!(keyword_severity("TRACE"), 0);
+        assert_eq!(log_keyword_severity("FAILED TO CONNECT"), 3);
+        assert_eq!(log_keyword_severity("PANIC: WORKER CRASHED"), 3);
+        assert_eq!(log_keyword_severity("WARNING: SLOW"), 2);
+        assert_eq!(log_keyword_severity("INFO: OK"), 1);
+        assert_eq!(log_keyword_severity("TRACE"), 0);
     }
 
     #[test]
@@ -534,7 +531,18 @@ mod tests {
             "",
             true,
             false,
+            false,
             &iced::Theme::Light,
+        );
+        let _ = render(
+            &cfg,
+            &empty,
+            LogFilter::All,
+            "",
+            true,
+            true,
+            true,
+            &iced::Theme::Dark,
         );
 
         let mut many = std::collections::VecDeque::new();
@@ -548,6 +556,7 @@ mod tests {
             "",
             false,
             true,
+            true,
             &iced::Theme::Dark,
         );
         let _ = render(
@@ -555,6 +564,7 @@ mod tests {
             &many,
             LogFilter::Error,
             "missing",
+            true,
             true,
             true,
             &iced::Theme::Light,

@@ -11,6 +11,8 @@ use iced::{Alignment, Element, Length};
 /// Below this page width the Proxies header search/sort/test bar stacks
 /// under the title so controls never clip at 900–960px window widths.
 const PROXIES_TOOLBAR_INLINE_W: f32 = 800.0;
+/// Width of the desktop proxy group rail on the left.
+const GROUP_RAIL_W: f32 = 204.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProxySortOption {
@@ -369,10 +371,10 @@ pub fn render<'a>(
                     let is_active = g.name == selected_group_moved;
                     let active_node = g.now.as_deref().unwrap_or("—");
                     let count = g.all.as_ref().map(|v| v.len());
-                    let name_budget = if count.is_some() { 106.0 } else { 132.0 };
+                    let name_budget = if count.is_some() { 138.0 } else { 164.0 };
                     let short_group =
                         fit_width(&g.name, name_budget, theme::TYPE_SECTION * SEMIBOLD_WIDTH);
-                    let short_node = fit_width(active_node, 132.0, theme::TYPE_CAPTION);
+                    let short_node = fit_width(active_node, 164.0, theme::TYPE_CAPTION);
                     let group_truncated = short_group != g.name || short_node != active_node;
 
                     let mut title_row = row![
@@ -424,7 +426,7 @@ pub fn render<'a>(
                         ]
                         .spacing(3),
                     )
-                    .padding(theme::BTN_PAD_MD)
+                    .padding([8, 12])
                     .width(Length::Fill)
                     .style(theme::group_tab(is_active))
                     .on_press(Message::SelectGroup(g.name.clone()));
@@ -465,14 +467,14 @@ pub fn render<'a>(
                         .style(theme::scrollbar_style)
                         .height(Length::Fill),
                 )
-                .width(Length::Fixed(180.0))
+                .width(Length::Fixed(GROUP_RAIL_W))
                 .height(Length::Fill)
             };
 
             // The grid's scrollbar lane sits in the page inset, so cards get
             // the full content width.
             let grid_width = (crate::ui::page_content_width(size.width, pad_compact)
-                - if is_compact { 0.0 } else { 221.0 })
+                - if is_compact { 0.0 } else { GROUP_RAIL_W + 41.0 })
             .max(PROXY_CARD_MIN_W);
             let cols = card_columns(grid_width);
             let card_w = card_width(grid_width, cols);
@@ -512,13 +514,13 @@ pub fn render<'a>(
                         .padding(theme::BTN_PAD_MD)
                         .style(theme::button_secondary)
                         .on_press(Message::NodeSearchChanged(String::new()));
-                    crate::ui::empty_state_with_icon(
+                    crate::ui::lane_aligned(crate::ui::empty_state_with_icon(
                         Some(crate::ui::icons::ICON_SEARCH),
                         tr(lang, "no_matching_nodes"),
                         None,
                         Some(cta.into()),
                         theme,
-                    )
+                    ))
                 } else {
                     let total_nodes = filtered_sub_nodes.len();
                     let cap = if show_all { total_nodes } else { 120 };
@@ -561,13 +563,13 @@ pub fn render<'a>(
                 }
             } else {
                 // Group has no `all` node list (not a failed search filter).
-                crate::ui::empty_state_with_icon(
+                crate::ui::lane_aligned(crate::ui::empty_state_with_icon(
                     Some(crate::ui::icons::ICON_PROXIES),
                     tr(lang, "no_nodes"),
                     Some(tr(lang, "no_proxy_groups")),
                     None,
                     theme,
-                )
+                ))
             };
 
             let header = page_header(

@@ -12,8 +12,40 @@ use tokio::sync::mpsc;
 pub struct TrayState {
     pub language: Language,
     pub core_running: bool,
+    pub core_starting: bool,
+    pub core_stopping: bool,
     pub system_proxy_enabled: bool,
     pub routing_mode: RoutingMode,
+}
+
+fn core_action_label_key(state: TrayState) -> &'static str {
+    if state.core_starting {
+        "status_starting"
+    } else if state.core_stopping {
+        "status_stopping"
+    } else if state.core_running {
+        "tray_stop_core"
+    } else {
+        "tray_start_core"
+    }
+}
+
+fn tray_tooltip(state: TrayState) -> String {
+    let lang = state.language;
+    let status = if state.core_starting {
+        tr(lang, "status_starting")
+    } else if state.core_stopping {
+        tr(lang, "status_stopping")
+    } else if state.core_running {
+        return format!(
+            "sing-box GUI — {} · {}",
+            tr(lang, "status_running"),
+            tr(lang, state.routing_mode.label_key())
+        );
+    } else {
+        tr(lang, "status_stopped")
+    };
+    format!("sing-box GUI — {status}")
 }
 
 static EVENT_RX: OnceLock<Mutex<Option<mpsc::Receiver<Message>>>> = OnceLock::new();
@@ -247,6 +279,12 @@ mod platform {
         fn title(&self) -> String {
             "sing-box GUI".into()
         }
+        fn tool_tip(&self) -> ksni::ToolTip {
+            ksni::ToolTip {
+                title: tray_tooltip(self.state),
+                ..Default::default()
+            }
+        }
         fn activate(&mut self, _: i32, _: i32) {
             send(Message::TrayIconClicked);
         }
@@ -286,14 +324,13 @@ mod platform {
             vec![
                 action("tray_show_window", "show_window"),
                 ksni::MenuItem::Separator,
-                action(
-                    if self.state.core_running {
-                        "tray_stop_core"
-                    } else {
-                        "tray_start_core"
-                    },
-                    "toggle_core",
-                ),
+                StandardItem {
+                    label: label(core_action_label_key(self.state)),
+                    enabled: !self.state.core_stopping,
+                    activate: Box::new(|_| send(Message::TrayMenuClicked("toggle_core".into()))),
+                    ..Default::default()
+                }
+                .into(),
                 CheckmarkItem {
                     label: label("tray_system_proxy"),
                     checked: self.state.system_proxy_enabled,
@@ -411,11 +448,8 @@ mod platform {
             let label = |key| tr(state.language, key);
             self.show.set_text(label("tray_show_window"));
             self.exit.set_text(label("tray_exit"));
-            self.core.set_text(label(if state.core_running {
-                "tray_stop_core"
-            } else {
-                "tray_start_core"
-            }));
+            self.core.set_text(label(core_action_label_key(state)));
+            self.core.set_enabled(!state.core_stopping);
             self.proxy.set_text(label("tray_system_proxy"));
             self.proxy.set_checked(state.system_proxy_enabled);
             self.modes.set_text(label("tray_proxy_mode"));
@@ -486,6 +520,9 @@ mod platform {
             }
             self.last_state.set(Some(state));
             self.menu.apply_state(state);
+            if let Some(icon) = &self.icon {
+                let _ = icon.set_tooltip(Some(tray_tooltip(state)));
+            }
         }
 
         /// Unconditionally re-apply all menu labels and checkmark states so an
@@ -494,6 +531,9 @@ mod platform {
         pub fn force_update(&self, state: TrayState) {
             self.last_state.set(Some(state));
             self.menu.apply_state(state);
+            if let Some(icon) = &self.icon {
+                let _ = icon.set_tooltip(Some(tray_tooltip(state)));
+            }
         }
     }
 }
@@ -508,6 +548,8 @@ mod tests {
             let state = TrayState {
                 language: Language::En,
                 core_running: true,
+                core_starting: false,
+                core_stopping: false,
                 system_proxy_enabled: true,
                 routing_mode: mode,
             };
@@ -518,6 +560,47 @@ mod tests {
             ];
             assert_eq!(checked.into_iter().filter(|&c| c).count(), 1);
         }
+    }
+
+    #[test]
+    fn tray_tooltip_and_core_label_reflect_transition_states() {
+        let base = TrayState {
+            language: Language::En,
+            core_running: false,
+            core_starting: false,
+            core_stopping: false,
+            system_proxy_enabled: false,
+            routing_mode: RoutingMode::Rule,
+        };
+        assert_eq!(core_action_label_key(base), "tray_start_core");
+        assert!(tray_tooltip(base).contains("Stopped"));
+
+        let starting = TrayState {
+            core_starting: true,
+            ..base
+        };
+        assert_eq!(core_action_label_key(starting), "status_starting");
+        assert!(tray_tooltip(starting).contains("Starting"));
+
+        let stopping = TrayState {
+            core_stopping: true,
+            ..base
+        };
+        assert_eq!(core_action_label_key(stopping), "status_stopping");
+        assert!(tray_tooltip(stopping).contains("Stopping"));
+
+        let running_zh = TrayState {
+            language: Language::Zh,
+            core_running: true,
+            routing_mode: RoutingMode::Global,
+            ..base
+        };
+        assert_eq!(core_action_label_key(running_zh), "tray_stop_core");
+        let tip = tray_tooltip(running_zh);
+        assert!(
+            tip.contains("正在运行") && tip.contains("全局代理"),
+            "{tip}"
+        );
     }
 
     #[test]
@@ -577,10 +660,13 @@ mod tests {
         menu.apply_state(TrayState {
             language: Language::En,
             core_running: false,
+            core_starting: false,
+            core_stopping: false,
             system_proxy_enabled: false,
             routing_mode: RoutingMode::Rule,
         });
         assert_eq!(menu.core.text(), tr(Language::En, "tray_start_core"));
+        assert!(menu.core.is_enabled());
         assert!(!menu.proxy.is_checked());
         assert!(menu.rule.is_checked());
         assert!(!menu.global.is_checked());
@@ -589,16 +675,30 @@ mod tests {
         menu.apply_state(TrayState {
             language: Language::Zh,
             core_running: true,
+            core_starting: false,
+            core_stopping: false,
             system_proxy_enabled: true,
             routing_mode: RoutingMode::Global,
         });
         assert_eq!(menu.show.text(), tr(Language::Zh, "tray_show_window"));
         assert_eq!(menu.core.text(), tr(Language::Zh, "tray_stop_core"));
+        assert!(menu.core.is_enabled());
         assert_eq!(menu.exit.text(), tr(Language::Zh, "tray_exit"));
         assert!(menu.proxy.is_checked());
         assert!(!menu.rule.is_checked());
         assert!(menu.global.is_checked());
         assert!(!menu.direct.is_checked());
+
+        menu.apply_state(TrayState {
+            language: Language::En,
+            core_running: false,
+            core_starting: false,
+            core_stopping: true,
+            system_proxy_enabled: false,
+            routing_mode: RoutingMode::Rule,
+        });
+        assert_eq!(menu.core.text(), tr(Language::En, "status_stopping"));
+        assert!(!menu.core.is_enabled());
     }
 
     #[cfg(target_os = "linux")]
@@ -616,6 +716,8 @@ mod tests {
             state: TrayState {
                 language: Language::Zh,
                 core_running: true,
+                core_starting: false,
+                core_stopping: false,
                 system_proxy_enabled: true,
                 routing_mode: RoutingMode::Direct,
             },
@@ -624,6 +726,7 @@ mod tests {
         };
         assert_eq!(tray.id(), "sing-box-gui");
         assert_eq!(tray.title(), "sing-box GUI");
+        assert!(tray.tool_tip().title.contains("正在运行"));
         let icons = tray.icon_pixmap();
         assert_eq!(icons.len(), 3);
         for icon in icons {

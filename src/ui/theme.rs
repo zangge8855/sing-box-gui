@@ -144,6 +144,7 @@ pub const SEARCH_WIDTH: f32 = 260.0;
 pub const SP_8: f32 = 8.0;
 pub const SP_12: f32 = 12.0;
 
+#[allow(dead_code)]
 pub const SP_40: f32 = 40.0;
 
 // ── Dark mode (platform-native neutral surfaces) ─────────────────────────────

@@ -11,8 +11,8 @@ use iced::widget::{
 use iced::{Alignment, Color, Element, Font, Length};
 
 /// Below this width the Connections header search/sort/close-all toolbar
-/// stacks under the title so controls never clip at 740–779px.
-const CONNECTIONS_TOOLBAR_INLINE_W: f32 = 780.0;
+/// stacks under the title so controls never clip alongside the sort label.
+const CONNECTIONS_TOOLBAR_INLINE_W: f32 = 840.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ConnectionSortOption {
@@ -38,9 +38,11 @@ struct PreparedConnection<'a> {
     search_key: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render<'a>(
     gui_config: &'a crate::state::GuiConfig,
     active_connections: &'a [Connection],
+    core_installed: bool,
     core_running: bool,
     search_query: &'a str,
     connections_sort: crate::state::ConnectionSort,
@@ -201,21 +203,40 @@ pub fn render<'a>(
             .style(theme::pick_list)
             .menu_style(theme::pick_list_menu);
 
-        let direction_btn = button(
-            text(
-                if connections_sort_desc {
-                    ICON_DOWN
-                } else {
-                    ICON_UP
-                }
-                .to_string(),
+        let direction_tip = tr(
+            lang,
+            if connections_sort_desc {
+                "sort_desc_tooltip"
+            } else {
+                "sort_asc_tooltip"
+            },
+        );
+        let direction_btn = tooltip(
+            button(
+                text(
+                    if connections_sort_desc {
+                        ICON_DOWN
+                    } else {
+                        ICON_UP
+                    }
+                    .to_string(),
+                )
+                .font(Font::with_name("Material Icons"))
+                .size(16),
             )
-            .font(Font::with_name("Material Icons"))
-            .size(16),
+            .padding([8, 10])
+            .style(theme::button_secondary)
+            .on_press(Message::SortConnections(connections_sort)),
+            container(
+                text(direction_tip)
+                    .size(theme::TYPE_CAPTION)
+                    .color(text_primary),
+            )
+            .padding([6, 10])
+            .style(theme::popover_bg),
+            tooltip::Position::Bottom,
         )
-        .padding([8, 10])
-        .style(theme::button_secondary)
-        .on_press(Message::SortConnections(connections_sort));
+        .gap(4);
         // Reversing "original order" is a no-op, so the toggle only appears
         // once a real sort key is chosen.
         let direction_btn: Option<Element<'_, Message>> =
@@ -245,12 +266,18 @@ pub fn render<'a>(
             // The desktop column headers cover only a subset of sorts (the
             // mid-width table has no Upload column, and no header returns to
             // original order) — keep the full picker reachable here too.
-            row![search_input, sort_picker.width(Length::Fixed(140.0))]
-                .push(direction_btn)
-                .push(close_all_btn)
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .into()
+            row![
+                search_input,
+                text(with_colon(lang, tr(lang, "sort_connections_by")))
+                    .size(theme::TYPE_CAPTION)
+                    .color(text_muted),
+                sort_picker.width(Length::Fixed(132.0))
+            ]
+            .push(direction_btn)
+            .push(close_all_btn)
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into()
         };
 
         let show_toolbar = !active_connections.is_empty() || !query_str.trim().is_empty();
@@ -277,6 +304,68 @@ pub fn render<'a>(
             page_title
         };
 
+        let render_empty = || -> Element<'_, Message> {
+            let empty_msg = if query_str.trim().is_empty() {
+                tr(lang, "no_active_connections")
+            } else {
+                tr(lang, "no_matching_connections")
+            };
+            let (hint, cta): (Option<&str>, Option<Element<'_, Message>>) =
+                if !query_str.trim().is_empty() {
+                    (
+                        None,
+                        Some(
+                            button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
+                                .padding(theme::BTN_PAD_MD)
+                                .style(theme::button_secondary)
+                                .on_press(Message::ConnectionsSearchChanged(String::new()))
+                                .into(),
+                        ),
+                    )
+                } else if gui_config.active_profile_id.is_none() {
+                    (
+                        Some(tr(lang, "empty_connections_no_profile_hint")),
+                        Some(
+                            button(text(tr(lang, "btn_goto_profiles")).size(theme::TYPE_BTN_MD))
+                                .padding(theme::BTN_PAD_MD)
+                                .style(theme::button_primary)
+                                .on_press(Message::TabChanged(crate::state::Tab::Profiles))
+                                .into(),
+                        ),
+                    )
+                } else if !core_installed {
+                    (
+                        Some(tr(lang, "proxies_no_core_hint")),
+                        Some(
+                            button(text(tr(lang, "btn_goto_settings")).size(theme::TYPE_BTN_MD))
+                                .padding(theme::BTN_PAD_MD)
+                                .style(theme::button_primary)
+                                .on_press(Message::TabChanged(crate::state::Tab::Settings))
+                                .into(),
+                        ),
+                    )
+                } else if !core_running {
+                    (
+                        Some(tr(lang, "empty_connections_hint")),
+                        Some(
+                            button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
+                                .padding(theme::BTN_PAD_MD)
+                                .style(theme::button_primary)
+                                .on_press(Message::ToggleCore)
+                                .into(),
+                        ),
+                    )
+                } else {
+                    (None, None)
+                };
+            let empty_icon = if query_str.trim().is_empty() {
+                ICON_CONNECTIONS
+            } else {
+                ICON_SEARCH
+            };
+            crate::ui::empty_state_with_icon(Some(empty_icon), empty_msg, hint, cta, theme)
+        };
+
         if is_compact {
             // Mobile / Compact Layout: List of clean Connection Cards
             let mut list = column!().spacing(12);
@@ -288,55 +377,7 @@ pub fn render<'a>(
                     - theme::CARD_PAD_DENSE * 2.0;
 
             if filtered_connections.is_empty() {
-                let empty_msg = if query_str.trim().is_empty() {
-                    tr(lang, "no_active_connections")
-                } else {
-                    tr(lang, "no_matching_connections")
-                };
-                let cta: Option<Element<'_, Message>> = if !query_str.trim().is_empty() {
-                    Some(
-                        button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
-                            .padding(theme::BTN_PAD_MD)
-                            .style(theme::button_secondary)
-                            .on_press(Message::ConnectionsSearchChanged(String::new()))
-                            .into(),
-                    )
-                } else if gui_config.active_profile_id.is_none() {
-                    Some(
-                        button(text(tr(lang, "btn_goto_profiles")).size(theme::TYPE_BTN_MD))
-                            .padding(theme::BTN_PAD_MD)
-                            .style(theme::button_primary)
-                            .on_press(Message::TabChanged(crate::state::Tab::Profiles))
-                            .into(),
-                    )
-                } else if !core_running {
-                    Some(
-                        button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
-                            .padding(theme::BTN_PAD_MD)
-                            .style(theme::button_primary)
-                            .on_press(Message::ToggleCore)
-                            .into(),
-                    )
-                } else {
-                    None
-                };
-                let hint = if query_str.trim().is_empty() && !core_running {
-                    Some(tr(lang, "empty_connections_hint"))
-                } else {
-                    None
-                };
-                let empty_icon = if query_str.trim().is_empty() {
-                    ICON_CONNECTIONS
-                } else {
-                    ICON_SEARCH
-                };
-                list = list.push(crate::ui::empty_state_with_icon(
-                    Some(empty_icon),
-                    empty_msg,
-                    hint,
-                    cta,
-                    theme,
-                ));
+                list = list.push(render_empty());
             } else {
                 for prepared in filtered_connections.iter() {
                     let conn = prepared.connection;
@@ -612,11 +653,7 @@ pub fn render<'a>(
                     make_hdr_btn(crate::state::ConnectionSort::Process, "col_process", 3),
                     make_hdr_btn_custom(crate::state::ConnectionSort::Network, net_rule_label, 5),
                     make_hdr_btn(crate::state::ConnectionSort::Chains, "chains", 5),
-                    make_hdr_btn_custom(
-                        crate::state::ConnectionSort::Download,
-                        "↓ / ↑".to_string(),
-                        5
-                    ),
+                    make_hdr_btn(crate::state::ConnectionSort::Download, "col_traffic", 5),
                     Space::new().width(Length::Fixed(CLOSE_COL_W))
                 ]
                 .spacing(crate::ui::SP_12)
@@ -625,49 +662,7 @@ pub fn render<'a>(
             };
 
             let list_content: Element<'_, Message> = if filtered_connections.is_empty() {
-                let empty_msg = if query_str.trim().is_empty() {
-                    tr(lang, "no_active_connections")
-                } else {
-                    tr(lang, "no_matching_connections")
-                };
-                let cta: Option<Element<'_, Message>> = if !query_str.trim().is_empty() {
-                    Some(
-                        button(text(tr(lang, "btn_clear_search")).size(theme::TYPE_BTN_MD))
-                            .padding(theme::BTN_PAD_MD)
-                            .style(theme::button_secondary)
-                            .on_press(Message::ConnectionsSearchChanged(String::new()))
-                            .into(),
-                    )
-                } else if gui_config.active_profile_id.is_none() {
-                    Some(
-                        button(text(tr(lang, "btn_goto_profiles")).size(theme::TYPE_BTN_MD))
-                            .padding(theme::BTN_PAD_MD)
-                            .style(theme::button_primary)
-                            .on_press(Message::TabChanged(crate::state::Tab::Profiles))
-                            .into(),
-                    )
-                } else if !core_running {
-                    Some(
-                        button(text(tr(lang, "btn_start_core_short")).size(theme::TYPE_BTN_MD))
-                            .padding(theme::BTN_PAD_MD)
-                            .style(theme::button_primary)
-                            .on_press(Message::ToggleCore)
-                            .into(),
-                    )
-                } else {
-                    None
-                };
-                let hint = if query_str.trim().is_empty() && !core_running {
-                    Some(tr(lang, "empty_connections_hint"))
-                } else {
-                    None
-                };
-                let empty_icon = if query_str.trim().is_empty() {
-                    ICON_CONNECTIONS
-                } else {
-                    ICON_SEARCH
-                };
-                crate::ui::empty_state_with_icon(Some(empty_icon), empty_msg, hint, cta, theme)
+                render_empty()
             } else {
                 let mut list = column!().spacing(0);
                 let len = filtered_connections.len();

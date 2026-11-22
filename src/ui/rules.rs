@@ -23,8 +23,7 @@ pub fn render<'a>(
     let main_content = responsive(move |size| {
         let is_compact = size.width < crate::ui::PAGE_NARROW_W;
         let pad_compact = crate::ui::is_pad_compact(size.width);
-        let content_w =
-            crate::ui::page_content_width(size.width, pad_compact) - crate::ui::SCROLL_GUTTER;
+        let content_w = crate::ui::page_content_width(size.width, pad_compact);
         let card_w = if is_compact {
             content_w
         } else {
@@ -32,9 +31,9 @@ pub fn render<'a>(
         }
         .max(60.0);
         // Rule text room: card minus padding, card/item borders (4) and scroll
-        // left inset (1), row insets (10 + 4), the close button (~24) and two
-        // 12px gaps. The kind tag is subtracted per row.
-        let item_px = (card_w - theme::CARD_PAD * 2.0 - 14.0 - 24.0 - 24.0 - 5.0).max(60.0);
+        // left inset (1), row insets (12 + 6), the close button (~22) and two
+        // 8px gaps. The kind tag is subtracted per row.
+        let item_px = (card_w - theme::CARD_PAD * 2.0 - 18.0 - 22.0 - 16.0 - 5.0).max(60.0);
         let theme = &theme_cloned;
 
         // What the built-in rules already cover, as one quiet line rather
@@ -75,14 +74,30 @@ pub fn render<'a>(
             0 => 2,
             n => n,
         };
-        let (direct_rows, proxy_rows) = (rows(&direct_lists), rows(&proxy_lists));
+        let direct_err = crate::validate_rule_draft(
+            RuleTarget::Direct,
+            direct_input,
+            direct_lists[0].1,
+            direct_lists[1].1,
+        )
+        .err();
+        let proxy_err = crate::validate_rule_draft(
+            RuleTarget::Proxy,
+            proxy_input,
+            proxy_lists[0].1,
+            proxy_lists[1].1,
+        )
+        .err();
+        let direct_units = rows(&direct_lists) * 2 + usize::from(direct_err.is_some());
+        let proxy_units = rows(&proxy_lists) * 2 + usize::from(proxy_err.is_some());
 
         // Side by side, the shorter card stretches to the taller one.
         let direct = rule_card(
             RuleTarget::Direct,
             direct_input,
             direct_lists,
-            !is_compact && direct_rows < proxy_rows,
+            direct_err,
+            !is_compact && direct_units < proxy_units,
             is_compact,
             item_px,
             lang,
@@ -92,7 +107,8 @@ pub fn render<'a>(
             RuleTarget::Proxy,
             proxy_input,
             proxy_lists,
-            !is_compact && proxy_rows < direct_rows,
+            proxy_err,
+            !is_compact && proxy_units < direct_units,
             is_compact,
             item_px,
             lang,
@@ -124,6 +140,7 @@ fn rule_card<'a>(
     target: RuleTarget,
     input_value: &'a str,
     lists: [(RuleField, &'a [String]); 2],
+    validation_err: Option<&'static str>,
     stretch: bool,
     is_compact: bool,
     item_px: f32,
@@ -171,8 +188,6 @@ fn rule_card<'a>(
     .spacing(crate::ui::SP_8)
     .align_y(Alignment::Center);
 
-    let validation_err =
-        crate::validate_rule_draft(target, input_value, lists[0].1, lists[1].1).err();
     let can_add = !input_value.trim().is_empty() && validation_err.is_none();
 
     let mut input = text_input(tr(lang, "placeholder_rule"), input_value)
