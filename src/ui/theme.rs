@@ -222,8 +222,6 @@ pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb8(0xEA, 0xEA, 0xEA);
 #[cfg(target_os = "windows")]
 pub const CARD_LIGHT_BG: Color = Color::from_rgb8(0xFF, 0xFF, 0xFF);
 #[cfg(target_os = "windows")]
-pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb8(0xEE, 0xF6, 0xF3);
-#[cfg(target_os = "windows")]
 pub const CARD_HOVER_LIGHT: Color = Color::from_rgb8(0xF9, 0xF9, 0xF9);
 #[cfg(target_os = "windows")]
 pub const TEXT_PRIMARY_LIGHT: Color = Color::from_rgb8(0x1A, 0x1A, 0x1A);
@@ -243,8 +241,6 @@ pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb8(0xEC, 0xEC, 0xEE);
 #[cfg(target_os = "macos")]
 pub const CARD_LIGHT_BG: Color = Color::from_rgb8(0xFF, 0xFF, 0xFF);
 #[cfg(target_os = "macos")]
-pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb8(0xEC, 0xF5, 0xF2);
-#[cfg(target_os = "macos")]
 pub const CARD_HOVER_LIGHT: Color = Color::from_rgb8(0xF8, 0xF8, 0xFA);
 #[cfg(target_os = "macos")]
 pub const TEXT_PRIMARY_LIGHT: Color = Color::from_rgb8(0x1D, 0x1D, 0x1F);
@@ -263,8 +259,6 @@ pub const BG_LIGHT: Color = Color::from_rgb8(0xFA, 0xFA, 0xFA);
 pub const SIDEBAR_BG_LIGHT: Color = Color::from_rgb8(0xEB, 0xEB, 0xEB);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const CARD_LIGHT_BG: Color = Color::from_rgb8(0xFF, 0xFF, 0xFF);
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const CARD_SELECTED_LIGHT: Color = Color::from_rgb8(0xEC, 0xF5, 0xF2);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const CARD_HOVER_LIGHT: Color = Color::from_rgb8(0xF5, 0xF5, 0xF5);
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -292,7 +286,8 @@ pub const ACCENT_BRIGHT_HOVER: Color = Color::from_rgb8(0x7E, 0xCB, 0xB7);
 pub const ACCENT_BRIGHT_PRESSED: Color = Color::from_rgb8(0x5A, 0xAE, 0x98);
 /// Ink used for text placed on `ACCENT_BRIGHT`.
 pub const ACCENT_INK: Color = Color::from_rgb8(0x0B, 0x1A, 0x16);
-/// Slate blue for neutral information.
+/// Slate blue for neutral information (base of `info_text`).
+#[allow(dead_code)]
 pub const INFO: Color = Color::from_rgb8(0x3D, 0x7E, 0xB0);
 pub const SUCCESS: Color = Color::from_rgb8(0x2F, 0xA0, 0x6A);
 pub const WARNING: Color = Color::from_rgb8(0xD3, 0x95, 0x2A);
@@ -301,23 +296,6 @@ pub const DANGER: Color = Color::from_rgb8(0xB4, 0x3A, 0x2E);
 pub const DANGER_HOVER: Color = Color::from_rgb8(0xA6, 0x33, 0x28);
 pub const DANGER_PRESSED: Color = Color::from_rgb8(0x93, 0x2C, 0x23);
 pub const DANGER_DISABLED: Color = Color::from_rgb8(0x5A, 0x2F, 0x2B);
-
-/// Map proxy protocol to a distinct, muted hue for visual scanning. Tones sit
-/// at mid luminance so the same hue reads on paper and ink once tinted.
-pub fn protocol_color(node_type: &str) -> Color {
-    match node_type.trim().to_ascii_lowercase().as_str() {
-        "hysteria" | "hysteria2" | "hy2" => Color::from_rgb8(0x7B, 0x66, 0xC4),
-        "vless" => Color::from_rgb8(0x2F, 0x8E, 0xA2),
-        "vmess" => Color::from_rgb8(0xC0, 0x7B, 0x2E),
-        "shadowsocks" | "ss" => Color::from_rgb8(0x3A, 0x98, 0x6C),
-        "trojan" => Color::from_rgb8(0x4C, 0x76, 0xC0),
-        "tuic" => Color::from_rgb8(0xC0, 0x5A, 0x86),
-        "wireguard" | "wg" => Color::from_rgb8(0x93, 0x5A, 0xB2),
-        "direct" => Color::from_rgb8(0x5E, 0x96, 0x58),
-        "block" | "reject" => Color::from_rgb8(0xC0, 0x4A, 0x3E),
-        _ => ACCENT,
-    }
-}
 
 fn contains_keyword(haystack_lower: &str, keyword: &str) -> bool {
     if !keyword.is_ascii() {
@@ -863,35 +841,11 @@ pub fn popover_bg(theme: &iced::Theme) -> container::Style {
     }
 }
 
-/// The dashboard hero: a card washed with a breath of jade while the core
-/// runs, fading diagonally into the plain surface.
-pub fn hero_panel(active: bool) -> impl Fn(&iced::Theme) -> container::Style {
-    move |theme: &iced::Theme| {
-        let dark = is_dark(theme);
-        let base = card_surface(theme);
-        let mut style = card_bg(theme);
-        if active {
-            let wash = mix(base, accent(theme), if dark { 0.10 } else { 0.07 });
-            style.background = Some(Background::Gradient(iced::Gradient::Linear(
-                iced::gradient::Linear::new(iced::Degrees(120.0))
-                    .add_stop(0.0, wash)
-                    .add_stop(0.65, base),
-            )));
-            style.border.color = with_alpha(accent(theme), if dark { 0.22 } else { 0.20 });
-        }
-        style
-    }
-}
-
+/// Selected card: the plain surface with an accent outline. Selection is
+/// told once, by the edge — no tinted fill stacked on top.
 pub fn card_selected(theme: &iced::Theme) -> container::Style {
-    let dark = is_dark(theme);
-    let bg = if dark {
-        mix(CARD_DARK, ACCENT_BRIGHT, 0.08)
-    } else {
-        CARD_SELECTED_LIGHT
-    };
     container::Style {
-        background: Some(Background::Color(bg)),
+        background: Some(Background::Color(card_surface(theme))),
         border: Border {
             color: accent(theme),
             width: 1.5,
@@ -913,7 +867,6 @@ pub fn status_card(theme: &iced::Theme) -> container::Style {
             width: 1.0,
             radius: RADIUS_LG.into(),
         },
-        shadow: surface_shadow(theme),
         text_color: Some(text_primary(theme)),
         ..Default::default()
     }
@@ -934,62 +887,6 @@ pub fn badge_bg(theme: &iced::Theme) -> container::Style {
             radius: RADIUS_XS.into(),
         },
         text_color: Some(text_muted(theme)),
-        ..Default::default()
-    }
-}
-
-/// Soft success chip (e.g. "Active" profile badge).
-pub fn badge_success(theme: &iced::Theme) -> container::Style {
-    badge_colored(SUCCESS, theme).with_text(success_text(theme))
-}
-
-/// Chip tinted with `color`; text uses a theme-adjusted shade of the same hue.
-pub fn badge_colored(color: Color, theme: &iced::Theme) -> container::Style {
-    let dark = is_dark(theme);
-    container::Style {
-        background: Some(Background::Color(with_alpha(
-            color,
-            if dark { 0.16 } else { 0.11 },
-        ))),
-        border: Border {
-            color: with_alpha(color, if dark { 0.28 } else { 0.22 }),
-            width: 1.0,
-            radius: RADIUS_XS.into(),
-        },
-        text_color: Some(badge_text(color, theme)),
-        ..Default::default()
-    }
-}
-
-/// Readable foreground for a hue placed on its own soft tint.
-pub fn badge_text(color: Color, theme: &iced::Theme) -> Color {
-    if is_dark(theme) {
-        mix(color, Color::WHITE, 0.38)
-    } else {
-        mix(color, Color::BLACK, 0.36)
-    }
-}
-
-trait WithText {
-    fn with_text(self, color: Color) -> Self;
-}
-
-impl WithText for container::Style {
-    fn with_text(mut self, color: Color) -> Self {
-        self.text_color = Some(color);
-        self
-    }
-}
-
-/// Soft ring around a status indicator (running core).
-pub fn status_ring(fill: Color) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(with_alpha(fill, 0.20))),
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 8.0.into(),
-        },
         ..Default::default()
     }
 }
@@ -1049,15 +946,7 @@ pub fn button_primary(theme: &iced::Theme, status: button::Status) -> button::St
                 Color::TRANSPARENT
             },
         },
-        shadow: if !dark && matches!(status, button::Status::Active | button::Status::Hovered) {
-            Shadow {
-                color: with_alpha(ACCENT_PRESSED, 0.22),
-                offset: iced::Vector::new(0.0, 1.0),
-                blur_radius: 3.0,
-            }
-        } else {
-            Shadow::default()
-        },
+        shadow: Shadow::default(),
         ..Default::default()
     }
 }
@@ -1251,18 +1140,19 @@ pub fn group_tab(is_active: bool) -> impl Fn(&iced::Theme, button::Status) -> bu
     move |theme: &iced::Theme, status: button::Status| {
         let dark = is_dark(theme);
         if is_active {
-            let fill = if dark {
-                mix(CARD_DARK, ACCENT_BRIGHT, 0.08)
-            } else {
-                CARD_SELECTED_LIGHT
-            };
+            // Same neutral lift as the sidebar's active row: the rail is
+            // navigation, not a call to action, so it carries no accent wash.
             button::Style {
-                background: Some(Background::Color(fill)),
-                text_color: accent_text(theme),
+                background: Some(Background::Color(if dark {
+                    CARD_ELEVATED_DARK
+                } else {
+                    CARD_LIGHT_BG
+                })),
+                text_color: text_primary(theme),
                 border: Border {
                     radius: RADIUS_MD.into(),
                     width: 1.0,
-                    color: with_alpha(accent(theme), if dark { 0.45 } else { 0.40 }),
+                    color: border_color(theme),
                 },
                 shadow: surface_shadow(theme),
                 ..Default::default()
@@ -1412,12 +1302,7 @@ pub fn power_button(running: bool) -> impl Fn(&iced::Theme, button::Status) -> b
                     width: 0.0,
                     color: Color::TRANSPARENT,
                 },
-                // The halo: the memorable glow of a live connection.
-                shadow: Shadow {
-                    color: with_alpha(accent(theme), if dark { 0.38 } else { 0.32 }),
-                    offset: iced::Vector::new(0.0, 0.0),
-                    blur_radius: if hovered { 26.0 } else { 20.0 },
-                },
+                shadow: Shadow::default(),
                 ..Default::default()
             }
         } else {
@@ -1450,11 +1335,7 @@ pub fn power_button(running: bool) -> impl Fn(&iced::Theme, button::Status) -> b
                         border_strong(theme)
                     },
                 },
-                shadow: if disabled {
-                    Shadow::default()
-                } else {
-                    surface_shadow(theme)
-                },
+                shadow: Shadow::default(),
                 ..Default::default()
             }
         }
@@ -1476,11 +1357,7 @@ pub fn power_button_busy(theme: &iced::Theme, _status: button::Status) -> button
             width: 1.5,
             color: with_alpha(WARNING, if dark { 0.55 } else { 0.45 }),
         },
-        shadow: Shadow {
-            color: with_alpha(WARNING, if dark { 0.24 } else { 0.18 }),
-            offset: iced::Vector::new(0.0, 0.0),
-            blur_radius: 16.0,
-        },
+        shadow: Shadow::default(),
         ..Default::default()
     }
 }
@@ -1490,14 +1367,9 @@ pub fn list_item_style(
     is_selected: bool,
     is_hovered: bool,
 ) -> container::Style {
-    let dark = is_dark(theme);
     let base_bg = card_surface(theme);
     let fill = if is_selected {
-        if dark {
-            mix(base_bg, ACCENT_BRIGHT, 0.08)
-        } else {
-            CARD_SELECTED_LIGHT
-        }
+        base_bg
     } else if is_hovered {
         elevated_surface(theme)
     } else {
@@ -1939,35 +1811,6 @@ mod tests {
     }
 
     #[test]
-    fn protocol_badges_stay_readable_on_their_tint() {
-        for theme in [iced::Theme::Light, iced::Theme::Dark] {
-            for proto in [
-                "hysteria2",
-                "vless",
-                "vmess",
-                "shadowsocks",
-                "trojan",
-                "tuic",
-                "wireguard",
-                "direct",
-                "block",
-                "other",
-            ] {
-                let hue = protocol_color(proto);
-                let fill = mix(
-                    card_surface(&theme),
-                    hue,
-                    if is_dark(&theme) { 0.16 } else { 0.11 },
-                );
-                assert!(
-                    contrast_ratio(badge_text(hue, &theme), fill) >= 4.5,
-                    "{proto} badge unreadable"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn region_codes_do_not_match_fragments_of_unrelated_words() {
         for name in [
             "node-01",
@@ -2079,19 +1922,18 @@ mod tests {
                     (DANGER, danger_text(&theme)),
                     (INFO, info_text(&theme)),
                 ] {
-                    if let Some(Background::Color(bg_overlay)) =
-                        badge_colored(hue, &theme).background
-                    {
-                        let eff_bg = composite_over(under, bg_overlay);
-                        assert!(
-                            contrast_ratio(fg, eff_bg) >= 4.5,
-                            "badge_colored semantic text unreadable on {theme:?}"
-                        );
-                        assert!(
-                            contrast_ratio(badge_text(hue, &theme), eff_bg) >= 4.5,
-                            "badge_text unreadable on {theme:?}"
-                        );
-                    }
+                    // Semantic text now sits straight on the surface
+                    // (latency figures, log level counts, update notice).
+                    assert!(
+                        contrast_ratio(fg, under) >= 4.5,
+                        "semantic text unreadable on bare {theme:?} surface"
+                    );
+                    // Log level filters tint to this strength when switched on.
+                    let on_fill = with_alpha(hue, if is_dark(&theme) { 0.20 } else { 0.14 });
+                    assert!(
+                        contrast_ratio(fg, composite_over(under, on_fill)) >= 4.5,
+                        "active level filter unreadable on {theme:?}"
+                    );
                     if let Some(Background::Color(bg_overlay)) =
                         tinted_banner(&theme, hue).background
                     {
@@ -2324,30 +2166,11 @@ mod tests {
     }
 
     #[test]
-    fn test_protocol_colors_distinct() {
-        let hy = protocol_color("hysteria2");
-        let vless = protocol_color("vless");
-        let vmess = protocol_color("vmess");
-        let ss = protocol_color("shadowsocks");
-        assert_ne!(hy, vless);
-        assert_ne!(vless, vmess);
-        assert_ne!(vmess, ss);
-    }
-
-    #[test]
     fn test_detect_region_code() {
         assert_eq!(detect_region_code("香港 BGP 01"), Some("HK"));
         assert_eq!(detect_region_code("Tokyo Premium"), Some("JP"));
         assert_eq!(detect_region_code("US - Los Angeles"), Some("US"));
         assert_eq!(detect_region_code("SG Singapore 02"), Some("SG"));
         assert_eq!(detect_region_code("🇹🇼 台湾 01"), Some("TW"));
-    }
-
-    #[test]
-    fn test_badge_colored() {
-        let dark = iced::Theme::Dark;
-        let style = badge_colored(ACCENT, &dark);
-        assert!(style.background.is_some());
-        assert_eq!(style.text_color, Some(badge_text(ACCENT, &dark)));
     }
 }

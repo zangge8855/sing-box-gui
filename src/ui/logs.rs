@@ -348,27 +348,26 @@ pub fn render<'a>(
                 )
                 .padding([2, 7])
                 .style(move |t, status| {
+                    // The coloured count is the signal; a tint appears only
+                    // while the filter is on or under the pointer.
                     let dark = theme::is_dark(t);
                     let hovered =
                         matches!(status, button::Status::Hovered | button::Status::Pressed);
                     let fill_alpha = if is_on {
-                        if dark { 0.24 } else { 0.18 }
+                        if dark { 0.20 } else { 0.14 }
                     } else if hovered {
-                        if dark { 0.20 } else { 0.15 }
-                    } else if dark {
-                        0.14
+                        if dark { 0.12 } else { 0.08 }
                     } else {
-                        0.10
+                        0.0
                     };
                     button::Style {
-                        background: Some(iced::Background::Color(theme::with_alpha(
-                            hue, fill_alpha,
-                        ))),
+                        background: (fill_alpha > 0.0).then(|| {
+                            iced::Background::Color(theme::with_alpha(hue, fill_alpha))
+                        }),
                         text_color: fg,
                         border: iced::Border {
-                            color: theme::with_alpha(hue, if is_on { 0.55 } else { 0.28 }),
-                            width: 1.0,
                             radius: theme::RADIUS_XS.into(),
+                            ..Default::default()
                         },
                         ..Default::default()
                     }
@@ -402,30 +401,13 @@ pub fn render<'a>(
                 ));
             }
             meta_bar = meta_bar.push(Space::new().width(Length::Fill));
-            if core_running {
-                let (live_color, live_text_color, live_key) = if logs_follow {
-                    (theme::SUCCESS, theme::success_text(theme), "logs_live")
-                } else {
-                    (theme::WARNING, theme::warning_text(theme), "logs_paused")
-                };
+            // The Follow switch already says the tail is live; only a paused
+            // tail earns a word here.
+            if core_running && !logs_follow {
                 meta_bar = meta_bar.push(
-                    row![
-                        container(Space::new()).width(6).height(6).style(move |_| {
-                            container::Style {
-                                background: Some(iced::Background::Color(live_color)),
-                                border: iced::Border {
-                                    radius: 3.0.into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            }
-                        }),
-                        text(tr(lang, live_key))
-                            .size(theme::TYPE_CAPTION)
-                            .color(live_text_color),
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center),
+                    text(tr(lang, "logs_paused"))
+                        .size(theme::TYPE_CAPTION)
+                        .color(theme::warning_text(theme)),
                 );
             }
             let meta_bar = meta_bar.padding(iced::Padding {

@@ -155,7 +155,6 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "btn_install_core_first",
     "mode_switching_hint",
     "onboarding_title",
-    "onboarding_subtitle",
     "onboarding_step1_title",
     "onboarding_step1_ready",
     "onboarding_step1_action",
@@ -185,7 +184,6 @@ pub const REQUIRED_POLISH_KEYS: &[&str] = &[
     "detached_core_detected",
     "tun_privilege_required",
     "connections_unit",
-    "logs_live",
     "logs_paused",
     "ip_stack_label",
     "help_ip_stack",
@@ -204,7 +202,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
     match lang {
         Language::En => match key {
             // Tabs
-            "tab_dashboard" => "Dashboard",
+            "tab_dashboard" => "Overview",
             "tab_proxies" => "Proxies",
             "tab_profiles" => "Profiles",
             "tab_logs" => "Logs",
@@ -236,7 +234,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_ip_stack" => "Dual-stack also proxies IPv6. Pick IPv4 only if IPv6 sites fail.",
             "disable_proxy_on_stop_label" => "Disable System Proxy on Core Stop",
             "help_disable_proxy_on_stop" => {
-                "Turn off system proxy when the core is stopped. App exit always clears the system proxy for safety."
+                "Also turn off the system proxy when the core stops. Quitting the app always clears it."
             }
             "auto_update_interval" => "Subscription Auto-Update",
             "help_auto_update" => "Periodically refresh remote subscription URLs.",
@@ -253,14 +251,14 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             }
             "empty_dashboard_title" => "No active profile yet",
             "empty_dashboard_desc" => "Install the core and import a profile to get started.",
-            "btn_goto_dashboard" => "Go to Dashboard",
+            "btn_goto_dashboard" => "Go to Overview",
             "btn_goto_profiles" => "Go to Profiles",
             "btn_goto_settings" => "Open Settings",
-            "proxies_no_profile_hint" => "Import or select a profile to view proxy nodes.",
+            "proxies_no_profile_hint" => "Import or select a profile to see its nodes.",
             "proxies_no_core_hint" => {
-                "Install the sing-box core in Settings to start and load proxy groups."
+                "Install the sing-box core in Settings, then start it to load proxy groups."
             }
-            "dash_connections" => "Active Connections",
+            "dash_connections" => "Connections",
             "dash_no_node" => "Not selected",
             "log_search_placeholder" => "Filter log text…",
             "export_logs" => "Export",
@@ -279,7 +277,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "status_starting" => "Starting…",
             "status_stopping" => "Stopping…",
             "core_starting_hint" => "Validating config and starting core…",
-            "toast_sub_ok" => "Subscription downloaded successfully",
+            "toast_sub_ok" => "Subscription updated",
             "toast_profile_deleted" => "Profile deleted",
             "toast_core_stopped_profile_deleted" => {
                 "Core stopped because the active profile was deleted"
@@ -318,7 +316,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "appearance_settings" => "Appearance",
             "port_reserved_error" => "Ports below 1024 are reserved; choose higher ports.",
             "port_conflict_error" => "Proxy and controller ports must be different.",
-            "settings_saved_toast" => "Settings saved and applied.",
+            "settings_saved_toast" => "Settings saved",
             "profile_selected_toast" => "Active profile updated.",
             "settings_pending" => "You have unsaved changes",
             "settings_invalid" => "Please fix the highlighted settings.",
@@ -394,7 +392,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "updated_at_label" => "Updated",
 
             // Rules
-            "tab_rules" => "Routing Rules",
+            "tab_rules" => "Rules",
             "btn_add_rule" => "Add",
             "no_custom_rules" => "No custom rules yet",
 
@@ -435,9 +433,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "mode_rules" => "Rules",
             "mode_global" => "Global",
             "mode_direct" => "Direct",
-            "mode_rules_desc" => "Bypass LAN & China Mainland",
-            "mode_global_desc" => "Proxy all network traffic",
-            "mode_direct_desc" => "Bypass all proxy servers",
+            "mode_rules_desc" => "LAN and mainland China go direct",
+            "mode_global_desc" => "All traffic through the proxy",
+            "mode_direct_desc" => "All traffic goes direct",
 
             "active_mode" => "Routing Mode",
             "listen_port" => "Listen Port",
@@ -501,7 +499,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "no_active_connections" => "No active connections.",
             "no_matching_connections" => "No matching connections found.",
             "connections_hidden_hint" => {
-                "additional connections hidden; refine the search to inspect them."
+                "more not shown. Narrow the search to see them."
             }
 
             // Software Update
@@ -510,7 +508,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "status_not_checked" => "Not checked yet",
             "status_checking" => "Checking for updates…",
             "status_uptodate" => "Up to date",
-            "status_new_version" => "New version available",
+            "status_new_version" => "Update available",
             "btn_view_release_on_github" => "View Release on GitHub",
             "btn_download_install" => "Download & Restart",
             "status_downloading_update" => "Downloading update…",
@@ -565,14 +563,13 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_install_core_first" => "Install core first",
             "mode_switching_hint" => "Applying mode…",
             "onboarding_title" => "Quick Setup",
-            "onboarding_subtitle" => "Complete these steps right here to start connecting.",
-            "onboarding_step1_title" => "1. Install sing-box Core",
+            "onboarding_step1_title" => "Install sing-box Core",
             "onboarding_step1_ready" => "Core installed and ready",
             "onboarding_step1_action" => "Download Core",
-            "onboarding_step2_title" => "2. Import Profile",
+            "onboarding_step2_title" => "Import a Profile",
             "onboarding_step2_ready" => "Active profile",
-            "onboarding_step3_title" => "3. Connect",
-            "onboarding_step3_ready" => "Ready — click Power to start proxying.",
+            "onboarding_step3_title" => "Connect",
+            "onboarding_step3_ready" => "Ready. Press the power button to connect.",
             "onboarding_step3_waiting" => "Finish the steps above to connect.",
             "fact_port" => "Port",
             "showing_nodes_cap" => "Showing {} of {} matching nodes",
@@ -601,18 +598,17 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
                 "TUN mode requires administrator privileges or cap_net_admin on sing-box."
             }
             "connections_unit" => "connections",
-            "logs_live" => "Live",
             "logs_paused" => "Paused",
 
             _ => key,
         },
         Language::Zh => match key {
             // Tabs
-            "tab_dashboard" => "控制台",
-            "tab_proxies" => "代理节点",
-            "tab_profiles" => "配置管理",
-            "tab_logs" => "实时日志",
-            "tab_settings" => "系统设置",
+            "tab_dashboard" => "概览",
+            "tab_proxies" => "节点",
+            "tab_profiles" => "配置",
+            "tab_logs" => "日志",
+            "tab_settings" => "设置",
 
             "ON" => "开启",
             "OFF" => "关闭",
@@ -636,7 +632,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_ip_stack" => "双栈会同时代理 IPv6；IPv6 网站打不开时选仅 IPv4。",
             "disable_proxy_on_stop_label" => "停止内核时关闭系统代理",
             "help_disable_proxy_on_stop" => {
-                "关闭内核时自动关闭系统代理。退出应用时始终清除系统代理（安全策略）。"
+                "停止内核时一并关闭系统代理。退出应用时总会清除。"
             }
             "auto_update_interval" => "订阅自动更新",
             "help_auto_update" => "按间隔自动刷新远程订阅链接。",
@@ -651,12 +647,12 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "empty_profiles_hint" => "在上方粘贴链接，或从剪贴板 / 本地文件导入。",
             "empty_dashboard_title" => "尚未选择配置",
             "empty_dashboard_desc" => "先安装内核并导入配置，即可开始使用。",
-            "btn_goto_dashboard" => "前往控制台",
-            "btn_goto_profiles" => "前往配置管理",
-            "btn_goto_settings" => "打开系统设置",
-            "proxies_no_profile_hint" => "请先导入或选择一个配置以查看代理节点。",
-            "proxies_no_core_hint" => "请先在系统设置中安装 sing-box 内核，再启动以加载策略组。",
-            "dash_connections" => "活动连接数",
+            "btn_goto_dashboard" => "前往概览",
+            "btn_goto_profiles" => "前往配置",
+            "btn_goto_settings" => "打开设置",
+            "proxies_no_profile_hint" => "导入或选择一个配置后即可查看节点。",
+            "proxies_no_core_hint" => "先在设置中安装 sing-box 内核，启动后即可加载策略组。",
+            "dash_connections" => "连接",
             "dash_no_node" => "未选择节点",
             "log_search_placeholder" => "搜索日志内容…",
             "export_logs" => "导出",
@@ -675,7 +671,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "status_starting" => "启动中…",
             "status_stopping" => "停止中…",
             "core_starting_hint" => "正在校验配置并启动内核…",
-            "toast_sub_ok" => "订阅下载/更新成功",
+            "toast_sub_ok" => "订阅已更新",
             "toast_profile_deleted" => "配置已删除",
             "toast_core_stopped_profile_deleted" => "已停止内核：当前使用的配置已被删除",
             "system_proxy" => "系统代理",
@@ -689,7 +685,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "singbox_core" => "sing-box 内核",
 
             // Proxies
-            "proxy_nodes" => "代理节点",
+            "proxy_nodes" => "节点",
             "test_latency" => "测试延迟",
             "testing_latency" => "测速中…",
             "no_nodes" => "活动配置中没有节点，请选择或更新配置。",
@@ -710,7 +706,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "appearance_settings" => "外观与语言",
             "port_reserved_error" => "1024 以下为系统保留端口，请选择更高的端口。",
             "port_conflict_error" => "代理端口与控制端口不能相同。",
-            "settings_saved_toast" => "设置已保存并应用。",
+            "settings_saved_toast" => "设置已保存",
             "profile_selected_toast" => "已切换活动配置。",
             "settings_pending" => "有尚未保存的更改",
             "settings_invalid" => "请修正标红的设置项。",
@@ -780,7 +776,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "updated_at_label" => "更新于",
 
             // Rules
-            "tab_rules" => "分流规则",
+            "tab_rules" => "规则",
             "btn_add_rule" => "添加",
             "no_custom_rules" => "暂无自定义规则",
 
@@ -788,7 +784,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "clear_logs" => "清空",
             "no_logs" => "暂无日志",
             "no_logs_running_title" => "日志缓冲区为空",
-            "no_logs_running_hint" => "内核正在运行，新的实时日志将显示在此处。",
+            "no_logs_running_hint" => "内核运行中，新日志会显示在这里。",
 
             // Settings
             "mixed_port" => "混合代理端口",
@@ -821,9 +817,9 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "mode_rules" => "规则分流",
             "mode_global" => "全局代理",
             "mode_direct" => "直接连接",
-            "mode_rules_desc" => "自动分流，绕过局域网及大陆地区",
-            "mode_global_desc" => "所有流量接管，全部通过代理访问",
-            "mode_direct_desc" => "直接连接网络，不通过代理服务器",
+            "mode_rules_desc" => "局域网与中国大陆直连，其余走代理",
+            "mode_global_desc" => "全部流量走代理",
+            "mode_direct_desc" => "全部流量直连",
 
             "active_mode" => "路由模式",
             "listen_port" => "监听端口",
@@ -863,7 +859,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "empty_connections_no_profile_hint" => {
                 "请先导入并选择配置，启动内核后即可查看活动连接。"
             }
-            "empty_logs_start_hint" => "启动 sing-box 内核后将在此显示实时日志。",
+            "empty_logs_start_hint" => "启动内核后，日志会显示在这里。",
             "tun_admin_banner" => "TUN 模式需要以管理员身份运行。未提权时内核可能启动失败。",
             "core_not_running_hint" => "请先启动内核以加载策略组并测速。",
             "no_proxy_groups" => "内核未返回可用的选择器策略组。",
@@ -873,16 +869,16 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "toast_clipboard_empty" => "剪贴板为空",
 
             // Connections
-            "tab_connections" => "连接管理",
+            "tab_connections" => "连接",
             "host" => "目标主机 / IP",
             "network" => "网络",
             "type" => "类型",
             "chains" => "代理链",
             "rule" => "规则",
             "close_conn" => "断开",
-            "no_active_connections" => "当前没有活动的连接。",
-            "no_matching_connections" => "未找到匹配的活动连接。",
-            "connections_hidden_hint" => "个额外连接已隐藏，请缩小搜索范围后查看。",
+            "no_active_connections" => "暂无连接",
+            "no_matching_connections" => "没有匹配的连接",
+            "connections_hidden_hint" => "条未显示，缩小搜索范围即可查看。",
 
             // Software Update
             "app_update" => "软件更新",
@@ -890,7 +886,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "status_not_checked" => "尚未检查",
             "status_checking" => "正在检查更新…",
             "status_uptodate" => "已是最新版本",
-            "status_new_version" => "检测到新版本",
+            "status_new_version" => "有新版本",
             "btn_view_release_on_github" => "在 GitHub 上查看发布",
             "btn_download_install" => "下载并重启",
             "status_downloading_update" => "正在下载更新…",
@@ -945,15 +941,14 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "btn_install_core_first" => "请先安装内核",
             "mode_switching_hint" => "正在切换模式…",
             "onboarding_title" => "快速开始",
-            "onboarding_subtitle" => "按顺序完成以下步骤即可开始连接。",
-            "onboarding_step1_title" => "1. 安装 sing-box 内核",
+            "onboarding_step1_title" => "安装 sing-box 内核",
             "onboarding_step1_ready" => "内核已就绪",
             "onboarding_step1_action" => "下载内核",
-            "onboarding_step2_title" => "2. 导入配置或订阅",
+            "onboarding_step2_title" => "导入配置或订阅",
             "onboarding_step2_ready" => "当前配置",
-            "onboarding_step3_title" => "3. 启动连接",
-            "onboarding_step3_ready" => "一切就绪，点击开关按钮即可启动代理。",
-            "onboarding_step3_waiting" => "完成以上两步后即可启动连接。",
+            "onboarding_step3_title" => "启动连接",
+            "onboarding_step3_ready" => "已就绪，点击开关即可连接。",
+            "onboarding_step3_waiting" => "完成前两步后即可连接。",
             "fact_port" => "端口",
             "showing_nodes_cap" => "当前显示前 {} 个（共 {} 个匹配节点）",
             "showing_nodes_all" => "已显示全部 {} 个匹配节点",
@@ -979,7 +974,6 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
                 "TUN 模式需要管理员权限或为 sing-box 授予 cap_net_admin 权限。"
             }
             "connections_unit" => "个连接",
-            "logs_live" => "实时追踪",
             "logs_paused" => "已暂停",
 
             _ => key,

@@ -156,34 +156,17 @@ fn rule_card<'a>(
     };
     let count = lists[0].1.len() + lists[1].1.len();
 
-    let target_dot_color = match target {
-        RuleTarget::Direct => theme::SUCCESS,
-        RuleTarget::Proxy => theme::accent(theme),
-    };
+    // Title and a plain count; the two lists are told apart by their names,
+    // not by coloured dots.
     let title_row = row![
-        container(Space::new())
-            .width(7)
-            .height(7)
-            .style(move |_| container::Style {
-                background: Some(iced::Background::Color(target_dot_color)),
-                border: iced::Border {
-                    radius: 3.5.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }),
         text(tr(lang, title_key))
             .size(theme::TYPE_HEADING)
             .font(theme::ui_font(iced::font::Weight::Semibold))
             .color(text_primary),
-        container(
-            text(count.to_string())
-                .size(theme::TYPE_MICRO)
-                .font(theme::metric_font())
-                .color(text_muted),
-        )
-        .padding([1, 7])
-        .style(theme::badge_bg),
+        text(count.to_string())
+            .size(theme::TYPE_HEADING)
+            .font(theme::metric_font())
+            .color(text_tertiary),
     ]
     .spacing(crate::ui::SP_8)
     .align_y(Alignment::Center);
@@ -297,23 +280,12 @@ fn rule_card<'a>(
                 text(tag)
                     .size(theme::TYPE_MICRO)
                     .font(theme::ui_font(iced::font::Weight::Medium))
-                    .color(if is_ip {
-                        theme::badge_text(theme::INFO, theme)
-                    } else {
-                        text_muted
-                    })
+                    .color(text_tertiary)
                     .width(Length::Fill)
-                    .align_x(Alignment::Center),
+                    .align_x(Alignment::End),
             )
             .width(Length::Fixed(tag_w))
-            .padding([1, 0])
-            .style(move |t| {
-                if is_ip {
-                    theme::badge_colored(theme::INFO, t)
-                } else {
-                    theme::badge_bg(t)
-                }
-            });
+            .padding([1, 0]);
             let line = row![item_el, tag_pill, delete]
                 .spacing(crate::ui::SP_8)
                 .align_y(Alignment::Center);

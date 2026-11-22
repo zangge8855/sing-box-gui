@@ -165,25 +165,17 @@ pub fn render<'a>(
                 status_text_color,
                 theme::TYPE_BTN_SM,
             ),
-            text(tr(lang, "singbox_core"))
-                .size(theme::TYPE_CAPTION)
-                .color(text_tertiary)
-                .into(),
         ];
         if let Some(reason_key) = disabled_reason {
             status_items.push(
-                container(
-                    text(tr(lang, reason_key))
-                        .size(theme::TYPE_MICRO)
-                        .color(theme::warning_text(theme)),
-                )
-                .padding([2, 7])
-                .style(|t| theme::badge_colored(theme::WARNING, t))
-                .into(),
+                text(format!("·  {}", tr(lang, reason_key)))
+                    .size(theme::TYPE_BTN_SM)
+                    .color(text_muted)
+                    .into(),
             );
         }
         let status_line = iced::widget::Row::with_children(status_items)
-            .spacing(crate::ui::SP_12)
+            .spacing(crate::ui::SP_8)
             .align_y(Alignment::Center)
             .wrap()
             .vertical_spacing(4);
@@ -361,10 +353,10 @@ pub fn render<'a>(
                             text("TUN")
                                 .size(theme::TYPE_MICRO)
                                 .font(theme::ui_font(iced::font::Weight::Semibold))
-                                .color(theme::badge_text(theme::INFO, theme)),
+                                .color(text_muted),
                         )
                         .padding([2, 6])
-                        .style(|t| theme::badge_colored(theme::INFO, t)),
+                        .style(theme::badge_bg),
                     )
                     .padding([2, 8])
                     .into(),
@@ -548,7 +540,7 @@ pub fn render<'a>(
         let hero = container(hero_col)
             .padding(hero_pad)
             .width(Length::Fill)
-            .style(theme::hero_panel(core_running));
+            .style(theme::card_bg);
 
         // ── Traffic: two large figures over a live chart ──────────────────
         let (down_color, up_color) = theme::chart_series(theme);
@@ -640,43 +632,10 @@ pub fn render<'a>(
             .width(Length::Fill)
         };
 
-        let legend_swatch = |color: Color| {
-            container(Space::new())
-                .width(10)
-                .height(3)
-                .style(move |_| container::Style {
-                    background: Some(iced::Background::Color(color)),
-                    border: iced::Border {
-                        radius: 1.5.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
-        };
-        // Peaks are labelled on the chart's own axis; the header just names
-        // the card and keys the two series.
-        let chart_header = row![
-            text(tr(lang, "speed_history_chart"))
-                .size(theme::TYPE_HEADING)
-                .font(theme::ui_font(iced::font::Weight::Semibold))
-                .color(text_primary),
-            Space::new().width(Length::Fill),
-            row![
-                legend_swatch(down_color),
-                text(tr(lang, "chart_legend_down"))
-                    .size(theme::TYPE_CAPTION)
-                    .color(text_muted),
-                Space::new().width(6),
-                legend_swatch(up_color),
-                text(tr(lang, "chart_legend_up"))
-                    .size(theme::TYPE_CAPTION)
-                    .color(text_muted),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        ]
-        .spacing(crate::ui::SP_12)
-        .align_y(Alignment::Center);
+        let chart_header = text(tr(lang, "speed_history_chart"))
+            .size(theme::TYPE_HEADING)
+            .font(theme::ui_font(iced::font::Weight::Semibold))
+            .color(text_primary);
 
         let idle = !core_running || history.iter().all(|&(u, d)| u == 0 && d == 0);
         let chart_el: Element<'_, Message> = if fill_height {
@@ -789,50 +748,28 @@ fn onboarding_card<'a>(
     let text_muted = theme::text_muted(theme);
     let text_tertiary = theme::text_tertiary(theme);
 
-    let step_badge =
-        |done: bool, active: bool| -> Element<'a, Message> {
-            let inner: Element<'a, Message> =
-                if done {
-                    crate::ui::material_icon(crate::ui::icons::ICON_CHECK_CIRCLE)
-                        .size(crate::ui::ICON_SIZE_LG)
-                        .color(theme::success_text(theme))
-                        .into()
-                } else if active {
-                    container(container(Space::new()).width(8).height(8).style(|t| {
-                        container::Style {
-                            background: Some(iced::Background::Color(theme::accent(t))),
-                            border: iced::Border {
-                                radius: 4.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    }))
-                    .padding(4)
-                    .style(|t| theme::status_ring(theme::accent(t)))
-                    .into()
-                } else {
-                    container(Space::new())
-                        .width(10)
-                        .height(10)
-                        .style(|t| container::Style {
-                            background: None,
-                            border: iced::Border {
-                                radius: 5.0.into(),
-                                width: 1.5,
-                                color: theme::border_strong(t),
-                            },
-                            ..Default::default()
-                        })
-                        .into()
-                };
-            container(inner)
-                .width(20)
-                .height(20)
-                .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
+    // The marker is the step's number until it is done, then a check —
+    // one glyph, no rings or filled discs.
+    let step_badge = |n: u8, done: bool, active: bool| -> Element<'a, Message> {
+        let inner: Element<'a, Message> = if done {
+            crate::ui::material_icon(crate::ui::icons::ICON_CHECK)
+                .size(crate::ui::ICON_SIZE)
+                .color(theme::success_text(theme))
+                .into()
+        } else {
+            text(n.to_string())
+                .size(theme::TYPE_BODY)
+                .font(theme::ui_font(iced::font::Weight::Semibold))
+                .color(if active { text_primary } else { text_tertiary })
                 .into()
         };
+        container(inner)
+            .width(20)
+            .height(20)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .into()
+    };
 
     // Step 1: Install sing-box core
     let step1_body: Element<'a, Message> = if core_installed {
@@ -889,7 +826,7 @@ fn onboarding_card<'a>(
         }
     };
     let step1 = row![
-        step_badge(core_installed, !core_installed),
+        step_badge(1, core_installed, !core_installed),
         column![
             text(tr(lang, "onboarding_step1_title"))
                 .size(theme::TYPE_BODY)
@@ -991,7 +928,7 @@ fn onboarding_card<'a>(
         col.into()
     };
     let step2 = row![
-        step_badge(has_profile, core_installed && !has_profile),
+        step_badge(2, has_profile, core_installed && !has_profile),
         column![
             text(tr(lang, "onboarding_step2_title"))
                 .size(theme::TYPE_BODY)
@@ -1007,7 +944,7 @@ fn onboarding_card<'a>(
 
     // Step 3: Ready to connect
     let step3 = row![
-        step_badge(can_start, can_start),
+        step_badge(3, can_start, can_start),
         column![
             text(tr(lang, "onboarding_step3_title"))
                 .size(theme::TYPE_BODY)
@@ -1036,16 +973,10 @@ fn onboarding_card<'a>(
 
     container(
         column![
-            column![
-                text(tr(lang, "onboarding_title"))
-                    .size(theme::TYPE_HEADING)
-                    .font(theme::ui_font(iced::font::Weight::Semibold))
-                    .color(text_primary),
-                text(tr(lang, "onboarding_subtitle"))
-                    .size(theme::TYPE_CAPTION)
-                    .color(text_muted),
-            ]
-            .spacing(2),
+            text(tr(lang, "onboarding_title"))
+                .size(theme::TYPE_HEADING)
+                .font(theme::ui_font(iced::font::Weight::Semibold))
+                .color(text_primary),
             container(Space::new())
                 .width(Length::Fill)
                 .height(1)
@@ -1067,7 +998,7 @@ fn onboarding_card<'a>(
     )
     .padding(theme::CARD_PAD)
     .width(Length::Fill)
-    .style(theme::card_selected)
+    .style(theme::card_bg)
     .into()
 }
 
@@ -1353,7 +1284,6 @@ fn waveform_split(peak_down: u64, peak_up: u64, height: f32) -> (f32, f32, f32) 
 /// Live traffic as a mirrored waveform: download rises above a hairline
 /// baseline, upload hangs below it, on one shared scale. Built from plain
 /// containers — crisp at any scale factor and with no geometry pipeline.
-/// Older samples fade so the eye lands on "now" at the right edge.
 fn traffic_waveform<'a>(
     history: &[(u64, u64)],
     chart_width: f32,
@@ -1375,7 +1305,9 @@ fn traffic_waveform<'a>(
     let peak_up = history.iter().map(|&(u, _)| u).max().unwrap_or(0);
     let peak_down = history.iter().map(|&(_, d)| d).max().unwrap_or(0);
     let slot = plot_width / n as f32;
-    let gap = (slot * 0.35).clamp(2.0, 8.0);
+    // Thin ticks centred in full-width slots: they read as a measurement
+    // rather than a block graphic, and each slot stays a wide hover target.
+    let bar_w = (slot * 0.3).clamp(2.0, 6.0).round();
     let height = height.floor();
     let (down_area, up_area, scale) = waveform_split(peak_down, peak_up, height);
 
@@ -1386,7 +1318,7 @@ fn traffic_waveform<'a>(
         // Keep 3px clear of the top/bottom borders and 2px clear of the baseline.
         let reach = (if rising { down_area } else { up_area } - 5.0).max(2.0);
         let h = (value as f32 * scale).clamp(2.0, reach);
-        let r = (h / 2.0).min(3.0);
+        let r = (h / 2.0).min(1.5);
         let radius = if rising {
             iced::border::Radius {
                 top_left: r,
@@ -1403,7 +1335,7 @@ fn traffic_waveform<'a>(
             }
         };
         container(Space::new())
-            .width(Length::Fill)
+            .width(Length::Fixed(bar_w))
             .height(h)
             .style(move |_| container::Style {
                 background: Some(iced::Background::Color(theme::with_alpha(color, alpha))),
@@ -1445,19 +1377,14 @@ fn traffic_waveform<'a>(
         .align_y(Alignment::Center)
     };
 
-    let mut bars = row![].spacing(gap).height(height).width(Length::Fill);
+    let mut bars = row![].height(height).width(Length::Fill);
     for (i, &(up, down)) in history.iter().enumerate() {
-        let recency = if n > 1 {
-            i as f32 / (n - 1) as f32
-        } else {
-            1.0
-        };
-        let min_alpha = if theme::is_dark(theme) { 0.44 } else { 0.50 };
-        let alpha = min_alpha + (1.0 - min_alpha) * recency;
+        let alpha = 1.0;
         let column_el = column![
             container(bar(down, down_color, alpha, true))
                 .height(down_area)
                 .width(Length::Fill)
+                .align_x(Alignment::Center)
                 .align_y(Alignment::End)
                 .padding(iced::Padding {
                     top: 3.0,
@@ -1468,6 +1395,7 @@ fn traffic_waveform<'a>(
             container(bar(up, up_color, alpha, false))
                 .height(up_area)
                 .width(Length::Fill)
+                .align_x(Alignment::Center)
                 .align_y(Alignment::Start)
                 .padding(iced::Padding {
                     top: 2.0,

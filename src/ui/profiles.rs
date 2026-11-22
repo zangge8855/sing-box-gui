@@ -261,7 +261,9 @@ pub fn render<'a>(
                         )
                         .width(Length::Fixed(use_slot_w))
                         .padding(theme::BTN_PAD_SM)
-                        .style(theme::button_primary)
+                        // A list of rows should not be a column of filled
+                        // buttons; the primary accent stays with Import.
+                        .style(theme::button_secondary)
                         .on_press(Message::SelectProfile(profile.id.clone())),
                     );
                 }
@@ -529,20 +531,13 @@ pub fn render<'a>(
                         .spacing(crate::ui::SP_8)
                         .align_y(Alignment::Center);
                     if is_active {
+                        // The outlined card already marks it; the word
+                        // names it. No pill, no icon.
                         name_row = name_row.push(
-                            container(
-                                row![
-                                    crate::ui::material_icon(crate::ui::icons::ICON_CHECK_CIRCLE)
-                                        .size(theme::TYPE_CAPTION),
-                                    text(tr(lang, "active_profile"))
-                                        .size(theme::TYPE_CAPTION)
-                                        .font(theme::ui_font(iced::font::Weight::Semibold)),
-                                ]
-                                .spacing(4)
-                                .align_y(Alignment::Center),
-                            )
-                            .padding([2, 8])
-                            .style(theme::badge_success),
+                            text(tr(lang, "active_profile"))
+                                .size(theme::TYPE_CAPTION)
+                                .font(theme::ui_font(iced::font::Weight::Semibold))
+                                .color(theme::accent_text(theme)),
                         );
                     }
 

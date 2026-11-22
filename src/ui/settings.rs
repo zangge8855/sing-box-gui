@@ -350,18 +350,16 @@ pub fn render<'a>(
                 };
                 let mut col = column![
                     row![
+                        // A new release is news, not a warning: accent words
+                        // and the tag in plain figures.
                         caption(
                             tr(lang, "status_new_version").to_string(),
-                            theme::warning_text(theme),
+                            theme::accent_text(theme),
                         ),
-                        container(
-                            text(tag)
-                                .size(theme::TYPE_MICRO)
-                                .font(theme::metric_font())
-                                .color(theme::warning_text(theme)),
-                        )
-                        .padding([1, 6])
-                        .style(|t| theme::badge_colored(theme::WARNING, t)),
+                        text(tag)
+                            .size(theme::TYPE_CAPTION)
+                            .font(theme::metric_font())
+                            .color(theme::text_primary(theme)),
                     ]
                     .spacing(6)
                     .align_y(Alignment::Center),

@@ -452,22 +452,13 @@ fn empty_state_inner<'a>(
     let mut col = column![].spacing(SP_8).align_x(Alignment::Center);
 
     if let Some(glyph) = icon {
-        let badge = container(
-            text(glyph.to_string())
-                .font(iced::Font::with_name("Material Icons"))
-                .size(22.0)
-                .color(ui_theme::text_muted(theme)),
-        )
-        .width(44)
-        .height(44)
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center)
-        .style(|t| {
-            let mut s = ui_theme::badge_bg(t);
-            s.border.radius = 22.0.into();
-            s
-        });
-        col = col.push(badge).push(Space::new().height(2));
+        // A bare glyph in the tertiary grey: it hints at the subject without
+        // turning the empty state into an illustration.
+        let glyph = text(glyph.to_string())
+            .font(iced::Font::with_name("Material Icons"))
+            .size(28.0)
+            .color(ui_theme::text_tertiary(theme));
+        col = col.push(glyph).push(Space::new().height(2));
     }
 
     col = col.push(
@@ -638,28 +629,22 @@ pub fn status_dot<'a, Message: Clone + 'a>(
     text_color: iced::Color,
     text_size: f32,
 ) -> Element<'a, Message> {
+    // A plain 7px dot: colour alone carries the state, no halo.
+    let _ = is_active;
     let dot = container(Space::new())
-        .width(8)
-        .height(8)
+        .width(7)
+        .height(7)
         .style(move |_t| container::Style {
             background: Some(iced::Background::Color(color)),
             border: iced::Border {
-                radius: 4.0.into(),
+                radius: 3.5.into(),
                 ..Default::default()
             },
             ..Default::default()
         });
 
-    let dot_wrapper = if is_active {
-        container(dot)
-            .padding(4)
-            .style(move |_t| ui_theme::status_ring(color))
-    } else {
-        container(dot).padding(4)
-    };
-
     row![
-        dot_wrapper,
+        dot,
         text(label)
             .color(text_color)
             .size(text_size)

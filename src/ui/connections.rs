@@ -427,28 +427,17 @@ pub fn render<'a>(
 
                     let mut badges = row![].spacing(crate::ui::SP_8).align_y(Alignment::Center);
                     if !conn.metadata.network.trim().is_empty() {
-                        let is_udp = conn.metadata.network.to_lowercase().contains("udp");
                         badges = badges.push(
                             container(
                                 text(conn.metadata.network.to_uppercase())
                                     .size(theme::TYPE_MICRO)
                                     .font(theme::ui_font(iced::font::Weight::Semibold))
-                                    .color(if is_udp {
-                                        theme::badge_text(theme::INFO, theme)
-                                    } else {
-                                        text_muted
-                                    }),
+                                    .color(text_muted),
                             )
                             .width(Length::Fixed(NET_BADGE_W))
                             .align_x(Alignment::Center)
                             .padding([2, 0])
-                            .style(move |t| {
-                                if is_udp {
-                                    theme::badge_colored(theme::INFO, t)
-                                } else {
-                                    theme::badge_bg(t)
-                                }
-                            }),
+                            .style(theme::badge_bg),
                         );
                     }
                     if !conn.rule.trim().is_empty() {
@@ -742,28 +731,18 @@ pub fn render<'a>(
                         text_primary,
                     );
 
-                    let is_udp = conn.metadata.network.to_lowercase().contains("udp");
+                    // TCP and UDP are both just facts: same neutral chip.
                     let proto_badge = container(
                         text(conn.metadata.network.to_uppercase())
                             .size(theme::TYPE_MICRO)
                             .font(theme::ui_font(iced::font::Weight::Semibold))
-                            .color(if is_udp {
-                                theme::badge_text(theme::INFO, theme)
-                            } else {
-                                text_muted
-                            })
+                            .color(text_muted)
                             .wrapping(Wrapping::None),
                     )
                     .width(Length::Fixed(NET_BADGE_W))
                     .align_x(Alignment::Center)
                     .padding([1, 0])
-                    .style(move |t| {
-                        if is_udp {
-                            theme::badge_colored(theme::INFO, t)
-                        } else {
-                            theme::badge_bg(t)
-                        }
-                    });
+                    .style(theme::badge_bg);
 
                     let row_content: Element<'_, Message> = if is_wide {
                         let rule_short = fit_width(&conn.rule, room(3.0), theme::TYPE_BTN_SM);
@@ -946,23 +925,7 @@ fn render_connections_summary<'a>(
 ) -> Element<'a, Message> {
     use crate::ui::i18n::tr;
 
-    let status_color = if core_running {
-        theme::success_text(theme)
-    } else {
-        theme::text_tertiary(theme)
-    };
-    let status = crate::ui::status_dot(
-        status_color,
-        core_running,
-        if core_running {
-            tr(lang, "status_running")
-        } else {
-            tr(lang, "status_stopped")
-        },
-        status_color,
-        theme::TYPE_CAPTION,
-    );
-
+    let _ = core_running;
     let count_text = if has_query {
         format!("{total_filtered} / {total_active}")
     } else {
@@ -980,7 +943,7 @@ fn render_connections_summary<'a>(
     .spacing(4)
     .align_y(Alignment::Center);
 
-    let mut summary = row![status, count_el]
+    let mut summary = row![count_el]
         .spacing(crate::ui::SP_20)
         .align_y(Alignment::Center);
 

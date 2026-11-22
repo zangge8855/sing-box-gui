@@ -4779,25 +4779,18 @@ impl App {
 
                 let compact_status = {
                     let dot = container(iced::widget::Space::new())
-                        .width(8)
-                        .height(8)
+                        .width(7)
+                        .height(7)
                         .style(move |_t| container::Style {
                             background: Some(iced::Background::Color(status_dot_color)),
                             border: iced::Border {
-                                radius: 4.0.into(),
+                                radius: 3.5.into(),
                                 ..Default::default()
                             },
                             ..Default::default()
                         });
-                    let ringed = if status_dot_active {
-                        container(dot)
-                            .padding(4)
-                            .style(move |_t| ui::theme::status_ring(status_dot_color))
-                    } else {
-                        container(dot).padding(4)
-                    };
                     tooltip(
-                        container(ringed).center_x(Length::Fill),
+                        container(container(dot).padding(4)).center_x(Length::Fill),
                         container(
                             text(format!(
                                 "{} · v{}",

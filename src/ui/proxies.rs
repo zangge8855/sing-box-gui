@@ -810,22 +810,7 @@ fn render_proxy_summary<'a>(
 ) -> Element<'a, Message> {
     use crate::ui::i18n::tr;
 
-    let status_color = if core_running {
-        theme::success_text(theme)
-    } else {
-        theme::text_tertiary(theme)
-    };
-    let status = crate::ui::status_dot(
-        status_color,
-        core_running,
-        if core_running {
-            tr(lang, "status_running")
-        } else {
-            tr(lang, "status_stopped")
-        },
-        status_color,
-        theme::TYPE_CAPTION,
-    );
+    let _ = core_running;
 
     // Figures in ink, units in grey — quieter than a "·"-joined string.
     let figure = |value: usize, unit_key: &'static str| {
@@ -843,7 +828,6 @@ fn render_proxy_summary<'a>(
     };
 
     let mut summary = row![
-        status,
         figure(node_count, "nodes_unit"),
         figure(protocol_count, "protocols_unit"),
     ]
@@ -971,7 +955,7 @@ fn render_proxy_card<'a>(
     let text_primary = theme::text_primary(theme);
     let pad = theme::CARD_PAD_DENSE;
 
-    // Latency: a small semantic dot plus the figure, right-aligned.
+    // Latency: the figure alone, coloured by quality, right-aligned.
     let (latency_label, latency_color) = match latency {
         Some(ms) if ms >= 9999 => (
             tr(lang, "latency_timeout").to_string(),
@@ -991,45 +975,26 @@ fn render_proxy_card<'a>(
         None if testing => ("…".to_string(), theme::text_tertiary(theme)),
         None => ("—".to_string(), theme::text_tertiary(theme)),
     };
-    let latency_w = 12.0 + text_width(&latency_label, theme::TYPE_CAPTION) * 1.04;
-    let latency_el = row![
-        container(Space::new())
-            .width(6)
-            .height(6)
-            .style(move |_| container::Style {
-                background: Some(iced::Background::Color(theme::with_alpha(
-                    latency_color,
-                    if latency.is_some() { 1.0 } else { 0.5 },
-                ))),
-                border: iced::Border {
-                    radius: 3.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }),
-        text(latency_label)
-            .size(theme::TYPE_CAPTION)
-            .font(theme::metric_font())
-            .color(latency_color),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
+    let latency_w = text_width(&latency_label, theme::TYPE_CAPTION) * 1.04;
+    let latency_el = text(latency_label)
+        .size(theme::TYPE_CAPTION)
+        .font(theme::metric_font())
+        .wrapping(text::Wrapping::None)
+        .color(latency_color);
 
-    let proto_color = theme::protocol_color(node_type);
+    // The protocol is metadata, not a category to colour-code: a quiet
+    // uppercase label in the same grey family as the address beside it.
     let proto_upper = node_type.to_uppercase();
     let proto_label = fit_width(&proto_upper, 96.0, theme::TYPE_MICRO * SEMIBOLD_WIDTH);
     let proto_truncated = proto_label != proto_upper;
-    let chip_w = 14.0 + text_width(&proto_label, theme::TYPE_MICRO) * SEMIBOLD_WIDTH;
-    let type_tag = container(
-        text(proto_label)
-            .size(theme::TYPE_MICRO)
-            .color(theme::badge_text(proto_color, theme))
-            .font(theme::ui_font(iced::font::Weight::Semibold)),
-    )
-    .padding([2, 6])
-    .style(move |t| theme::badge_colored(proto_color, t));
+    let chip_w = text_width(&proto_label, theme::TYPE_MICRO) * SEMIBOLD_WIDTH;
+    let type_tag = text(proto_label)
+        .size(theme::TYPE_MICRO)
+        .color(theme::text_muted(theme))
+        .font(theme::ui_font(iced::font::Weight::Semibold))
+        .wrapping(text::Wrapping::None);
 
-    // Meta row: protocol chip, server (when known), latency.
+    // Meta row: protocol, server (when known), latency.
     let mut meta_row = row![type_tag]
         .spacing(crate::ui::SP_8)
         .align_y(Alignment::Center);
@@ -1062,7 +1027,7 @@ fn render_proxy_card<'a>(
     let name_px = card_w
         - pad * 2.0
         - if flag_opt.is_some() { 34.0 } else { 0.0 }
-        - if is_selected { 24.0 } else { 0.0 }
+        - if is_selected { 22.0 } else { 0.0 }
         - 2.0;
     let display_name = fit_width(
         &clean_name,
@@ -1070,11 +1035,7 @@ fn render_proxy_card<'a>(
         theme::TYPE_SECTION * SEMIBOLD_WIDTH,
     );
     let name_truncated = display_name != clean_name;
-    let name_color = if is_selected {
-        theme::accent_text(theme)
-    } else {
-        text_primary
-    };
+    let name_color = text_primary;
     let name_font = theme::ui_font(if is_selected {
         iced::font::Weight::Semibold
     } else {
@@ -1110,24 +1071,10 @@ fn render_proxy_card<'a>(
     title_row = title_row.push(name_text);
     if is_selected {
         title_row = title_row.push(
-            container(
-                text(crate::ui::icons::ICON_CHECK.to_string())
-                    .font(iced::Font::with_name("Material Icons"))
-                    .size(12)
-                    .color(theme::on_accent(theme)),
-            )
-            .width(18)
-            .height(18)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
-            .style(|t| container::Style {
-                background: Some(iced::Background::Color(theme::accent(t))),
-                border: iced::Border {
-                    radius: 9.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }),
+            text(crate::ui::icons::ICON_CHECK.to_string())
+                .font(iced::Font::with_name("Material Icons"))
+                .size(16)
+                .color(theme::accent_text(theme)),
         );
     }
 
@@ -1169,7 +1116,7 @@ fn render_proxy_card<'a>(
                 text_color: text_primary,
                 border: iced::Border {
                     color: if engaged {
-                        theme::with_alpha(theme::accent(t), 0.55)
+                        theme::border_strong(t)
                     } else {
                         base.border.color
                     },

@@ -38,21 +38,10 @@ fn render_toast<'a>(
             .size(crate::ui::ICON_SIZE)
             .color(glyph_color),
     )
-    .width(26)
-    .height(26)
+    .width(20)
+    .height(20)
     .align_x(Alignment::Center)
-    .align_y(Alignment::Center)
-    .style(move |t| container::Style {
-        background: Some(iced::Background::Color(theme::with_alpha(
-            glyph_color,
-            if theme::is_dark(t) { 0.16 } else { 0.12 },
-        ))),
-        border: iced::Border {
-            radius: 13.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    });
+    .align_y(Alignment::Center);
 
     let dismiss_msg = match index {
         Some(i) => Message::DismissToastAt(i),
