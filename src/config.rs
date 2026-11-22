@@ -5799,6 +5799,10 @@ fn sanitize_tuic_outbounds(config: &mut serde_json::Value) {
 /// - `hysteria` / `hysteria2`: normalize `"a-b"` -> `"a:b"` in `server_ports` and omit `server_port` when `server_ports` is non-empty
 /// - `shadowsocks`: omit `multiplex` when `plugin` is set
 /// - `vless`: omit `multiplex` when `flow` is set
+/// - any type: omit a `tls` block that is not enabled. sing-box 1.13 builds a
+///   TLS dialer whenever the block exists, and with `"enabled": false` that
+///   dialer holds a nil config and panics on the first dial (URLTest included),
+///   taking the whole core down with exit code 2.
 fn sanitize_outbound_conflicts(config: &mut serde_json::Value) {
     let Some(outbounds) = config.get_mut("outbounds").and_then(|v| v.as_array_mut()) else {
         return;
@@ -5807,6 +5811,15 @@ fn sanitize_outbound_conflicts(config: &mut serde_json::Value) {
         let Some(obj) = outbound.as_object_mut() else {
             continue;
         };
+        let tls_disabled = obj.get("tls").is_some_and(|tls| {
+            tls.is_null()
+                || tls
+                    .as_object()
+                    .is_some_and(|t| t.get("enabled").and_then(|v| v.as_bool()) != Some(true))
+        });
+        if tls_disabled {
+            obj.remove("tls");
+        }
         let typ = obj
             .get("type")
             .and_then(|v| v.as_str())
@@ -6673,6 +6686,31 @@ proxies:
             path.contains("sing-box-gui"),
             "cache path should live under app dir: {path}"
         );
+    }
+
+    #[test]
+    fn mitigate_drops_disabled_tls_blocks_that_crash_the_core() {
+        // Native subscriptions ship plain nodes as `"tls": {"enabled": false}`;
+        // sing-box 1.13 panics dialing them (nil TLS config in vless DialContext).
+        let mut config = json!({
+            "outbounds": [
+                { "type": "vless", "tag": "plain", "server": "1.2.3.4", "server_port": 443,
+                  "uuid": "00000000-0000-0000-0000-000000000000", "tls": { "enabled": false } },
+                { "type": "vmess", "tag": "empty", "server": "1.2.3.4", "server_port": 443,
+                  "uuid": "00000000-0000-0000-0000-000000000000", "tls": {} },
+                { "type": "vless", "tag": "secure", "server": "1.2.3.4", "server_port": 443,
+                  "uuid": "00000000-0000-0000-0000-000000000000",
+                  "tls": { "enabled": true, "server_name": "example.com" } },
+                { "type": "direct", "tag": "direct" }
+            ]
+        });
+        mitigate_run_config(&mut config);
+        let outbounds = config["outbounds"].as_array().unwrap();
+        let by_tag = |tag: &str| outbounds.iter().find(|o| o["tag"] == tag).unwrap();
+        assert!(by_tag("plain").get("tls").is_none());
+        assert!(by_tag("empty").get("tls").is_none());
+        assert_eq!(by_tag("secure")["tls"]["enabled"], json!(true));
+        assert_eq!(by_tag("secure")["tls"]["server_name"], json!("example.com"));
     }
 
     #[test]
