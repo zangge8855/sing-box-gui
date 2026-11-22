@@ -498,9 +498,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "close_conn" => "Close",
             "no_active_connections" => "No active connections.",
             "no_matching_connections" => "No matching connections found.",
-            "connections_hidden_hint" => {
-                "more not shown. Narrow the search to see them."
-            }
+            "connections_hidden_hint" => "more not shown. Narrow the search to see them.",
 
             // Software Update
             "app_update" => "Software Update",
@@ -631,9 +629,7 @@ pub fn tr(lang: Language, key: &'static str) -> &'static str {
             "help_fake_ip" => "将远程域名解析为虚假 IP，便于分流。",
             "help_ip_stack" => "双栈会同时代理 IPv6；IPv6 网站打不开时选仅 IPv4。",
             "disable_proxy_on_stop_label" => "停止内核时关闭系统代理",
-            "help_disable_proxy_on_stop" => {
-                "停止内核时一并关闭系统代理。退出应用时总会清除。"
-            }
+            "help_disable_proxy_on_stop" => "停止内核时一并关闭系统代理。退出应用时总会清除。",
             "auto_update_interval" => "订阅自动更新",
             "help_auto_update" => "按间隔自动刷新远程订阅链接。",
             "auto_update_off" => "关闭",

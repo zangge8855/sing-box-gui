@@ -361,9 +361,8 @@ pub fn render<'a>(
                         0.0
                     };
                     button::Style {
-                        background: (fill_alpha > 0.0).then(|| {
-                            iced::Background::Color(theme::with_alpha(hue, fill_alpha))
-                        }),
+                        background: (fill_alpha > 0.0)
+                            .then(|| iced::Background::Color(theme::with_alpha(hue, fill_alpha))),
                         text_color: fg,
                         border: iced::Border {
                             radius: theme::RADIUS_XS.into(),

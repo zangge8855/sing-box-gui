@@ -157,15 +157,13 @@ pub fn render<'a>(
             } else {
                 "btn_import_profile_first"
             });
-        let mut status_items: Vec<Element<'_, Message>> = vec![
-            crate::ui::status_dot(
-                dot_color,
-                dot_active,
-                status_label,
-                status_text_color,
-                theme::TYPE_BTN_SM,
-            ),
-        ];
+        let mut status_items: Vec<Element<'_, Message>> = vec![crate::ui::status_dot(
+            dot_color,
+            dot_active,
+            status_label,
+            status_text_color,
+            theme::TYPE_BTN_SM,
+        )];
         if let Some(reason_key) = disabled_reason {
             status_items.push(
                 text(format!("·  {}", tr(lang, reason_key)))
